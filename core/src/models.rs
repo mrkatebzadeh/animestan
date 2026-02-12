@@ -34,6 +34,21 @@ pub struct Episode {
     pub source_id: SourceId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackFilter {
+    Unwatched,
+    InProgress,
+    Next,
+    Recent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpisodePlaybackState {
+    pub watched: bool,
+    pub in_progress: bool,
+    pub updated_at: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamLink {
     pub url: Url,

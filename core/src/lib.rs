@@ -26,5 +26,5 @@ pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
 pub use crate::config::AppConfig;
 pub use crate::error::Error;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
-pub use crate::models::{AnimeEntry, Episode, StreamLink};
+pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::tracking::EpisodeTracker;

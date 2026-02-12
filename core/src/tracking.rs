@@ -22,7 +22,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{config::AppConfig, error::Error};
+use crate::{
+    config::AppConfig,
+    error::Error,
+    models::{Episode, EpisodePlaybackState, PlaybackFilter},
+};
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct EpisodeProgress {
@@ -130,6 +134,85 @@ impl EpisodeTracker {
         entry.watched = true;
         entry.updated_at = now_epoch();
         self.save()
+    }
+
+    /// Returns the persisted playback state for an episode, when available.
+    #[must_use]
+    pub fn state_for(&self, episode_id: &str) -> Option<EpisodePlaybackState> {
+        self.store
+            .episodes
+            .get(episode_id)
+            .map(|entry| EpisodePlaybackState {
+                watched: entry.watched,
+                in_progress: !entry.watched && entry.last_position_sec.is_some(),
+                updated_at: entry.updated_at,
+            })
+    }
+
+    /// Indicates whether the episode has been marked as watched.
+    #[must_use]
+    pub fn is_watched(&self, episode_id: &str) -> bool {
+        self.store
+            .episodes
+            .get(episode_id)
+            .is_some_and(|entry| entry.watched)
+    }
+
+    /// Indicates whether playback progress exists without being fully watched.
+    #[must_use]
+    pub fn is_in_progress(&self, episode_id: &str) -> bool {
+        self.store
+            .episodes
+            .get(episode_id)
+            .is_some_and(|entry| !entry.watched && entry.last_position_sec.is_some())
+    }
+
+    /// Filters episodes by the requested playback filter.
+    #[must_use]
+    pub fn filter_episodes(&self, episodes: &[Episode], filter: PlaybackFilter) -> Vec<Episode> {
+        match filter {
+            PlaybackFilter::Unwatched => episodes
+                .iter()
+                .filter(|episode| !self.is_watched(&episode.id))
+                .cloned()
+                .collect(),
+            PlaybackFilter::InProgress => episodes
+                .iter()
+                .filter(|episode| self.is_in_progress(&episode.id))
+                .cloned()
+                .collect(),
+            PlaybackFilter::Next => episodes
+                .iter()
+                .filter(|episode| !self.is_watched(&episode.id))
+                .min_by_key(|episode| episode.number)
+                .cloned()
+                .into_iter()
+                .collect(),
+            PlaybackFilter::Recent => {
+                let mut with_state: Vec<(u64, Episode)> = episodes
+                    .iter()
+                    .filter_map(|episode| {
+                        self.state_for(&episode.id)
+                            .map(|state| (state.updated_at, episode.clone()))
+                    })
+                    .collect();
+                with_state.sort_by(|a, b| b.0.cmp(&a.0));
+                with_state.into_iter().map(|(_, episode)| episode).collect()
+            }
+        }
+    }
+
+    /// Returns the most recently updated episode among the provided list.
+    #[must_use]
+    pub fn most_recent_episode(&self, episodes: &[Episode]) -> Option<Episode> {
+        episodes
+            .iter()
+            .filter_map(|episode| {
+                self.state_for(&episode.id)
+                    .map(|state| (state.updated_at, episode))
+            })
+            .max_by_key(|(updated_at, _)| *updated_at)
+            .map(|(_, episode)| episode.clone())
     }
 
     fn save(&self) -> Result<(), Error> {

@@ -14,12 +14,15 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use animestan_core::{
-    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore,
+    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
+    PlaybackFilter,
 };
 use clap::{Parser, Subcommand};
 use std::sync::{Arc, Mutex};
 
 mod playback;
+
+type CliResult = Result<(), Box<dyn std::error::Error>>;
 
 fn main() {
     if let Err(err) = run() {
@@ -28,72 +31,187 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> CliResult {
     let cli = Cli::parse();
     let config = AppConfig::load_default()?;
     let client = AnimeClient::from_config(&config)?;
 
     match cli.command {
-        Commands::Search { query } => {
-            let results = client.search(&query)?;
-            for entry in results {
-                println!("{}\t{}", entry.id, entry.title);
-            }
-        }
-        Commands::Episodes { anime_id } => {
-            let episodes = client.list_episodes(&anime_id)?;
-            for episode in episodes {
-                println!("{}\t{}\t{}", episode.id, episode.number, episode.title);
-            }
-        }
-        Commands::Url { episode_id } => {
-            let link = client.resolve_stream_url(&episode_id)?;
-            println!("{}", link.url);
-        }
-        Commands::Play { episode_id } => {
-            let link = client.resolve_stream_url(&episode_id)?;
-            let tracker = Arc::new(Mutex::new(EpisodeTracker::load_default(&config)?));
-            {
-                let mut guard = tracker
-                    .lock()
-                    .map_err(|_| std::io::Error::other("episode tracker lock poisoned"))?;
-                guard.mark_started(&episode_id)?;
-            }
+        Commands::Search { query } => handle_search(&client, &query),
+        Commands::Episodes {
+            anime_id,
+            unwatched,
+            in_progress,
+            next,
+            recent,
+        } => handle_episodes(
+            &client,
+            &config,
+            &anime_id,
+            FilterArgs {
+                unwatched,
+                in_progress,
+                next,
+                recent,
+            },
+        ),
+        Commands::Url { episode_id } => handle_url(&client, &episode_id),
+        Commands::Play { episode_id } => handle_play(&client, &config, &episode_id),
+        Commands::Bookmarks { command } => handle_bookmarks(&client, &config, command),
+    }?;
 
-            playback::play_episode(&config, &tracker, &episode_id, link.url.as_str())?;
+    Ok(())
+}
+
+fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> CliResult {
+    let results = client.search(query)?;
+    for entry in results {
+        println!("{}\t{}", entry.id, entry.title);
+    }
+
+    Ok(())
+}
+
+fn handle_episodes(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    anime_id: &str,
+    flags: FilterArgs,
+) -> CliResult {
+    let episodes = client.list_episodes(anime_id)?;
+    if let Some(filter) = flags.selected() {
+        let tracker = EpisodeTracker::load_default(config)?;
+        let filtered = tracker.filter_episodes(&episodes, filter);
+        for episode in filtered {
+            println!("{}\t{}\t{}", episode.id, episode.number, episode.title);
         }
-        Commands::Bookmarks { command } => match command {
-            BookmarksCommand::Ls => {
-                let store = FavoriteStore::load_default(&config)?;
-                let entries: Vec<FavoriteEntry> = store.list();
+    } else {
+        for episode in episodes {
+            println!("{}\t{}\t{}", episode.id, episode.number, episode.title);
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_url(client: &AnimeClient<FetchBackend>, episode_id: &str) -> CliResult {
+    let link = client.resolve_stream_url(episode_id)?;
+    println!("{}", link.url);
+    Ok(())
+}
+
+fn handle_play(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    episode_id: &str,
+) -> CliResult {
+    let link = client.resolve_stream_url(episode_id)?;
+    let tracker = Arc::new(Mutex::new(EpisodeTracker::load_default(config)?));
+    {
+        let mut guard = tracker
+            .lock()
+            .map_err(|_| std::io::Error::other("episode tracker lock poisoned"))?;
+        guard.mark_started(episode_id)?;
+    }
+
+    playback::play_episode(config, &tracker, episode_id, link.url.as_str())?;
+    Ok(())
+}
+
+fn handle_bookmarks(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    command: BookmarksCommand,
+) -> CliResult {
+    match command {
+        BookmarksCommand::Ls {
+            unwatched,
+            in_progress,
+            next,
+            recent,
+        } => {
+            let store = FavoriteStore::load_default(config)?;
+            let entries: Vec<FavoriteEntry> = store.list();
+            let flags = FilterArgs {
+                unwatched,
+                in_progress,
+                next,
+                recent,
+            };
+            if let Some(filter) = flags.selected() {
+                let tracker = EpisodeTracker::load_default(config)?;
+                for favorite in entries {
+                    let episodes = client.list_episodes(&favorite.anime.id)?;
+                    let filtered = tracker.filter_episodes(&episodes, filter);
+                    if filtered.is_empty() {
+                        continue;
+                    }
+
+                    match filter {
+                        PlaybackFilter::Unwatched | PlaybackFilter::Next => {
+                            if let Some(episode) = filtered.first().cloned() {
+                                println!(
+                                    "{}\t{}\t{}\t{}",
+                                    favorite.anime.id,
+                                    favorite.anime.title,
+                                    episode.id,
+                                    episode.title
+                                );
+                            }
+                        }
+                        PlaybackFilter::InProgress => {
+                            if let Some(episode) = tracker.most_recent_episode(&filtered) {
+                                println!(
+                                    "{}\t{}\t{}\t{}",
+                                    favorite.anime.id,
+                                    favorite.anime.title,
+                                    episode.id,
+                                    episode.title
+                                );
+                            }
+                        }
+                        PlaybackFilter::Recent => {
+                            if let Some(episode) = tracker.most_recent_episode(&episodes) {
+                                println!(
+                                    "{}\t{}\t{}\t{}",
+                                    favorite.anime.id,
+                                    favorite.anime.title,
+                                    episode.id,
+                                    episode.title
+                                );
+                            }
+                        }
+                    }
+                }
+            } else {
                 for favorite in entries {
                     println!("{}\t{}", favorite.anime.id, favorite.anime.title);
                 }
             }
-            BookmarksCommand::Add { anime_id, title } => {
-                let mut store = FavoriteStore::load_default(&config)?;
-                let source_id = config
-                    .source_id
-                    .clone()
-                    .unwrap_or_else(|| "allanime".to_string());
-                let anime_entry = AnimeEntry {
-                    id: anime_id.clone(),
-                    title: title.unwrap_or_else(|| anime_id.clone()),
-                    source_id,
-                };
-                store.add(anime_entry)?;
-                println!("Added bookmark '{anime_id}'");
+        }
+        BookmarksCommand::Add { anime_id, title } => {
+            let mut store = FavoriteStore::load_default(config)?;
+            let source_id = config
+                .source_id
+                .clone()
+                .unwrap_or_else(|| "allanime".to_string());
+            let anime_entry = AnimeEntry {
+                id: anime_id.clone(),
+                title: title.unwrap_or_else(|| anime_id.clone()),
+                source_id,
+            };
+            store.add(anime_entry)?;
+            println!("Added bookmark '{anime_id}'");
+        }
+        BookmarksCommand::Rm { anime_id } => {
+            let mut store = FavoriteStore::load_default(config)?;
+            let removed = store.remove(&anime_id)?;
+            if removed {
+                println!("Removed bookmark '{anime_id}'");
+            } else {
+                println!("No bookmark found for '{anime_id}'");
             }
-            BookmarksCommand::Rm { anime_id } => {
-                let mut store = FavoriteStore::load_default(&config)?;
-                let removed = store.remove(&anime_id)?;
-                if removed {
-                    println!("Removed bookmark '{anime_id}'");
-                } else {
-                    println!("No bookmark found for '{anime_id}'");
-                }
-            }
-        },
+        }
     }
 
     Ok(())
@@ -116,7 +234,17 @@ enum Commands {
     /// Search catalog by query string
     Search { query: String },
     /// List episodes for a given anime id
-    Episodes { anime_id: String },
+    Episodes {
+        anime_id: String,
+        #[arg(long, conflicts_with_all = ["in_progress", "next", "recent"])]
+        unwatched: bool,
+        #[arg(long, conflicts_with_all = ["unwatched", "next", "recent"])]
+        in_progress: bool,
+        #[arg(long, conflicts_with_all = ["unwatched", "in_progress", "recent"])]
+        next: bool,
+        #[arg(long, conflicts_with_all = ["unwatched", "in_progress", "next"])]
+        recent: bool,
+    },
     /// Resolve a stream URL for an episode
     Url { episode_id: String },
     /// Resolve and play an episode via the configured player
@@ -131,7 +259,16 @@ enum Commands {
 #[derive(Subcommand)]
 enum BookmarksCommand {
     /// List saved bookmarks
-    Ls,
+    Ls {
+        #[arg(long, conflicts_with_all = ["in_progress", "next", "recent"])]
+        unwatched: bool,
+        #[arg(long, conflicts_with_all = ["unwatched", "next", "recent"])]
+        in_progress: bool,
+        #[arg(long, conflicts_with_all = ["unwatched", "in_progress", "recent"])]
+        next: bool,
+        #[arg(long, conflicts_with_all = ["unwatched", "in_progress", "next"])]
+        recent: bool,
+    },
     /// Add a bookmark by anime id
     Add {
         anime_id: String,
@@ -140,4 +277,50 @@ enum BookmarksCommand {
     },
     /// Remove a bookmark by anime id
     Rm { anime_id: String },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FilterChoice {
+    Unwatched,
+    InProgress,
+    Next,
+    Recent,
+}
+
+impl From<FilterChoice> for PlaybackFilter {
+    fn from(choice: FilterChoice) -> Self {
+        match choice {
+            FilterChoice::Unwatched => PlaybackFilter::Unwatched,
+            FilterChoice::InProgress => PlaybackFilter::InProgress,
+            FilterChoice::Next => PlaybackFilter::Next,
+            FilterChoice::Recent => PlaybackFilter::Recent,
+        }
+    }
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Debug, Default)]
+struct FilterArgs {
+    unwatched: bool,
+    in_progress: bool,
+    next: bool,
+    recent: bool,
+}
+
+impl FilterArgs {
+    fn selected(self) -> Option<PlaybackFilter> {
+        let choice = if self.unwatched {
+            Some(FilterChoice::Unwatched)
+        } else if self.in_progress {
+            Some(FilterChoice::InProgress)
+        } else if self.next {
+            Some(FilterChoice::Next)
+        } else if self.recent {
+            Some(FilterChoice::Recent)
+        } else {
+            None
+        };
+
+        choice.map(PlaybackFilter::from)
+    }
 }
