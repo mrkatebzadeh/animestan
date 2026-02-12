@@ -23,6 +23,7 @@ mod tests {
     fn cli_command() -> Command {
         let mut command = Command::new("cargo");
         command.args(["run", "-q", "-p", "animestan-cli", "--"]);
+        command.env("ANIMESTAN_USE_FIXTURES", "1");
         command
     }
 

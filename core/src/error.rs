@@ -13,6 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::io;
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -63,4 +66,20 @@ pub enum Error {
     EpisodeIdParse { episode_id: String },
     #[error("unable to resolve stream: {message}")]
     StreamResolution { message: String },
+    #[error("could not determine default config path")]
+    ConfigPathUnavailable,
+    #[error("failed to read config file at '{path}': {source}")]
+    ConfigRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse config file at '{path}': {source}")]
+    ConfigParse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("unknown source id '{source_id}'")]
+    UnknownSourceId { source_id: String },
 }

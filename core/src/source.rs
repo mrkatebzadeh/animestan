@@ -33,6 +33,13 @@ impl SourceCatalog {
     pub fn default_source(&self) -> Result<SourceDefinition, Error> {
         self.sources.first().cloned().ok_or(Error::EmptyCatalog)
     }
+
+    pub fn source_by_id(&self, source_id: &str) -> Option<SourceDefinition> {
+        self.sources
+            .iter()
+            .find(|source| source.id == source_id)
+            .cloned()
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
