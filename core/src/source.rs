@@ -18,6 +18,8 @@ use crate::models::SourceId;
 use serde::Deserialize;
 use url::Url;
 
+pub const ALLANIME_API_ENDPOINT: &str = "https://api.allanime.day/api";
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct SourceCatalog {
     pub sources: Vec<SourceDefinition>,
@@ -40,6 +42,24 @@ pub struct SourceDefinition {
     pub search: EndpointTemplate,
     pub episodes: EndpointTemplate,
     pub stream: EndpointTemplate,
+}
+
+impl SourceDefinition {
+    pub const ALLANIME_ID: &'static str = "allanime";
+
+    pub fn allanime() -> Self {
+        let endpoint = EndpointTemplate {
+            url_template: ALLANIME_API_ENDPOINT.to_string(),
+        };
+
+        Self {
+            id: Self::ALLANIME_ID.to_string(),
+            name: "AllAnime".to_string(),
+            search: endpoint.clone(),
+            episodes: endpoint.clone(),
+            stream: endpoint,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

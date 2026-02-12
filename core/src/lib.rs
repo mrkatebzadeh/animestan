@@ -19,6 +19,6 @@ mod fixtures;
 mod models;
 mod source;
 
-pub use crate::client::{AnimeClient, Fetcher};
+pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
 pub use crate::error::Error;
 pub use crate::models::{AnimeEntry, Episode, StreamLink};

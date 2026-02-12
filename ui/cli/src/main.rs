@@ -25,7 +25,7 @@ fn main() {
 
 fn run() -> Result<(), animestan_core::Error> {
     let cli = Cli::parse();
-    let client = AnimeClient::with_fixtures()?;
+    let client = AnimeClient::with_env()?;
 
     match cli.command {
         Commands::Search { query } => {
@@ -50,7 +50,12 @@ fn run() -> Result<(), animestan_core::Error> {
 }
 
 #[derive(Parser)]
-#[command(name = "animestan-cli", version, about = "Search demo fixtures", long_about = None)]
+#[command(
+    name = "animestan-cli",
+    version,
+    about = "Search live AllAnime by default (set ANIMESTAN_USE_FIXTURES=1 to use fixtures)",
+    long_about = None
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

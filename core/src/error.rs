@@ -31,6 +31,22 @@ pub enum Error {
         #[source]
         source: url::ParseError,
     },
+    #[error("failed to construct http client: {0}")]
+    HttpClient(#[source] reqwest::Error),
+    #[error("http request to '{url}' failed: {source}")]
+    HttpRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("unexpected http status {status} for '{url}'")]
+    HttpStatus { url: String, status: u16 },
+    #[error("failed to decode http body for '{url}': {source}")]
+    HttpBodyParse {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
     #[error("failed to parse response for '{url}': {source}")]
     ResponseParse {
         url: String,
@@ -43,4 +59,8 @@ pub enum Error {
         #[source]
         source: url::ParseError,
     },
+    #[error("failed to split episode id '{episode_id}'")]
+    EpisodeIdParse { episode_id: String },
+    #[error("unable to resolve stream: {message}")]
+    StreamResolution { message: String },
 }
