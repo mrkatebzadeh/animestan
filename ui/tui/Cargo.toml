@@ -1,0 +1,18 @@
+[package]
+name = "animestan-tui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+animestan-core = { path = "../../core" }
+crossterm = "0.28"
+ratatui = "0.28"
+serde_json = "1.0"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
