@@ -1,0 +1,65 @@
+// Copyright (C) 2026 M.R. Siavash Katebzadeg <mr@katebzadeh.xyz>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+use crate::error::Error;
+use crate::models::SourceId;
+use serde::Deserialize;
+use url::Url;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SourceCatalog {
+    pub sources: Vec<SourceDefinition>,
+}
+
+impl SourceCatalog {
+    pub fn load_from_str(json: &str) -> Result<Self, Error> {
+        serde_json::from_str(json).map_err(Error::CatalogFixture)
+    }
+
+    pub fn default_source(&self) -> Result<SourceDefinition, Error> {
+        self.sources.first().cloned().ok_or(Error::EmptyCatalog)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SourceDefinition {
+    pub id: SourceId,
+    pub name: String,
+    pub search: EndpointTemplate,
+    pub episodes: EndpointTemplate,
+    pub stream: EndpointTemplate,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EndpointTemplate {
+    pub url_template: String,
+}
+
+impl EndpointTemplate {
+    pub fn render(&self, params: &[(&str, &str)]) -> Result<Url, Error> {
+        let mut rendered = self.url_template.clone();
+
+        for (key, value) in params {
+            let placeholder = format!("{{{key}}}");
+            let encoded = urlencoding::encode(value);
+            rendered = rendered.replace(&placeholder, encoded.as_ref());
+        }
+
+        Url::parse(&rendered).map_err(|source| Error::InvalidUrl {
+            template: rendered,
+            source,
+        })
+    }
+}

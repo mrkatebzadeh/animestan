@@ -1,0 +1,11 @@
+{
+  "sources": [
+    {
+      "id": "demo",
+      "name": "Demo Source",
+      "search": { "url_template": "https://demo.api/search?query={query}" },
+      "episodes": { "url_template": "https://demo.api/anime/{anime_id}/episodes" },
+      "stream": { "url_template": "https://demo.api/stream/{episode_id}" }
+    }
+  ]
+}

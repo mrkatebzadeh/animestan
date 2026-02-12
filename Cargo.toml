@@ -1,7 +1,14 @@
-[package]
-name = "animestan"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = ["core", "ui/cli", "tests"]
 
-[dependencies]
-ratatui = "0.30.0"
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

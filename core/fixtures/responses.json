@@ -1,0 +1,15 @@
+{
+  "https://demo.api/search?query=naruto": [
+    { "id": "naruto", "title": "Naruto", "source_id": "demo" }
+  ],
+  "https://demo.api/anime/naruto/episodes": [
+    {
+      "id": "naruto-1",
+      "number": 1,
+      "title": "Enter: Naruto",
+      "anime_id": "naruto",
+      "source_id": "demo"
+    }
+  ],
+  "https://demo.api/stream/naruto-1": { "url": "https://stream.example/naruto-1.m3u8" }
+}
