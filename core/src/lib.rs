@@ -19,8 +19,10 @@ mod error;
 mod fixtures;
 mod models;
 mod source;
+mod tracking;
 
 pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
 pub use crate::config::AppConfig;
 pub use crate::error::Error;
 pub use crate::models::{AnimeEntry, Episode, StreamLink};
+pub use crate::tracking::EpisodeTracker;

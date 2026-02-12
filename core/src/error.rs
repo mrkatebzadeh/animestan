@@ -82,4 +82,22 @@ pub enum Error {
     },
     #[error("unknown source id '{source_id}'")]
     UnknownSourceId { source_id: String },
+    #[error("failed to read tracking file at '{path}': {source}")]
+    TrackingRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write tracking file at '{path}': {source}")]
+    TrackingWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse tracking file at '{path}': {source}")]
+    TrackingParse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
 }

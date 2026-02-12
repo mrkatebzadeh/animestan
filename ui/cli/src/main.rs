@@ -13,8 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use animestan_core::{AnimeClient, AppConfig};
+use animestan_core::{AnimeClient, AppConfig, EpisodeTracker};
 use clap::{Parser, Subcommand};
+use std::sync::{Arc, Mutex};
+
+mod playback;
 
 fn main() {
     if let Err(err) = run() {
@@ -23,7 +26,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), animestan_core::Error> {
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let config = AppConfig::load_default()?;
     let client = AnimeClient::from_config(&config)?;
@@ -44,6 +47,18 @@ fn run() -> Result<(), animestan_core::Error> {
         Commands::Url { episode_id } => {
             let link = client.resolve_stream_url(&episode_id)?;
             println!("{}", link.url);
+        }
+        Commands::Play { episode_id } => {
+            let link = client.resolve_stream_url(&episode_id)?;
+            let tracker = Arc::new(Mutex::new(EpisodeTracker::load_default(&config)?));
+            {
+                let mut guard = tracker
+                    .lock()
+                    .map_err(|_| std::io::Error::other("episode tracker lock poisoned"))?;
+                guard.mark_started(&episode_id)?;
+            }
+
+            playback::play_episode(&config, &tracker, &episode_id, link.url.as_str())?;
         }
     }
 
@@ -70,4 +85,6 @@ enum Commands {
     Episodes { anime_id: String },
     /// Resolve a stream URL for an episode
     Url { episode_id: String },
+    /// Resolve and play an episode via the configured player
+    Play { episode_id: String },
 }

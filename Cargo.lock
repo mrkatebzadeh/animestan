@@ -17,6 +17,7 @@ version = "0.1.0"
 dependencies = [
  "animestan-core",
  "clap",
+ "serde_json",
 ]
 
 [[package]]

@@ -32,12 +32,35 @@ pub struct AppConfig {
     pub player: Option<String>,
     #[serde(default)]
     pub quality: Option<String>,
+    #[serde(default)]
+    pub tracking_path: Option<String>,
 }
 
 impl AppConfig {
     #[must_use]
     pub fn default_path() -> PathBuf {
         Self::resolve_default_path().unwrap_or_else(|_| PathBuf::from("animestan/config.toml"))
+    }
+
+    #[must_use]
+    pub fn config_dir() -> PathBuf {
+        Self::default_path()
+            .parent()
+            .map_or_else(|| PathBuf::from("animestan"), Path::to_path_buf)
+    }
+
+    #[must_use]
+    pub fn progress_path(&self) -> PathBuf {
+        if let Some(path) = self.tracking_path.as_deref() {
+            let configured = PathBuf::from(path);
+            if configured.is_absolute() {
+                configured
+            } else {
+                Self::config_dir().join(configured)
+            }
+        } else {
+            Self::config_dir().join("progress.json")
+        }
     }
 
     /// Loads configuration from the default config path, falling back to an empty
