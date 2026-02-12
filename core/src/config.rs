@@ -34,6 +34,8 @@ pub struct AppConfig {
     pub quality: Option<String>,
     #[serde(default)]
     pub tracking_path: Option<String>,
+    #[serde(default)]
+    pub favorites_path: Option<String>,
 }
 
 impl AppConfig {
@@ -60,6 +62,20 @@ impl AppConfig {
             }
         } else {
             Self::config_dir().join("progress.json")
+        }
+    }
+
+    #[must_use]
+    pub fn favorites_path(&self) -> PathBuf {
+        if let Some(path) = self.favorites_path.as_deref() {
+            let configured = PathBuf::from(path);
+            if configured.is_absolute() {
+                configured
+            } else {
+                Self::config_dir().join(configured)
+            }
+        } else {
+            Self::config_dir().join("favorites.json")
         }
     }
 

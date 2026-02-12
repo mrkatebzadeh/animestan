@@ -13,7 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use animestan_core::{AnimeClient, AppConfig, EpisodeTracker};
+use animestan_core::{
+    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore,
+};
 use clap::{Parser, Subcommand};
 use std::sync::{Arc, Mutex};
 
@@ -60,6 +62,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             playback::play_episode(&config, &tracker, &episode_id, link.url.as_str())?;
         }
+        Commands::Bookmarks { command } => match command {
+            BookmarksCommand::Ls => {
+                let store = FavoriteStore::load_default(&config)?;
+                let entries: Vec<FavoriteEntry> = store.list();
+                for favorite in entries {
+                    println!("{}\t{}", favorite.anime.id, favorite.anime.title);
+                }
+            }
+            BookmarksCommand::Add { anime_id, title } => {
+                let mut store = FavoriteStore::load_default(&config)?;
+                let source_id = config
+                    .source_id
+                    .clone()
+                    .unwrap_or_else(|| "allanime".to_string());
+                let anime_entry = AnimeEntry {
+                    id: anime_id.clone(),
+                    title: title.unwrap_or_else(|| anime_id.clone()),
+                    source_id,
+                };
+                store.add(anime_entry)?;
+                println!("Added bookmark '{anime_id}'");
+            }
+            BookmarksCommand::Rm { anime_id } => {
+                let mut store = FavoriteStore::load_default(&config)?;
+                let removed = store.remove(&anime_id)?;
+                if removed {
+                    println!("Removed bookmark '{anime_id}'");
+                } else {
+                    println!("No bookmark found for '{anime_id}'");
+                }
+            }
+        },
     }
 
     Ok(())
@@ -87,4 +121,23 @@ enum Commands {
     Url { episode_id: String },
     /// Resolve and play an episode via the configured player
     Play { episode_id: String },
+    /// Manage bookmarks
+    Bookmarks {
+        #[command(subcommand)]
+        command: BookmarksCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum BookmarksCommand {
+    /// List saved bookmarks
+    Ls,
+    /// Add a bookmark by anime id
+    Add {
+        anime_id: String,
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// Remove a bookmark by anime id
+    Rm { anime_id: String },
 }

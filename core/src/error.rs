@@ -100,4 +100,22 @@ pub enum Error {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to read favorites file at '{path}': {source}")]
+    FavoritesRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write favorites file at '{path}': {source}")]
+    FavoritesWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse favorites file at '{path}': {source}")]
+    FavoritesParse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
 }

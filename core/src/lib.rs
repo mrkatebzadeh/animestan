@@ -16,6 +16,7 @@
 mod client;
 mod config;
 mod error;
+mod favorites;
 mod fixtures;
 mod models;
 mod source;
@@ -24,5 +25,6 @@ mod tracking;
 pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
 pub use crate::config::AppConfig;
 pub use crate::error::Error;
+pub use crate::favorites::{FavoriteEntry, FavoriteStore};
 pub use crate::models::{AnimeEntry, Episode, StreamLink};
 pub use crate::tracking::EpisodeTracker;
