@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use animestan_core::AnimeClient;
+use animestan_core::{AnimeClient, AppConfig};
 use clap::{Parser, Subcommand};
 
 fn main() {
@@ -25,7 +25,8 @@ fn main() {
 
 fn run() -> Result<(), animestan_core::Error> {
     let cli = Cli::parse();
-    let client = AnimeClient::with_env()?;
+    let config = AppConfig::load_default()?;
+    let client = AnimeClient::from_config(&config)?;
 
     match cli.command {
         Commands::Search { query } => {
@@ -49,13 +50,13 @@ fn run() -> Result<(), animestan_core::Error> {
     Ok(())
 }
 
+const ABOUT: &str = concat!(
+    "Search live AllAnime by default. ",
+    "Edit ~/.config/animestan/config.toml or set ANIMESTAN_USE_FIXTURES=1 to use fixtures."
+);
+
 #[derive(Parser)]
-#[command(
-    name = "animestan-cli",
-    version,
-    about = "Search live AllAnime by default (set ANIMESTAN_USE_FIXTURES=1 to use fixtures)",
-    long_about = None
-)]
+#[command(name = "animestan-cli", version, about = ABOUT, long_about = ABOUT)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

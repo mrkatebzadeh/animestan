@@ -24,6 +24,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::config::AppConfig;
 use crate::error::Error;
 use crate::fixtures;
 use crate::models::{AnimeEntry, Episode, StreamLink};
@@ -176,15 +177,40 @@ impl AnimeClient<FetchBackend> {
     /// Returns an error if fixture data cannot be loaded or the HTTP client cannot be
     /// constructed.
     pub fn with_env() -> Result<Self, Error> {
-        if fixtures_fetch_enabled() {
-            let catalog = fixtures::load_catalog()?;
-            let source = catalog.default_source()?;
+        let config = AppConfig::load_default()?;
+        Self::from_config(&config)
+    }
+
+    /// Builds an [`AnimeClient`] from the provided configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if fixture data must be loaded but is unavailable or malformed, or the
+    /// HTTP client cannot be constructed.
+    pub fn from_config(config: &AppConfig) -> Result<Self, Error> {
+        let use_fixtures = config.use_fixtures.unwrap_or_else(fixtures_fetch_enabled);
+
+        if use_fixtures {
+            let source = Self::select_fixture_source(config)?;
             let fetcher = FetchBackend::fixtures()?;
             Ok(Self { source, fetcher })
         } else {
             let source = SourceDefinition::allanime();
             let fetcher = FetchBackend::http()?;
             Ok(Self { source, fetcher })
+        }
+    }
+
+    fn select_fixture_source(config: &AppConfig) -> Result<SourceDefinition, Error> {
+        let catalog = fixtures::load_catalog()?;
+        if let Some(source_id) = config.source_id.as_deref() {
+            catalog
+                .source_by_id(source_id)
+                .ok_or_else(|| Error::UnknownSourceId {
+                    source_id: source_id.to_string(),
+                })
+        } else {
+            catalog.default_source()
         }
     }
 }

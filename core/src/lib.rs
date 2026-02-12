@@ -14,11 +14,13 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 mod client;
+mod config;
 mod error;
 mod fixtures;
 mod models;
 mod source;
 
 pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
+pub use crate::config::AppConfig;
 pub use crate::error::Error;
 pub use crate::models::{AnimeEntry, Episode, StreamLink};
