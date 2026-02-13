@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use reqwest::blocking::Client;
+use spdlog::prelude::*;
 use url::Url;
 
 use crate::config::AppConfig;
@@ -52,6 +53,7 @@ pub fn download_episode(
     episode_id: &str,
     stream_url: &Url,
 ) -> Result<PathBuf, Error> {
+    info!("starting download for '{episode_id}' from {stream_url}");
     let downloads_dir = config.downloads_dir();
     fs::create_dir_all(&downloads_dir).map_err(|source| Error::DownloadCreateDir {
         path: downloads_dir.clone(),
@@ -60,6 +62,17 @@ pub fn download_episode(
 
     let target_path = episode_file_path(config, episode_id);
     let temp_path = downloads_dir.join(format!("{episode_id}.mp4.part"));
+    if target_path.exists() {
+        warn!(
+            "local file already exists for '{episode_id}', overwriting {}",
+            target_path.display()
+        );
+    }
+    debug!(
+        "download paths for '{episode_id}': temp={}, final={}",
+        temp_path.display(),
+        target_path.display()
+    );
     let remote_url = Url::parse(stream_url.as_str()).map_err(Error::DownloadUrl)?;
     let url_display = remote_url.to_string();
 
@@ -104,6 +117,10 @@ pub fn download_episode(
         source,
     })?;
 
+    info!(
+        "completed download for '{episode_id}' at {}",
+        target_path.display()
+    );
     Ok(target_path)
 }
 

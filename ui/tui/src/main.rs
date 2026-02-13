@@ -24,26 +24,32 @@ use std::time::Duration;
 
 use animestan_core::{
     AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, delete_episode,
-    download_episode, episode_file_path, local_playback_url,
+    download_episode, episode_file_path, init_logging, local_playback_url,
 };
+use clap::Parser;
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use spdlog::prelude::*;
 
 use crate::app::App;
 use crate::events::{Event, EventHandler};
 
 fn main() -> io::Result<()> {
+    let args = Args::parse();
+    let config = AppConfig::load_default().map_err(to_io_error)?;
+    init_logging("animestan-tui", args.verbosity, &config, false).map_err(to_io_error)?;
+    info!("launching animestan-tui");
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    run_app(&mut terminal)?;
+    run_app(&mut terminal, &config)?;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -52,14 +58,16 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
-    let config = AppConfig::load_default().map_err(to_io_error)?;
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    config: &AppConfig,
+) -> io::Result<()> {
     let tracker = Arc::new(Mutex::new(
-        EpisodeTracker::load_default(&config).map_err(to_io_error)?,
+        EpisodeTracker::load_default(config).map_err(to_io_error)?,
     ));
-    let mut favorites = FavoriteStore::load_default(&config).map_err(to_io_error)?;
+    let mut favorites = FavoriteStore::load_default(config).map_err(to_io_error)?;
     let mut refresh_favorites = false;
-    let client = AnimeClient::from_config(&config).map_err(to_io_error)?;
+    let client = AnimeClient::from_config(config).map_err(to_io_error)?;
 
     let mut app = App::new();
     initialize_app(&mut app, &client);
@@ -74,20 +82,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> 
             Event::Tick => {}
         }
 
-        handle_bookmarks_refresh(&mut app, &config, &mut favorites, &mut refresh_favorites);
+        handle_bookmarks_refresh(&mut app, config, &mut favorites, &mut refresh_favorites);
 
         handle_search(&mut app, &client, &tracker);
         handle_filters(&mut app, &client, &tracker);
 
-        if handle_download(&mut app, &config, &client) {
+        if handle_download(&mut app, config, &client) {
             continue;
         }
 
-        if handle_delete(&mut app, &config) {
+        if handle_delete(&mut app, config) {
             continue;
         }
 
-        if handle_playback(&mut app, &config, &tracker, &client) {
+        if handle_playback(&mut app, config, &tracker, &client) {
             continue;
         }
 
@@ -197,11 +205,16 @@ fn handle_download(app: &mut App, config: &AppConfig, client: &AnimeClient<Fetch
         return true;
     };
 
+    info!("download requested from TUI for '{episode_id}'");
     let episode_title = app.current_episode_title();
 
     if local_playback_url(config, &episode_id).is_some() {
         let path = episode_file_path(config, &episode_id);
         app.set_details(format!("Episode already downloaded at {}", path.display()));
+        info!(
+            "episode '{episode_id}' already downloaded locally at {}",
+            path.display()
+        );
         return true;
     }
 
@@ -215,6 +228,10 @@ fn handle_download(app: &mut App, config: &AppConfig, client: &AnimeClient<Fetch
 
     match download_episode(config, &episode_id, &stream.url) {
         Ok(saved_path) => {
+            info!(
+                "downloaded episode '{episode_id}' to {}",
+                saved_path.display()
+            );
             if let Some(title) = episode_title {
                 app.set_details(format!("Downloaded {title} to {}", saved_path.display()));
             } else {
@@ -239,9 +256,11 @@ fn handle_delete(app: &mut App, config: &AppConfig) -> bool {
         return true;
     };
 
+    info!("delete requested from TUI for '{episode_id}'");
     let episode_title = app.current_episode_title();
     match delete_episode(config, &episode_id) {
         Ok(true) => {
+            info!("deleted download for '{episode_id}'");
             if let Some(title) = episode_title {
                 app.set_details(format!("Deleted download for {title}"));
             } else {
@@ -249,6 +268,7 @@ fn handle_delete(app: &mut App, config: &AppConfig) -> bool {
             }
         }
         Ok(false) => {
+            info!("no download found for '{episode_id}'");
             app.set_details("No download found to delete.");
         }
         Err(err) => {
@@ -290,6 +310,11 @@ fn handle_playback(
             (stream.url.to_string(), false)
         };
 
+    info!(
+        "playback requested for '{episode_id}' using {} source",
+        if using_local { "local" } else { "remote" }
+    );
+
     if let Err(err) = mark_episode_started(tracker, &episode_id) {
         app.set_details(format!("Playback failed: {err}"));
         return true;
@@ -316,6 +341,12 @@ fn handle_playback(
     }
 
     false
+}
+
+#[derive(Parser)]
+struct Args {
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+    verbosity: u8,
 }
 
 fn to_io_error(err: animestan_core::Error) -> io::Error {

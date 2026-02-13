@@ -103,6 +103,24 @@ impl AppConfig {
         Self::data_dir().join("downloads")
     }
 
+    #[must_use]
+    pub fn logs_dir(&self) -> PathBuf {
+        let _ = self;
+
+        if cfg!(target_os = "linux") {
+            if let Some(base_dirs) = BaseDirs::new() {
+                let mut path = base_dirs.home_dir().to_path_buf();
+                path.push(".local");
+                path.push("share");
+                path.push("animestan");
+                path.push("logs");
+                return path;
+            }
+        }
+
+        Self::data_dir().join("logs")
+    }
+
     /// Loads configuration from the default config path, falling back to an empty
     /// [`AppConfig`] when the file is absent.
     ///

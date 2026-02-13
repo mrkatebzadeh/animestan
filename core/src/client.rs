@@ -22,6 +22,7 @@ use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use spdlog::prelude::*;
 use url::Url;
 
 use crate::config::AppConfig;
@@ -227,15 +228,20 @@ impl<F: Fetcher> AnimeClient<F> {
     /// Returns an error if the search URL cannot be rendered, the fetcher fails to retrieve
     /// JSON, or the payload cannot be parsed into [`AnimeEntry`] values.
     pub fn search(&self, query: &str) -> Result<Vec<AnimeEntry>, Error> {
-        if self.uses_allanime() {
-            return self.search_allanime(query);
-        }
+        info!("searching query '{query}' via {}", self.source.id);
 
-        let url = self.source.search.render(&[("query", query)])?;
-        let mut entries: Vec<AnimeEntry> = self.fetch_and_parse(&url)?;
-        for entry in &mut entries {
-            entry.source_id.clone_from(&self.source.id);
-        }
+        let entries = if self.uses_allanime() {
+            self.search_allanime(query)?
+        } else {
+            let url = self.source.search.render(&[("query", query)])?;
+            let mut entries: Vec<AnimeEntry> = self.fetch_and_parse(&url)?;
+            for entry in &mut entries {
+                entry.source_id.clone_from(&self.source.id);
+            }
+            entries
+        };
+
+        Self::log_result_count("search", query, entries.len());
         Ok(entries)
     }
 
@@ -246,15 +252,20 @@ impl<F: Fetcher> AnimeClient<F> {
     /// Returns an error if the episodes URL cannot be rendered, the fetcher fails to retrieve
     /// JSON, or the payload cannot be parsed into [`Episode`] values.
     pub fn list_episodes(&self, anime_id: &str) -> Result<Vec<Episode>, Error> {
-        if self.uses_allanime() {
-            return self.list_episodes_allanime(anime_id);
-        }
+        info!("listing episodes for '{anime_id}' via {}", self.source.id);
 
-        let url = self.source.episodes.render(&[("anime_id", anime_id)])?;
-        let mut episodes: Vec<Episode> = self.fetch_and_parse(&url)?;
-        for episode in &mut episodes {
-            episode.source_id.clone_from(&self.source.id);
-        }
+        let episodes = if self.uses_allanime() {
+            self.list_episodes_allanime(anime_id)?
+        } else {
+            let url = self.source.episodes.render(&[("anime_id", anime_id)])?;
+            let mut episodes: Vec<Episode> = self.fetch_and_parse(&url)?;
+            for episode in &mut episodes {
+                episode.source_id.clone_from(&self.source.id);
+            }
+            episodes
+        };
+
+        Self::log_result_count("episode listing", anime_id, episodes.len());
         Ok(episodes)
     }
 
@@ -265,22 +276,27 @@ impl<F: Fetcher> AnimeClient<F> {
     /// Returns an error if the stream URL cannot be rendered, the fetcher fails to retrieve
     /// JSON, the payload cannot be parsed, or the returned URL is invalid.
     pub fn resolve_stream_url(&self, episode_id: &str) -> Result<StreamLink, Error> {
-        if self.uses_allanime() {
-            return self.resolve_stream_url_allanime(episode_id);
-        }
+        info!("resolving stream for '{episode_id}' via {}", self.source.id);
 
-        let url = self.source.stream.render(&[("episode_id", episode_id)])?;
-        let payload: StreamPayload = self.fetch_and_parse(&url)?;
-        let stream_url = Url::parse(&payload.url).map_err(|source| Error::StreamUrlParse {
-            url: payload.url.clone(),
-            source,
-        })?;
+        let link = if self.uses_allanime() {
+            self.resolve_stream_url_allanime(episode_id)?
+        } else {
+            let url = self.source.stream.render(&[("episode_id", episode_id)])?;
+            let payload: StreamPayload = self.fetch_and_parse(&url)?;
+            let stream_url = Url::parse(&payload.url).map_err(|source| Error::StreamUrlParse {
+                url: payload.url.clone(),
+                source,
+            })?;
 
-        Ok(StreamLink {
-            url: stream_url,
-            episode_id: episode_id.to_owned(),
-            source_id: self.source.id.clone(),
-        })
+            StreamLink {
+                url: stream_url,
+                episode_id: episode_id.to_owned(),
+                source_id: self.source.id.clone(),
+            }
+        };
+
+        debug!("resolved stream for '{episode_id}' to {}", link.url);
+        Ok(link)
     }
 
     fn search_allanime(&self, query: &str) -> Result<Vec<AnimeEntry>, Error> {
@@ -376,6 +392,14 @@ impl<F: Fetcher> AnimeClient<F> {
             episode_id: episode_id.to_string(),
             source_id: self.source.id.clone(),
         })
+    }
+
+    fn log_result_count(action: &str, subject: &str, count: usize) {
+        if count == 0 {
+            warn!("{action} returned no results for '{subject}'");
+        } else {
+            debug!("{action} returned {count} results for '{subject}'");
+        }
     }
 
     fn fetch_and_parse<T>(&self, url: &Url) -> Result<T, Error>

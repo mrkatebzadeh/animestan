@@ -21,6 +21,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use spdlog::prelude::*;
 
 use crate::{
     config::AppConfig,
@@ -57,6 +58,7 @@ impl EpisodeTracker {
     pub fn load(path: PathBuf) -> Result<Self, Error> {
         match fs::read_to_string(&path) {
             Ok(contents) => {
+                debug!("loaded playback progress from {}", path.display());
                 let store: ProgressStore =
                     serde_json::from_str(&contents).map_err(|source| Error::TrackingParse {
                         path: path.clone(),
@@ -64,10 +66,16 @@ impl EpisodeTracker {
                     })?;
                 Ok(Self { path, store })
             }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self {
-                path,
-                store: ProgressStore::default(),
-            }),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                debug!(
+                    "no playback progress file at {}, starting empty",
+                    path.display()
+                );
+                Ok(Self {
+                    path,
+                    store: ProgressStore::default(),
+                })
+            }
             Err(source) => Err(Error::TrackingRead { path, source }),
         }
     }
@@ -133,6 +141,7 @@ impl EpisodeTracker {
             .or_default();
         entry.watched = true;
         entry.updated_at = now_epoch();
+        info!("marked '{episode_id}' as watched");
         self.save()
     }
 
@@ -237,6 +246,7 @@ impl EpisodeTracker {
             path: self.path.clone(),
             source,
         })?;
+        debug!("saved playback progress to {}", self.path.display());
         Ok(())
     }
 }

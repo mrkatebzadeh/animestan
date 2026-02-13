@@ -16,6 +16,7 @@
 use std::io;
 use std::path::PathBuf;
 
+use spdlog::Error as SpdlogError;
 use thiserror::Error;
 use url::ParseError;
 
@@ -151,4 +152,17 @@ pub enum Error {
     },
     #[error("failed to parse download url: {0}")]
     DownloadUrl(#[source] ParseError),
+    #[error("logging initialization mutex poisoned")]
+    LoggingPoison,
+    #[error("failed to initialize logging: {source}")]
+    LoggingInit {
+        #[source]
+        source: SpdlogError,
+    },
+    #[error("failed to prepare logs directory at '{path}': {source}")]
+    LoggingIo {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
 }

@@ -19,6 +19,7 @@ mod downloads;
 mod error;
 mod favorites;
 mod fixtures;
+mod logging;
 mod models;
 mod source;
 mod tracking;
@@ -30,5 +31,6 @@ pub use crate::downloads::{
 };
 pub use crate::error::Error;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
+pub use crate::logging::init_logging;
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::tracking::EpisodeTracker;

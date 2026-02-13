@@ -13,12 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::{Arc, Mutex};
+
 use animestan_core::{
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter, delete_episode, download_episode, episode_file_path, local_playback_url,
+    PlaybackFilter, delete_episode, download_episode, episode_file_path, init_logging,
+    local_playback_url,
 };
 use clap::{Parser, Subcommand};
-use std::sync::{Arc, Mutex};
+use spdlog::prelude::*;
 
 mod playback;
 
@@ -34,6 +37,8 @@ fn main() {
 fn run() -> CliResult {
     let cli = Cli::parse();
     let config = AppConfig::load_default()?;
+    init_logging("animestan-cli", cli.verbosity, &config, true)?;
+    info!("starting CLI command: {}", describe_command(&cli.command));
     let client = AnimeClient::from_config(&config)?;
 
     match cli.command {
@@ -142,6 +147,7 @@ fn handle_download(
     episode_id: &str,
 ) -> CliResult {
     if let Some(local_url) = local_playback_url(config, episode_id) {
+        info!("download requested for '{episode_id}' but file already exists");
         let path = episode_file_path(config, episode_id);
         println!(
             "Episode '{episode_id}' already downloaded at {} ({}), skipping",
@@ -151,16 +157,21 @@ fn handle_download(
         return Ok(());
     }
 
+    info!("downloading episode '{episode_id}' via CLI");
     let link = client.resolve_stream_url(episode_id)?;
     let saved_path = download_episode(config, episode_id, &link.url)?;
+    info!("episode '{episode_id}' saved to {}", saved_path.display());
     println!("{}", saved_path.display());
     Ok(())
 }
 
 fn handle_delete(config: &AppConfig, episode_id: &str) -> CliResult {
+    info!("deleting download for '{episode_id}' via CLI");
     if delete_episode(config, episode_id)? {
+        info!("deleted download for '{episode_id}'");
         println!("Deleted download for '{episode_id}'");
     } else {
+        info!("no download found for '{episode_id}'");
         println!("No download found for '{episode_id}'");
     }
     Ok(())
@@ -273,6 +284,8 @@ const ABOUT: &str = concat!(
 #[derive(Parser)]
 #[command(name = "animestan-cli", version, about = ABOUT, long_about = ABOUT)]
 struct Cli {
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+    verbosity: u8,
     #[command(subcommand)]
     command: Commands,
 }
@@ -374,5 +387,21 @@ impl FilterArgs {
         };
 
         choice.map(PlaybackFilter::from)
+    }
+}
+
+fn describe_command(command: &Commands) -> &'static str {
+    match command {
+        Commands::Search { .. } => "search",
+        Commands::Episodes { .. } => "episodes",
+        Commands::Url { .. } => "url",
+        Commands::Play { .. } => "play",
+        Commands::Download { .. } => "download",
+        Commands::Delete { .. } => "delete",
+        Commands::Bookmarks { command } => match command {
+            BookmarksCommand::Ls { .. } => "bookmarks::ls",
+            BookmarksCommand::Add { .. } => "bookmarks::add",
+            BookmarksCommand::Rm { .. } => "bookmarks::rm",
+        },
     }
 }
