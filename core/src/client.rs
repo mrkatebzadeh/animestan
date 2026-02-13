@@ -19,9 +19,9 @@ use std::str;
 
 use reqwest::blocking::Client as BlockingHttpClient;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use spdlog::prelude::*;
 use url::Url;
 
@@ -29,7 +29,7 @@ use crate::config::AppConfig;
 use crate::error::Error;
 use crate::fixtures;
 use crate::models::{AnimeEntry, Episode, StreamLink};
-use crate::source::{SourceDefinition, ALLANIME_API_ENDPOINT};
+use crate::source::{ALLANIME_API_ENDPOINT, SourceDefinition};
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
 const ALLANIME_TRANSLATION: &str = "sub";
@@ -379,6 +379,20 @@ impl<F: Fetcher> AnimeClient<F> {
             })?;
 
         let decoded = decode_source_url(&source.source_url)?;
+        if (decoded.starts_with("http://") || decoded.starts_with("https://"))
+            && !decoded.contains("/clock")
+        {
+            let url = Url::parse(&decoded).map_err(|source| Error::StreamUrlParse {
+                url: decoded.clone(),
+                source,
+            })?;
+
+            return Ok(StreamLink {
+                url,
+                episode_id: episode_id.to_string(),
+                source_id: self.source.id.clone(),
+            });
+        }
         let embed_url = build_allanime_embed_url(&decoded)?;
         let payload = self.fetcher.fetch_json(&embed_url)?;
         let stream_url = select_stream_url(&payload)?;
@@ -542,9 +556,29 @@ fn build_allanime_embed_url(decoded: &str) -> Result<Url, Error> {
 }
 
 fn select_source_url(sources: &[AllAnimeSourceUrl]) -> Option<&AllAnimeSourceUrl> {
-    sources
-        .iter()
-        .find(|source| source.source_name.as_deref() == Some("Default"))
+    let mut first_encoded = None;
+    let mut encoded_default = None;
+
+    for source in sources {
+        if source.source_url.trim_start().starts_with('-') {
+            if first_encoded.is_none() {
+                first_encoded = Some(source);
+            }
+
+            if source.source_name.as_deref() == Some("Default") {
+                encoded_default = Some(source);
+                break;
+            }
+        }
+    }
+
+    encoded_default
+        .or(first_encoded)
+        .or_else(|| {
+            sources
+                .iter()
+                .find(|source| source.source_name.as_deref() == Some("Default"))
+        })
         .or_else(|| sources.first())
 }
 
@@ -564,7 +598,26 @@ fn split_episode_id(episode_id: &str) -> Result<(String, String), Error> {
 }
 
 fn decode_source_url(encoded: &str) -> Result<String, Error> {
-    let stripped = encoded.trim_start_matches('-');
+    let normalize_clock = |value: &str| value.replace("/clock", "/clock.json");
+
+    if encoded.starts_with("http://") || encoded.starts_with("https://") {
+        return Ok(normalize_clock(encoded));
+    }
+
+    if encoded.starts_with('/') {
+        return Ok(normalize_clock(encoded));
+    }
+
+    let stripped = if let Some(rest) = encoded.strip_prefix("--") {
+        rest
+    } else if let Some(rest) = encoded.strip_prefix('-') {
+        rest
+    } else {
+        return Err(Error::StreamResolution {
+            message: "unsupported source URL format".to_string(),
+        });
+    };
+
     if stripped.len() % 2 != 0 {
         return Err(Error::StreamResolution {
             message: "invalid encoded source length".to_string(),
@@ -583,7 +636,7 @@ fn decode_source_url(encoded: &str) -> Result<String, Error> {
         decoded.push(ch);
     }
 
-    Ok(decoded.replace("/clock", "/clock.json"))
+    Ok(normalize_clock(&decoded))
 }
 
 #[allow(clippy::too_many_lines)]

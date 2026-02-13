@@ -24,7 +24,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 #[cfg(unix)]
 use std::{
     io::{BufRead, BufReader, Write},
@@ -58,8 +58,13 @@ fn play_episode_inner(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (binary, extra_args) = player_command(config);
     let mut command = Command::new(&binary);
+    command.args(&extra_args);
+
+    if is_mpv(&binary) && needs_allanime_referer(stream_url) {
+        command.arg("--referrer=https://allmanga.to");
+    }
+
     command
-        .args(&extra_args)
         .arg(stream_url)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -120,8 +125,13 @@ fn play_episode_inner(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (binary, extra_args) = player_command(config);
     let mut command = Command::new(&binary);
+    command.args(&extra_args);
+
+    if is_mpv(&binary) && needs_allanime_referer(stream_url) {
+        command.arg("--referrer=https://allmanga.to");
+    }
+
     command
-        .args(&extra_args)
         .arg(stream_url)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -152,6 +162,10 @@ fn is_mpv(binary: &str) -> bool {
     PathBuf::from(binary)
         .file_name()
         .is_some_and(|name| name == OsStr::new("mpv"))
+}
+
+fn needs_allanime_referer(stream_url: &str) -> bool {
+    stream_url.contains("tools.fast4speed.rsvp")
 }
 
 fn socket_path(pid: u32) -> PathBuf {
