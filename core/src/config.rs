@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use directories_next::{BaseDirs, ProjectDirs};
 use serde::Deserialize;
 
-use crate::error::Error;
+use crate::{CoreResult, error::Error};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct AppConfig {
@@ -128,12 +128,12 @@ impl AppConfig {
     ///
     /// Returns an error if the config directory cannot be determined, the file
     /// cannot be read from disk, or its contents cannot be parsed.
-    pub fn load_default() -> Result<Self, Error> {
+    pub fn load_default() -> CoreResult<Self> {
         let path = Self::resolve_default_path()?;
         match fs::read_to_string(&path) {
             Ok(contents) => Self::parse(&contents, path),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(source) => Err(Error::ConfigRead { path, source }),
+            Err(source) => Err(Error::ConfigRead { path, source }.into()),
         }
     }
 
@@ -143,7 +143,7 @@ impl AppConfig {
     ///
     /// Returns an error if the file cannot be read from disk or if the
     /// contents fail to parse.
-    pub fn load_from(path: impl AsRef<Path>) -> Result<Self, Error> {
+    pub fn load_from(path: impl AsRef<Path>) -> CoreResult<Self> {
         let path = path.as_ref().to_path_buf();
         let contents = fs::read_to_string(&path).map_err(|source| Error::ConfigRead {
             path: path.clone(),
@@ -152,7 +152,7 @@ impl AppConfig {
         Self::parse(&contents, path)
     }
 
-    fn resolve_default_path() -> Result<PathBuf, Error> {
+    fn resolve_default_path() -> CoreResult<PathBuf> {
         if let Some(project_dirs) = ProjectDirs::from("xyz", "Animestan", "animestan") {
             return Ok(project_dirs.config_dir().join("config.toml"));
         }
@@ -168,10 +168,12 @@ impl AppConfig {
             }
         }
 
-        Err(Error::ConfigPathUnavailable)
+        Err(Error::ConfigPathUnavailable.into())
     }
 
-    fn parse(contents: &str, path: PathBuf) -> Result<Self, Error> {
-        toml::from_str(contents).map_err(|source| Error::ConfigParse { path, source })
+    fn parse(contents: &str, path: PathBuf) -> CoreResult<Self> {
+        let config =
+            toml::from_str(contents).map_err(|source| Error::ConfigParse { path, source })?;
+        Ok(config)
     }
 }

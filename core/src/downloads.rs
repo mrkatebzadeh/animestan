@@ -22,8 +22,7 @@ use reqwest::blocking::Client;
 use spdlog::prelude::*;
 use url::Url;
 
-use crate::config::AppConfig;
-use crate::error::Error;
+use crate::{CoreResult, config::AppConfig, error::Error};
 
 const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
 
@@ -52,7 +51,7 @@ pub fn download_episode(
     config: &AppConfig,
     episode_id: &str,
     stream_url: &Url,
-) -> Result<PathBuf, Error> {
+) -> CoreResult<PathBuf> {
     info!("starting download for '{episode_id}' from {stream_url}");
     let downloads_dir = config.downloads_dir();
     fs::create_dir_all(&downloads_dir).map_err(|source| Error::DownloadCreateDir {
@@ -130,7 +129,7 @@ pub fn download_episode(
 ///
 /// Returns an error when the filesystem fails to remove the file for reasons
 /// other than the file being missing.
-pub fn delete_episode(config: &AppConfig, episode_id: &str) -> Result<bool, Error> {
+pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> {
     let path = episode_file_path(config, episode_id);
     if !path.exists() {
         return Ok(false);
@@ -139,6 +138,6 @@ pub fn delete_episode(config: &AppConfig, episode_id: &str) -> Result<bool, Erro
     match fs::remove_file(&path) {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(Error::DownloadRemove { path, source }),
+        Err(source) => Err(Error::DownloadRemove { path, source }.into()),
     }
 }

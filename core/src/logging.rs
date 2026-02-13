@@ -17,11 +17,11 @@ use std::fs;
 use std::sync::{Mutex, OnceLock};
 
 use spdlog::{
-    sink::{FileSink, StdStreamSink},
     Level, LevelFilter, Logger,
+    sink::{FileSink, StdStreamSink},
 };
 
-use crate::{config::AppConfig, error::Error};
+use crate::{CoreResult, config::AppConfig, error::Error};
 
 static LOGGER_STATE: OnceLock<()> = OnceLock::new();
 static LOGGER_MUTEX: Mutex<()> = Mutex::new(());
@@ -39,7 +39,7 @@ pub fn init_logging(
     verbosity: u8,
     config: &AppConfig,
     console: bool,
-) -> Result<(), Error> {
+) -> CoreResult<()> {
     if LOGGER_STATE.get().is_some() {
         return Ok(());
     }
@@ -59,7 +59,7 @@ fn configure_logger(
     verbosity: u8,
     config: &AppConfig,
     console: bool,
-) -> Result<(), Error> {
+) -> CoreResult<()> {
     let logs_dir = config.logs_dir();
     fs::create_dir_all(&logs_dir).map_err(|source| Error::LoggingIo {
         path: logs_dir.clone(),

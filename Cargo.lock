@@ -31,6 +31,7 @@ name = "animestan-cli"
 version = "0.1.0"
 dependencies = [
  "animestan-core",
+ "anyhow",
  "clap",
  "serde_json",
  "spdlog-rs",
@@ -40,6 +41,7 @@ dependencies = [
 name = "animestan-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "directories-next",
  "reqwest",
  "serde",
@@ -64,6 +66,7 @@ name = "animestan-tui"
 version = "0.1.0"
 dependencies = [
  "animestan-core",
+ "anyhow",
  "clap",
  "crossterm",
  "nucleo",
@@ -121,6 +124,12 @@ dependencies = [
  "once_cell_polyfill",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.101"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "arc-swap"

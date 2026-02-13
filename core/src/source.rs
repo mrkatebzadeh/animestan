@@ -13,8 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::error::Error;
-use crate::models::SourceId;
+use crate::{CoreResult, error::Error, models::SourceId};
 use serde::Deserialize;
 use url::Url;
 
@@ -26,12 +25,16 @@ pub struct SourceCatalog {
 }
 
 impl SourceCatalog {
-    pub fn load_from_str(json: &str) -> Result<Self, Error> {
-        serde_json::from_str(json).map_err(Error::CatalogFixture)
+    pub fn load_from_str(json: &str) -> CoreResult<Self> {
+        let catalog = serde_json::from_str(json).map_err(Error::CatalogFixture)?;
+        Ok(catalog)
     }
 
-    pub fn default_source(&self) -> Result<SourceDefinition, Error> {
-        self.sources.first().cloned().ok_or(Error::EmptyCatalog)
+    pub fn default_source(&self) -> CoreResult<SourceDefinition> {
+        self.sources
+            .first()
+            .cloned()
+            .ok_or_else(|| Error::EmptyCatalog.into())
     }
 
     pub fn source_by_id(&self, source_id: &str) -> Option<SourceDefinition> {
@@ -75,7 +78,7 @@ pub struct EndpointTemplate {
 }
 
 impl EndpointTemplate {
-    pub fn render(&self, params: &[(&str, &str)]) -> Result<Url, Error> {
+    pub fn render(&self, params: &[(&str, &str)]) -> CoreResult<Url> {
         let mut rendered = self.url_template.clone();
 
         for (key, value) in params {
@@ -84,9 +87,10 @@ impl EndpointTemplate {
             rendered = rendered.replace(&placeholder, encoded.as_ref());
         }
 
-        Url::parse(&rendered).map_err(|source| Error::InvalidUrl {
+        let url = Url::parse(&rendered).map_err(|source| Error::InvalidUrl {
             template: rendered,
             source,
-        })
+        })?;
+        Ok(url)
     }
 }

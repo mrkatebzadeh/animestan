@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use spdlog::prelude::*;
 
 use crate::{
+    CoreResult,
     config::AppConfig,
     error::Error,
     models::{Episode, EpisodePlaybackState, PlaybackFilter},
@@ -55,7 +56,7 @@ impl EpisodeTracker {
     ///
     /// Returns [`Error::TrackingRead`] when the file cannot be read or
     /// [`Error::TrackingParse`] when its contents cannot be decoded.
-    pub fn load(path: PathBuf) -> Result<Self, Error> {
+    pub fn load(path: PathBuf) -> CoreResult<Self> {
         match fs::read_to_string(&path) {
             Ok(contents) => {
                 debug!("loaded playback progress from {}", path.display());
@@ -76,7 +77,7 @@ impl EpisodeTracker {
                     store: ProgressStore::default(),
                 })
             }
-            Err(source) => Err(Error::TrackingRead { path, source }),
+            Err(source) => Err(Error::TrackingRead { path, source }.into()),
         }
     }
 
@@ -85,7 +86,7 @@ impl EpisodeTracker {
     /// # Errors
     ///
     /// Propagates all errors from [`EpisodeTracker::load`].
-    pub fn load_default(config: &AppConfig) -> Result<Self, Error> {
+    pub fn load_default(config: &AppConfig) -> CoreResult<Self> {
         Self::load(config.progress_path())
     }
 
@@ -94,7 +95,7 @@ impl EpisodeTracker {
     /// # Errors
     ///
     /// Returns [`Error::TrackingWrite`] if the progress file cannot be written.
-    pub fn mark_started(&mut self, episode_id: &str) -> Result<(), Error> {
+    pub fn mark_started(&mut self, episode_id: &str) -> CoreResult<()> {
         let entry = self
             .store
             .episodes
@@ -114,7 +115,7 @@ impl EpisodeTracker {
         episode_id: &str,
         position: f64,
         duration: Option<f64>,
-    ) -> Result<(), Error> {
+    ) -> CoreResult<()> {
         let entry = self
             .store
             .episodes
@@ -133,7 +134,7 @@ impl EpisodeTracker {
     /// # Errors
     ///
     /// Returns [`Error::TrackingWrite`] if the progress file cannot be written.
-    pub fn mark_watched(&mut self, episode_id: &str) -> Result<(), Error> {
+    pub fn mark_watched(&mut self, episode_id: &str) -> CoreResult<()> {
         let entry = self
             .store
             .episodes
@@ -224,7 +225,7 @@ impl EpisodeTracker {
             .map(|(_, episode)| episode.clone())
     }
 
-    fn save(&self) -> Result<(), Error> {
+    fn save(&self) -> CoreResult<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|source| Error::TrackingWrite {
                 path: self.path.clone(),

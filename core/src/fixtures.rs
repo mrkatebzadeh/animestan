@@ -13,8 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::error::Error;
-use crate::source::SourceCatalog;
+use crate::{CoreResult, error::Error, source::SourceCatalog};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -27,10 +26,11 @@ const RESPONSES: &str = include_str!(concat!(
     "/fixtures/responses.json"
 ));
 
-pub(crate) fn load_catalog() -> Result<SourceCatalog, Error> {
+pub(crate) fn load_catalog() -> CoreResult<SourceCatalog> {
     SourceCatalog::load_from_str(SOURCE_CATALOG)
 }
 
-pub(crate) fn load_responses() -> Result<HashMap<String, Value>, Error> {
-    serde_json::from_str(RESPONSES).map_err(Error::ResponseFixture)
+pub(crate) fn load_responses() -> CoreResult<HashMap<String, Value>> {
+    let responses = serde_json::from_str(RESPONSES).map_err(Error::ResponseFixture)?;
+    Ok(responses)
 }

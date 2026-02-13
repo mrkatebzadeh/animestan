@@ -15,29 +15,27 @@
 
 use std::sync::{Arc, Mutex};
 
-use animestan_core::{
-    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
-    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter,
-};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use spdlog::prelude::*;
 
+use animestan_core::{
+    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
+    PlaybackFilter, delete_episode, download_episode, episode_file_path, init_logging,
+    local_playback_url,
+};
+
 mod playback;
 
-type CliResult = Result<(), Box<dyn std::error::Error>>;
-
-fn main() {
-    if let Err(err) = run() {
-        eprintln!("{err}");
-        std::process::exit(1);
-    }
+fn main() -> Result<()> {
+    run()
 }
 
-fn run() -> CliResult {
+fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = AppConfig::load_default()?;
-    init_logging("animestan-cli", cli.verbosity, &config, true)?;
+    let config = AppConfig::load_default().context("failed to load configuration")?;
+    init_logging("animestan-cli", cli.verbosity, &config, true)
+        .context("failed to initialize logging")?;
     info!("starting CLI command: {}", describe_command(&cli.command));
     let client = AnimeClient::from_config(&config)?;
 
@@ -70,7 +68,7 @@ fn run() -> CliResult {
     Ok(())
 }
 
-fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> CliResult {
+fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> Result<()> {
     let results = client.search(query)?;
     for entry in results {
         println!("{}\t{}", entry.id, entry.title);
@@ -84,7 +82,7 @@ fn handle_episodes(
     config: &AppConfig,
     anime_id: &str,
     flags: FilterArgs,
-) -> CliResult {
+) -> Result<()> {
     let episodes = client.list_episodes(anime_id)?;
     if let Some(filter) = flags.selected() {
         let tracker = EpisodeTracker::load_default(config)?;
@@ -105,13 +103,15 @@ fn handle_url(
     client: &AnimeClient<FetchBackend>,
     config: &AppConfig,
     episode_id: &str,
-) -> CliResult {
+) -> Result<()> {
     if let Some(local_url) = local_playback_url(config, episode_id) {
         println!("{local_url}");
         return Ok(());
     }
 
-    let link = client.resolve_stream_url(episode_id)?;
+    let link = client
+        .resolve_stream_url(episode_id)
+        .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
     println!("{}", link.url);
     Ok(())
 }
@@ -120,12 +120,12 @@ fn handle_play(
     client: &AnimeClient<FetchBackend>,
     config: &AppConfig,
     episode_id: &str,
-) -> CliResult {
+) -> Result<()> {
     let tracker = Arc::new(Mutex::new(EpisodeTracker::load_default(config)?));
     {
         let mut guard = tracker
             .lock()
-            .map_err(|_| std::io::Error::other("episode tracker lock poisoned"))?;
+            .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
         guard.mark_started(episode_id)?;
     }
 
@@ -136,7 +136,9 @@ fn handle_play(
         return Ok(());
     }
 
-    let link = client.resolve_stream_url(episode_id)?;
+    let link = client
+        .resolve_stream_url(episode_id)
+        .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
     playback::play_episode(config, &tracker, episode_id, link.url.as_str())?;
     Ok(())
 }
@@ -145,7 +147,7 @@ fn handle_download(
     client: &AnimeClient<FetchBackend>,
     config: &AppConfig,
     episode_id: &str,
-) -> CliResult {
+) -> Result<()> {
     if let Some(local_url) = local_playback_url(config, episode_id) {
         info!("download requested for '{episode_id}' but file already exists");
         let path = episode_file_path(config, episode_id);
@@ -158,16 +160,21 @@ fn handle_download(
     }
 
     info!("downloading episode '{episode_id}' via CLI");
-    let link = client.resolve_stream_url(episode_id)?;
-    let saved_path = download_episode(config, episode_id, &link.url)?;
+    let link = client
+        .resolve_stream_url(episode_id)
+        .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
+    let saved_path = download_episode(config, episode_id, &link.url)
+        .with_context(|| format!("failed to download episode '{episode_id}'"))?;
     info!("episode '{episode_id}' saved to {}", saved_path.display());
     println!("{}", saved_path.display());
     Ok(())
 }
 
-fn handle_delete(config: &AppConfig, episode_id: &str) -> CliResult {
+fn handle_delete(config: &AppConfig, episode_id: &str) -> Result<()> {
     info!("deleting download for '{episode_id}' via CLI");
-    if delete_episode(config, episode_id)? {
+    if delete_episode(config, episode_id)
+        .with_context(|| format!("failed to delete download for '{episode_id}'"))?
+    {
         info!("deleted download for '{episode_id}'");
         println!("Deleted download for '{episode_id}'");
     } else {
@@ -181,7 +188,7 @@ fn handle_bookmarks(
     client: &AnimeClient<FetchBackend>,
     config: &AppConfig,
     command: BookmarksCommand,
-) -> CliResult {
+) -> Result<()> {
     match command {
         BookmarksCommand::Ls {
             unwatched,

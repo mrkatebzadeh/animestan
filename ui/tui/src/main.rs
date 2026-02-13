@@ -26,6 +26,7 @@ use animestan_core::{
     AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, delete_episode,
     download_episode, episode_file_path, init_logging, local_playback_url,
 };
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use crossterm::execute;
 use crossterm::terminal::{
@@ -38,10 +39,11 @@ use spdlog::prelude::*;
 use crate::app::App;
 use crate::events::{Event, EventHandler};
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
-    let config = AppConfig::load_default().map_err(to_io_error)?;
-    init_logging("animestan-tui", args.verbosity, &config, false).map_err(to_io_error)?;
+    let config = AppConfig::load_default().context("failed to load configuration")?;
+    init_logging("animestan-tui", args.verbosity, &config, false)
+        .context("failed to initialize logging")?;
     info!("launching animestan-tui");
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -58,16 +60,13 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    config: &AppConfig,
-) -> io::Result<()> {
+fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig) -> Result<()> {
     let tracker = Arc::new(Mutex::new(
-        EpisodeTracker::load_default(config).map_err(to_io_error)?,
+        EpisodeTracker::load_default(config).context("failed to load episode tracker")?,
     ));
-    let mut favorites = FavoriteStore::load_default(config).map_err(to_io_error)?;
+    let mut favorites = FavoriteStore::load_default(config).context("failed to load favorites")?;
     let mut refresh_favorites = false;
-    let client = AnimeClient::from_config(config).map_err(to_io_error)?;
+    let client = AnimeClient::from_config(config)?;
 
     let mut app = App::new();
     initialize_app(&mut app, &client);
@@ -349,16 +348,12 @@ struct Args {
     verbosity: u8,
 }
 
-fn to_io_error(err: animestan_core::Error) -> io::Error {
-    io::Error::other(err)
-}
-
-fn apply_episode_filter(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) -> io::Result<()> {
+fn apply_episode_filter(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) -> Result<()> {
     if let Some(filter) = app.current_filter() {
         let filtered = {
             let guard = tracker
                 .lock()
-                .map_err(|_| io::Error::other("episode tracker lock poisoned"))?;
+                .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
             guard.filter_episodes(app.unfiltered_episodes(), filter)
         };
         app.set_filtered_episodes(filtered);
@@ -369,9 +364,10 @@ fn apply_episode_filter(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) -> 
     Ok(())
 }
 
-fn mark_episode_started(tracker: &Arc<Mutex<EpisodeTracker>>, episode_id: &str) -> io::Result<()> {
+fn mark_episode_started(tracker: &Arc<Mutex<EpisodeTracker>>, episode_id: &str) -> Result<()> {
     let mut guard = tracker
         .lock()
-        .map_err(|_| io::Error::other("episode tracker lock poisoned"))?;
-    guard.mark_started(episode_id).map_err(to_io_error)
+        .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
+    guard.mark_started(episode_id)?;
+    Ok(())
 }

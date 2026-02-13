@@ -22,7 +22,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{config::AppConfig, error::Error, models::AnimeEntry};
+use crate::{CoreResult, config::AppConfig, error::Error, models::AnimeEntry};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FavoriteEntry {
@@ -49,7 +49,7 @@ impl FavoriteStore {
     ///
     /// Returns `Err` if the file cannot be read or if the JSON payload cannot
     /// be parsed into a [`FavoritesStore`].
-    pub fn load(path: PathBuf) -> Result<Self, Error> {
+    pub fn load(path: PathBuf) -> CoreResult<Self> {
         match fs::read_to_string(&path) {
             Ok(contents) => {
                 let store: FavoritesStore =
@@ -63,7 +63,7 @@ impl FavoriteStore {
                 path,
                 store: FavoritesStore::default(),
             }),
-            Err(source) => Err(Error::FavoritesRead { path, source }),
+            Err(source) => Err(Error::FavoritesRead { path, source }.into()),
         }
     }
 
@@ -72,7 +72,7 @@ impl FavoriteStore {
     /// # Errors
     ///
     /// Propagates any errors returned by [`FavoriteStore::load`].
-    pub fn load_default(config: &AppConfig) -> Result<Self, Error> {
+    pub fn load_default(config: &AppConfig) -> CoreResult<Self> {
         Self::load(config.favorites_path())
     }
 
@@ -89,7 +89,7 @@ impl FavoriteStore {
     ///
     /// Returns `Err` if the updated store cannot be serialized or written to
     /// disk.
-    pub fn add(&mut self, entry: AnimeEntry) -> Result<(), Error> {
+    pub fn add(&mut self, entry: AnimeEntry) -> CoreResult<()> {
         let favorite = FavoriteEntry {
             anime: entry,
             added_at: now_epoch(),
@@ -106,7 +106,7 @@ impl FavoriteStore {
     ///
     /// Returns `Err` if, after removing an existing entry, the updated store
     /// fails to persist to disk.
-    pub fn remove(&mut self, anime_id: &str) -> Result<bool, Error> {
+    pub fn remove(&mut self, anime_id: &str) -> CoreResult<bool> {
         let removed = self.store.entries.remove(anime_id).is_some();
         if removed {
             self.save()?;
@@ -114,7 +114,7 @@ impl FavoriteStore {
         Ok(removed)
     }
 
-    fn save(&self) -> Result<(), Error> {
+    fn save(&self) -> CoreResult<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|source| Error::FavoritesWrite {
                 path: self.path.clone(),

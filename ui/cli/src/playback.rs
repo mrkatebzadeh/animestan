@@ -14,6 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use animestan_core::{AppConfig, EpisodeTracker};
+use anyhow::{Context, Result, anyhow};
 
 use std::{
     ffi::OsStr,
@@ -45,7 +46,7 @@ pub fn play_episode(
     tracker: &Arc<Mutex<EpisodeTracker>>,
     episode_id: &str,
     stream_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     play_episode_inner(config, tracker, episode_id, stream_url)
 }
 
@@ -55,7 +56,7 @@ fn play_episode_inner(
     tracker: &Arc<Mutex<EpisodeTracker>>,
     episode_id: &str,
     stream_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let (binary, extra_args) = player_command(config);
     let mut command = Command::new(&binary);
     command.args(&extra_args);
@@ -78,7 +79,7 @@ fn play_episode_inner(
         ipc_socket_path = Some(path);
     }
 
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().context("failed to spawn player process")?;
 
     let Some(ipc_socket_path) = ipc_socket_path else {
         finalize_without_ipc(tracker, episode_id, &mut child)?;
@@ -122,7 +123,7 @@ fn play_episode_inner(
     tracker: &Arc<Mutex<EpisodeTracker>>,
     episode_id: &str,
     stream_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let (binary, extra_args) = player_command(config);
     let mut command = Command::new(&binary);
     command.args(&extra_args);
@@ -137,7 +138,7 @@ fn play_episode_inner(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().context("failed to spawn player process")?;
     finalize_without_ipc(tracker, episode_id, &mut child)
 }
 
@@ -172,15 +173,15 @@ fn socket_path(pid: u32) -> PathBuf {
     std::env::temp_dir().join(format!("animestan-mpv-{pid}.sock"))
 }
 
-fn tracker_lock_error() -> io::Error {
-    io::Error::other("episode tracker lock poisoned")
+fn tracker_lock_error() -> anyhow::Error {
+    anyhow!("episode tracker lock poisoned")
 }
 
 fn finalize_without_ipc(
     tracker: &Arc<Mutex<EpisodeTracker>>,
     episode_id: &str,
     child: &mut std::process::Child,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     {
         let mut guard = tracker.lock().map_err(|_| tracker_lock_error())?;
         guard.mark_watched(episode_id)?;
@@ -191,10 +192,7 @@ fn finalize_without_ipc(
 }
 
 #[cfg(unix)]
-fn mark_watched_blocking(
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    episode_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn mark_watched_blocking(tracker: &Arc<Mutex<EpisodeTracker>>, episode_id: &str) -> Result<()> {
     let mut guard = tracker.lock().map_err(|_| tracker_lock_error())?;
     guard.mark_watched(episode_id)?;
     Ok(())
@@ -206,7 +204,7 @@ fn update_progress_blocking(
     episode_id: &str,
     position: f64,
     duration: Option<f64>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let mut guard = tracker.lock().map_err(|_| tracker_lock_error())?;
     guard.update_progress(episode_id, position, duration)?;
     Ok(())

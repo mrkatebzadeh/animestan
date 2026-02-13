@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use animestan_core::{
-    AnimeClient, AnimeEntry, Episode, Error, FavoriteEntry, FavoriteStore, FetchBackend,
+    AnimeClient, AnimeEntry, CoreResult, Episode, FavoriteEntry, FavoriteStore, FetchBackend,
     PlaybackFilter,
 };
 use crossterm::event::KeyEvent;
@@ -593,7 +593,7 @@ impl App {
         }
     }
 
-    pub fn search(&mut self, client: &AnimeClient<FetchBackend>) -> Result<(), Error> {
+    pub fn search(&mut self, client: &AnimeClient<FetchBackend>) -> CoreResult<()> {
         let query = self.search_query.trim().to_owned();
         if query.is_empty() {
             self.left_pane_mode = LeftPaneMode::Search;
@@ -632,7 +632,7 @@ impl App {
         self.load_episodes(client)
     }
 
-    pub fn load_episodes(&mut self, client: &AnimeClient<FetchBackend>) -> Result<(), Error> {
+    pub fn load_episodes(&mut self, client: &AnimeClient<FetchBackend>) -> CoreResult<()> {
         let Some(anime) = self.current_anime() else {
             self.episodes.clear();
             self.filtered_episodes.clear();
