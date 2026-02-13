@@ -68,8 +68,8 @@ fn play_episode_inner(
     command
         .arg(stream_url)
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
 
     let mut ipc_socket_path = None;
     if is_mpv(&binary) {
@@ -135,8 +135,8 @@ fn play_episode_inner(
     command
         .arg(stream_url)
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
 
     let mut child = command.spawn().context("failed to spawn player process")?;
     finalize_without_ipc(tracker, episode_id, &mut child)
