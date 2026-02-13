@@ -206,15 +206,12 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     if matches!(app.focus(), Focus::Right) && !app.episodes().is_empty() {
         lines.push(Line::from("Hint: d download | D delete local copy"));
     }
-    let status_line = Line::from(Span::styled(
-        format!(
-            "{} | {} | {}",
-            app.mode_label(),
-            app.current_selection_label(),
-            app.playback_status().label()
-        ),
-        Style::default().fg(Color::White).bg(Color::DarkGray),
-    ));
+    let left_status = format!(
+        "{} | {} | {}",
+        app.mode_label(),
+        app.current_selection_label(),
+        app.playback_status().label()
+    );
     let inner_area = details_block.inner(area);
     frame.render_widget(details_block, area);
 
@@ -226,6 +223,22 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     let details = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(details, chunks[0]);
 
+    let width = usize::from(chunks[1].width);
+    let right_hint = "Press ? to list keybinding";
+    let left_len = left_status.chars().count();
+    let right_len = right_hint.chars().count();
+    let status_text = if width > left_len + right_len {
+        let mut s = left_status;
+        s.push_str(&" ".repeat(width - left_len - right_len));
+        s.push_str(right_hint);
+        s
+    } else {
+        format!("{left_status} {right_hint}")
+    };
+    let status_line = Line::from(Span::styled(
+        status_text,
+        Style::default().fg(Color::White).bg(Color::DarkGray),
+    ));
     let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
     frame.render_widget(status, chunks[1]);
 }
