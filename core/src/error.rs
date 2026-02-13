@@ -1,4 +1,4 @@
-// Copyright (C) 2026 M.R. Siavash Katebzadeg <mr@katebzadeh.xyz>
+// Copyright (C) 2026 M.R. Siavash Katebzadeh <mr@katebzadeh.xyz>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by

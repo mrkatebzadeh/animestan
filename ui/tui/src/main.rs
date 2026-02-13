@@ -1,4 +1,4 @@
-// Copyright (C) 2026 M.R. Siavash Katebzadeg <mr@katebzadeh.xyz>
+// Copyright (C) 2026 M.R. Siavash Katebzadeh <mr@katebzadeh.xyz>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -23,16 +23,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, delete_episode,
-    download_episode, episode_file_path, init_logging, local_playback_url,
+    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
+    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend,
 };
 use clap::Parser;
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
 use spdlog::prelude::*;
 
 use crate::app::App;

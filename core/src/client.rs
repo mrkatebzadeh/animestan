@@ -1,4 +1,4 @@
-// Copyright (C) 2026 M.R. Siavash Katebzadeg <mr@katebzadeh.xyz>
+// Copyright (C) 2026 M.R. Siavash Katebzadeh <mr@katebzadeh.xyz>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,9 +19,9 @@ use std::str;
 
 use reqwest::blocking::Client as BlockingHttpClient;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::{json, Value};
 use spdlog::prelude::*;
 use url::Url;
 
@@ -29,7 +29,7 @@ use crate::config::AppConfig;
 use crate::error::Error;
 use crate::fixtures;
 use crate::models::{AnimeEntry, Episode, StreamLink};
-use crate::source::{ALLANIME_API_ENDPOINT, SourceDefinition};
+use crate::source::{SourceDefinition, ALLANIME_API_ENDPOINT};
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
 const ALLANIME_TRANSLATION: &str = "sub";

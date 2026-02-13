@@ -1,4 +1,4 @@
-// Copyright (C) 2026 M.R. Siavash Katebzadeg <mr@katebzadeh.xyz>
+// Copyright (C) 2026 M.R. Siavash Katebzadeh <mr@katebzadeh.xyz>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 #[cfg(unix)]
 use std::{
     io::{BufRead, BufReader, Write},

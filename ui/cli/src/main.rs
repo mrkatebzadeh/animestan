@@ -1,4 +1,4 @@
-// Copyright (C) 2026 M.R. Siavash Katebzadeg <mr@katebzadeh.xyz>
+// Copyright (C) 2026 M.R. Siavash Katebzadeh <mr@katebzadeh.xyz>
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,9 +16,9 @@
 use std::sync::{Arc, Mutex};
 
 use animestan_core::{
+    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter, delete_episode, download_episode, episode_file_path, init_logging,
-    local_playback_url,
+    PlaybackFilter,
 };
 use clap::{Parser, Subcommand};
 use spdlog::prelude::*;
