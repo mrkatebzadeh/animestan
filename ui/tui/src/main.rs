@@ -37,7 +37,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use spdlog::prelude::*;
 
-use crate::app::{App, EpisodeIndicators};
+use crate::app::{App, EpisodeIndicators, PlaybackStatus};
 use crate::events::{Event, EventHandler};
 
 fn main() -> Result<()> {
@@ -237,15 +237,20 @@ fn handle_download(
         return true;
     }
 
+    app.set_playback_status(PlaybackStatus::Downloading);
     let stream = match client.resolve_stream_url(&episode_id) {
         Ok(link) => link,
         Err(err) => {
+            app.set_playback_status(PlaybackStatus::None);
             app.set_details(format!("Failed to resolve stream: {err}"));
             return true;
         }
     };
 
-    match download_episode(config, &episode_id, &stream.url) {
+    let download_result = download_episode(config, &episode_id, &stream.url);
+    app.set_playback_status(PlaybackStatus::None);
+
+    match download_result {
         Ok(saved_path) => {
             info!(
                 "downloaded episode '{episode_id}' to {}",
@@ -320,6 +325,7 @@ fn handle_playback(
     };
 
     let episode_title = app.current_episode_title();
+    app.set_playback_status(PlaybackStatus::Playing);
     let (target_url, using_local): (String, bool) =
         if local_playback_url(config, &episode_id).is_some() {
             let path = episode_file_path(config, &episode_id);
@@ -328,6 +334,7 @@ fn handle_playback(
             let stream = match client.resolve_stream_url(&episode_id) {
                 Ok(link) => link,
                 Err(err) => {
+                    app.set_playback_status(PlaybackStatus::None);
                     app.set_details(format!("Failed to resolve stream: {err}"));
                     return true;
                 }
@@ -341,6 +348,7 @@ fn handle_playback(
     );
 
     if let Err(err) = mark_episode_started(tracker, &episode_id) {
+        app.set_playback_status(PlaybackStatus::None);
         app.set_details(format!("Playback failed: {err}"));
         return true;
     }
@@ -357,7 +365,10 @@ fn handle_playback(
         app.set_details("Launching player...");
     }
 
-    if let Err(err) = playback::play_episode(config, tracker, &episode_id, target_url.as_str()) {
+    let playback_result = playback::play_episode(config, tracker, &episode_id, target_url.as_str());
+    app.set_playback_status(PlaybackStatus::None);
+
+    if let Err(err) = playback_result {
         app.set_details(format!("Playback failed: {err}"));
     } else if let Some(title) = episode_title {
         app.set_details(format!("Finished playing {title}"));

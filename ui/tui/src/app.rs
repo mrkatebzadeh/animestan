@@ -50,6 +50,26 @@ pub enum InputMode {
     Search,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlaybackStatus {
+    None,
+    Playing,
+    Paused,
+    Downloading,
+}
+
+impl PlaybackStatus {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "Idle",
+            Self::Playing => "Playing",
+            Self::Paused => "Paused",
+            Self::Downloading => "Downloading",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum FilterTarget {
     Anime,
@@ -145,6 +165,7 @@ pub struct App {
     filter_changed: bool,
     left_pane_mode: LeftPaneMode,
     filter_mode: FilterMode,
+    playback_status: PlaybackStatus,
     details_text: String,
     should_quit: bool,
     matcher: Matcher,
@@ -186,6 +207,7 @@ impl App {
             filter_changed: false,
             left_pane_mode: LeftPaneMode::Search,
             filter_mode: FilterMode::None,
+            playback_status: PlaybackStatus::None,
             details_text: concat!(
                 "Press s to search, / to filter panels, b for bookmarks, f for filters, ",
                 "Space to select, ",
@@ -208,6 +230,22 @@ impl App {
 
     pub fn input_mode(&self) -> InputMode {
         self.input_mode
+    }
+
+    pub fn mode_label(&self) -> &'static str {
+        if matches!(self.input_mode, InputMode::Search) || self.panel_filter_mode {
+            "Insert"
+        } else {
+            "Normal"
+        }
+    }
+
+    pub fn set_playback_status(&mut self, status: PlaybackStatus) {
+        self.playback_status = status;
+    }
+
+    pub fn playback_status(&self) -> PlaybackStatus {
+        self.playback_status
     }
 
     pub fn panel_filter_mode(&self) -> bool {
@@ -323,6 +361,19 @@ impl App {
 
     pub fn selected_episode(&self) -> Option<usize> {
         self.selected_episode
+    }
+
+    pub fn current_anime_title(&self) -> Option<String> {
+        self.current_anime_title_ref().map(ToString::to_string)
+    }
+
+    pub fn current_selection_label(&self) -> String {
+        match (self.current_anime_title(), self.current_episode_title()) {
+            (Some(anime), Some(episode)) => format!("{anime}-{episode}"),
+            (Some(anime), None) => anime,
+            (None, Some(episode)) => episode,
+            (None, None) => "No Selection".to_string(),
+        }
     }
 
     pub fn search_query(&self) -> &str {
@@ -707,16 +758,24 @@ impl App {
         }
     }
 
+    fn current_anime_title_ref(&self) -> Option<&str> {
+        self.current_anime().map(|anime| anime.title.as_str())
+    }
+
     pub fn current_episode_id(&self) -> Option<String> {
         self.visible_episodes()
             .get(self.selected_episode.unwrap_or(self.right_index))
             .map(|episode| episode.id.clone())
     }
 
-    pub fn current_episode_title(&self) -> Option<String> {
+    fn current_episode_title_ref(&self) -> Option<&str> {
         self.visible_episodes()
             .get(self.selected_episode.unwrap_or(self.right_index))
-            .map(|episode| episode.title.clone())
+            .map(|episode| episode.title.as_str())
+    }
+
+    pub fn current_episode_title(&self) -> Option<String> {
+        self.current_episode_title_ref().map(ToString::to_string)
     }
 
     fn left_items_len(&self) -> usize {

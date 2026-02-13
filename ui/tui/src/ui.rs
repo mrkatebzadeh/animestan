@@ -27,7 +27,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(5),
+            Constraint::Length(4),
+            Constraint::Length(1),
         ])
         .split(frame.area());
 
@@ -88,6 +89,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     render_details(frame, chunks[2], app);
+    render_status_bar(frame, chunks[3], app);
 }
 
 fn render_list(
@@ -210,6 +212,18 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
         .block(details_block)
         .wrap(Wrap { trim: true });
     frame.render_widget(details, area);
+}
+
+fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let content = format!(
+        "{} | {} | {}",
+        app.mode_label(),
+        app.current_selection_label(),
+        app.playback_status().label()
+    );
+    let status = Paragraph::new(Line::from(content))
+        .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+    frame.render_widget(status, area);
 }
 
 fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
