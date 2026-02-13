@@ -17,6 +17,7 @@ use std::io;
 use std::path::PathBuf;
 
 use thiserror::Error;
+use url::ParseError;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -118,4 +119,36 @@ pub enum Error {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to create downloads directory at '{path}': {source}")]
+    DownloadCreateDir {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write download file at '{path}': {source}")]
+    DownloadWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("download request failed for '{url}': {source}")]
+    DownloadRequest {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("unexpected download response for '{url}': {source}")]
+    DownloadResponse {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("failed to remove download file at '{path}': {source}")]
+    DownloadRemove {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse download url: {0}")]
+    DownloadUrl(#[source] ParseError),
 }

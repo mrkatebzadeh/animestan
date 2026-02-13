@@ -79,6 +79,8 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         }
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('f') => app.cycle_filter(),
+        KeyCode::Char('d') => app.request_download(),
+        KeyCode::Char('D') => app.request_delete(),
         KeyCode::Char(' ') => app.select_current(),
         KeyCode::Char('?') => app.show_help(),
         KeyCode::Enter => app.request_play(),

@@ -17,7 +17,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use directories_next::ProjectDirs;
+use directories_next::{BaseDirs, ProjectDirs};
 use serde::Deserialize;
 
 use crate::error::Error;
@@ -52,6 +52,12 @@ impl AppConfig {
     }
 
     #[must_use]
+    pub fn data_dir() -> PathBuf {
+        ProjectDirs::from("", "", "animestan")
+            .map_or_else(Self::config_dir, |dirs| dirs.data_dir().to_path_buf())
+    }
+
+    #[must_use]
     pub fn progress_path(&self) -> PathBuf {
         if let Some(path) = self.tracking_path.as_deref() {
             let configured = PathBuf::from(path);
@@ -77,6 +83,24 @@ impl AppConfig {
         } else {
             Self::config_dir().join("favorites.json")
         }
+    }
+
+    #[must_use]
+    pub fn downloads_dir(&self) -> PathBuf {
+        let _ = self;
+
+        if cfg!(target_os = "linux") {
+            if let Some(base_dirs) = BaseDirs::new() {
+                let mut path = base_dirs.home_dir().to_path_buf();
+                path.push(".local");
+                path.push("share");
+                path.push("animestan");
+                path.push("downloads");
+                return path;
+            }
+        }
+
+        Self::data_dir().join("downloads")
     }
 
     /// Loads configuration from the default config path, falling back to an empty

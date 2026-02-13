@@ -143,6 +143,9 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
+    if matches!(app.focus(), Focus::Right) && !app.episodes().is_empty() {
+        lines.push(Line::from("Hint: d download | D delete local copy"));
+    }
     let details = Paragraph::new(lines)
         .block(details_block)
         .wrap(Wrap { trim: true });

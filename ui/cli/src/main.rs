@@ -15,7 +15,7 @@
 
 use animestan_core::{
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter,
+    PlaybackFilter, delete_episode, download_episode, episode_file_path, local_playback_url,
 };
 use clap::{Parser, Subcommand};
 use std::sync::{Arc, Mutex};
@@ -55,8 +55,10 @@ fn run() -> CliResult {
                 recent,
             },
         ),
-        Commands::Url { episode_id } => handle_url(&client, &episode_id),
+        Commands::Url { episode_id } => handle_url(&client, &config, &episode_id),
         Commands::Play { episode_id } => handle_play(&client, &config, &episode_id),
+        Commands::Download { episode_id } => handle_download(&client, &config, &episode_id),
+        Commands::Delete { episode_id } => handle_delete(&config, &episode_id),
         Commands::Bookmarks { command } => handle_bookmarks(&client, &config, command),
     }?;
 
@@ -94,7 +96,16 @@ fn handle_episodes(
     Ok(())
 }
 
-fn handle_url(client: &AnimeClient<FetchBackend>, episode_id: &str) -> CliResult {
+fn handle_url(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    episode_id: &str,
+) -> CliResult {
+    if let Some(local_url) = local_playback_url(config, episode_id) {
+        println!("{local_url}");
+        return Ok(());
+    }
+
     let link = client.resolve_stream_url(episode_id)?;
     println!("{}", link.url);
     Ok(())
@@ -105,7 +116,6 @@ fn handle_play(
     config: &AppConfig,
     episode_id: &str,
 ) -> CliResult {
-    let link = client.resolve_stream_url(episode_id)?;
     let tracker = Arc::new(Mutex::new(EpisodeTracker::load_default(config)?));
     {
         let mut guard = tracker
@@ -114,7 +124,45 @@ fn handle_play(
         guard.mark_started(episode_id)?;
     }
 
+    if local_playback_url(config, episode_id).is_some() {
+        let local_path = episode_file_path(config, episode_id);
+        let local_path_string = local_path.to_string_lossy().into_owned();
+        playback::play_episode(config, &tracker, episode_id, local_path_string.as_str())?;
+        return Ok(());
+    }
+
+    let link = client.resolve_stream_url(episode_id)?;
     playback::play_episode(config, &tracker, episode_id, link.url.as_str())?;
+    Ok(())
+}
+
+fn handle_download(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    episode_id: &str,
+) -> CliResult {
+    if let Some(local_url) = local_playback_url(config, episode_id) {
+        let path = episode_file_path(config, episode_id);
+        println!(
+            "Episode '{episode_id}' already downloaded at {} ({}), skipping",
+            path.display(),
+            local_url
+        );
+        return Ok(());
+    }
+
+    let link = client.resolve_stream_url(episode_id)?;
+    let saved_path = download_episode(config, episode_id, &link.url)?;
+    println!("{}", saved_path.display());
+    Ok(())
+}
+
+fn handle_delete(config: &AppConfig, episode_id: &str) -> CliResult {
+    if delete_episode(config, episode_id)? {
+        println!("Deleted download for '{episode_id}'");
+    } else {
+        println!("No download found for '{episode_id}'");
+    }
     Ok(())
 }
 
@@ -245,10 +293,14 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["unwatched", "in_progress", "next"])]
         recent: bool,
     },
-    /// Resolve a stream URL for an episode
+    /// Resolve a stream URL for an episode, preferring local downloads when available
     Url { episode_id: String },
-    /// Resolve and play an episode via the configured player
+    /// Resolve (or reuse downloads) and play an episode via the configured player
     Play { episode_id: String },
+    /// Download an episode for offline playback
+    Download { episode_id: String },
+    /// Delete a previously downloaded episode
+    Delete { episode_id: String },
     /// Manage bookmarks
     Bookmarks {
         #[command(subcommand)]

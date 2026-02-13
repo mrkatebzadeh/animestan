@@ -106,6 +106,8 @@ pub struct App {
     search_query: String,
     pending_search: bool,
     pending_play: bool,
+    pending_download: bool,
+    pending_delete: bool,
     anime_selection_changed: bool,
     bookmarks_refresh_pending: bool,
     filter_changed: bool,
@@ -131,14 +133,18 @@ impl App {
             search_query: DEFAULT_SEARCH_QUERY.to_string(),
             pending_search: false,
             pending_play: false,
+            pending_download: false,
+            pending_delete: false,
             anime_selection_changed: false,
             bookmarks_refresh_pending: false,
             filter_changed: false,
             left_pane_mode: LeftPaneMode::Search,
             filter_mode: FilterMode::None,
-            details_text:
-                "Press / to search, b for bookmarks, f for filters, Space to select, q to quit."
-                    .to_string(),
+            details_text: concat!(
+                "Press / to search, b for bookmarks, f for filters, Space to select, ",
+                "d to download, D to delete, q to quit."
+            )
+            .to_string(),
             should_quit: false,
         }
     }
@@ -366,9 +372,10 @@ impl App {
     }
 
     pub fn show_help(&mut self) {
-        self.set_details(
-            "Controls: / search, b bookmarks, f filter, j/k move, h/l focus, Space select, q quit.",
-        );
+        self.set_details(concat!(
+            "Controls: / search, b bookmarks, f filter, j/k move, h/l focus, ",
+            "Space select, d download, D delete, q quit."
+        ));
     }
 
     pub fn request_quit(&mut self) {
@@ -435,6 +442,52 @@ impl App {
     pub fn take_pending_play(&mut self) -> bool {
         if self.pending_play {
             self.pending_play = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn request_download(&mut self) {
+        if self.current_episode_id().is_none() {
+            self.set_details("Highlight an episode to download.");
+            return;
+        }
+        self.pending_download = true;
+        if let Some(title) = self.current_episode_title() {
+            self.set_details(format!(
+                "Preparing download for {title}. Local copies can be removed with 'D'."
+            ));
+        } else {
+            self.set_details("Highlight an episode to download.");
+        }
+    }
+
+    pub fn take_pending_download(&mut self) -> bool {
+        if self.pending_download {
+            self.pending_download = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn request_delete(&mut self) {
+        if self.current_episode_id().is_none() {
+            self.set_details("Highlight an episode to delete its download.");
+            return;
+        }
+        self.pending_delete = true;
+        if let Some(title) = self.current_episode_title() {
+            self.set_details(format!("Preparing to delete local copy of {title}."));
+        } else {
+            self.set_details("Highlight an episode to delete its download.");
+        }
+    }
+
+    pub fn take_pending_delete(&mut self) -> bool {
+        if self.pending_delete {
+            self.pending_delete = false;
             true
         } else {
             false
