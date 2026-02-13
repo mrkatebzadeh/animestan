@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use animestan_core::{
     AnimeClient, AnimeEntry, CoreResult, Episode, FavoriteEntry, FavoriteStore, FetchBackend,
     PlaybackFilter,
@@ -102,6 +104,13 @@ impl FilterMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EpisodeIndicators {
+    pub watched: bool,
+    pub in_progress: bool,
+    pub downloaded: bool,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     focus: Focus,
@@ -139,6 +148,7 @@ pub struct App {
     details_text: String,
     should_quit: bool,
     matcher: Matcher,
+    episode_indicators: HashMap<String, EpisodeIndicators>,
 }
 
 impl App {
@@ -184,6 +194,7 @@ impl App {
             .to_string(),
             should_quit: false,
             matcher: Matcher::new(Config::DEFAULT),
+            episode_indicators: HashMap::new(),
         }
     }
 
@@ -320,6 +331,17 @@ impl App {
 
     pub fn details(&self) -> &str {
         &self.details_text
+    }
+
+    pub fn set_episode_indicators(&mut self, indicators: HashMap<String, EpisodeIndicators>) {
+        self.episode_indicators = indicators;
+    }
+
+    pub fn episode_indicators(&self, episode_id: &str) -> EpisodeIndicators {
+        self.episode_indicators
+            .get(episode_id)
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn toggle_bookmarks_mode(&mut self) {
@@ -603,6 +625,7 @@ impl App {
             self.filtered_episodes.clear();
             self.filtered_anime_entries.clear();
             self.filtered_episode_entries.clear();
+            self.episode_indicators.clear();
             self.left_index = 0;
             self.right_index = 0;
             self.selected_anime = None;
@@ -624,6 +647,7 @@ impl App {
         if self.anime_entries.is_empty() {
             self.episodes.clear();
             self.filtered_episode_entries.clear();
+            self.episode_indicators.clear();
             self.set_details(format!("No results for '{query}'"));
             return Ok(());
         }
@@ -636,6 +660,7 @@ impl App {
         let Some(anime) = self.current_anime() else {
             self.episodes.clear();
             self.filtered_episodes.clear();
+            self.episode_indicators.clear();
             self.right_index = 0;
             self.selected_episode = None;
             self.set_details("Select an anime to load episodes.");
@@ -645,6 +670,7 @@ impl App {
         let episodes = client.list_episodes(&anime.id)?;
         self.episodes = episodes;
         self.filtered_episodes.clear();
+        self.episode_indicators.clear();
         self.apply_saved_panel_filter(FilterTarget::Episodes);
         self.right_index = 0;
         self.selected_episode = None;
@@ -661,6 +687,7 @@ impl App {
         self.episodes.clear();
         self.filtered_episodes.clear();
         self.filtered_episode_entries.clear();
+        self.episode_indicators.clear();
     }
 
     fn active_list_len(&self) -> usize {

@@ -18,6 +18,7 @@ mod events;
 mod playback;
 mod ui;
 
+use std::collections::HashMap;
 use std::io::{self, Stdout};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,7 +37,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use spdlog::prelude::*;
 
-use crate::app::App;
+use crate::app::{App, EpisodeIndicators};
 use crate::events::{Event, EventHandler};
 
 fn main() -> Result<()> {
@@ -70,6 +71,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
 
     let mut app = App::new();
     initialize_app(&mut app, &client);
+    if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
+        app.set_details(format!("Failed to refresh indicators: {err}"));
+    }
 
     let mut events = EventHandler::new(Duration::from_millis(250));
 
@@ -83,14 +87,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
 
         handle_bookmarks_refresh(&mut app, config, &mut favorites, &mut refresh_favorites);
 
-        handle_search(&mut app, &client, &tracker);
-        handle_filters(&mut app, &client, &tracker);
+        handle_search(&mut app, &client, &tracker, config);
+        handle_filters(&mut app, &client, &tracker, config);
 
-        if handle_download(&mut app, config, &client) {
+        if handle_download(&mut app, config, &client, &tracker) {
             continue;
         }
 
-        if handle_delete(&mut app, config) {
+        if handle_delete(&mut app, config, &tracker) {
             continue;
         }
 
@@ -144,6 +148,7 @@ fn handle_search(
     app: &mut App,
     client: &AnimeClient<FetchBackend>,
     tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
 ) {
     if !app.take_pending_search() {
         return;
@@ -156,6 +161,9 @@ fn handle_search(
                     app.set_details(format!("Filter failed: {err}"));
                 }
             }
+            if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                app.set_details(format!("Failed to refresh indicators: {err}"));
+            }
         }
         Err(err) => {
             app.set_details(format!("Search failed: {err}"));
@@ -167,6 +175,7 @@ fn handle_filters(
     app: &mut App,
     client: &AnimeClient<FetchBackend>,
     tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
 ) {
     let mut apply_filter = false;
 
@@ -175,6 +184,9 @@ fn handle_filters(
             Ok(()) => {
                 if app.current_filter().is_some() {
                     apply_filter = true;
+                }
+                if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                    app.set_details(format!("Failed to refresh indicators: {err}"));
                 }
             }
             Err(err) => {
@@ -194,7 +206,12 @@ fn handle_filters(
     }
 }
 
-fn handle_download(app: &mut App, config: &AppConfig, client: &AnimeClient<FetchBackend>) -> bool {
+fn handle_download(
+    app: &mut App,
+    config: &AppConfig,
+    client: &AnimeClient<FetchBackend>,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+) -> bool {
     if !app.take_pending_download() {
         return false;
     }
@@ -214,6 +231,9 @@ fn handle_download(app: &mut App, config: &AppConfig, client: &AnimeClient<Fetch
             "episode '{episode_id}' already downloaded locally at {}",
             path.display()
         );
+        if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+            app.set_details(format!("Failed to refresh indicators: {err}"));
+        }
         return true;
     }
 
@@ -236,6 +256,9 @@ fn handle_download(app: &mut App, config: &AppConfig, client: &AnimeClient<Fetch
             } else {
                 app.set_details(format!("Download saved to {}", saved_path.display()));
             }
+            if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                app.set_details(format!("Failed to refresh indicators: {err}"));
+            }
         }
         Err(err) => {
             app.set_details(format!("Download failed: {err}"));
@@ -245,7 +268,7 @@ fn handle_download(app: &mut App, config: &AppConfig, client: &AnimeClient<Fetch
     false
 }
 
-fn handle_delete(app: &mut App, config: &AppConfig) -> bool {
+fn handle_delete(app: &mut App, config: &AppConfig, tracker: &Arc<Mutex<EpisodeTracker>>) -> bool {
     if !app.take_pending_delete() {
         return false;
     }
@@ -264,6 +287,9 @@ fn handle_delete(app: &mut App, config: &AppConfig) -> bool {
                 app.set_details(format!("Deleted download for {title}"));
             } else {
                 app.set_details("Deleted download.");
+            }
+            if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                app.set_details(format!("Failed to refresh indicators: {err}"));
             }
         }
         Ok(false) => {
@@ -339,6 +365,10 @@ fn handle_playback(
         app.set_details("Playback finished");
     }
 
+    if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+        app.set_details(format!("Failed to refresh indicators: {err}"));
+    }
+
     false
 }
 
@@ -369,5 +399,35 @@ fn mark_episode_started(tracker: &Arc<Mutex<EpisodeTracker>>, episode_id: &str) 
         .lock()
         .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
     guard.mark_started(episode_id)?;
+    Ok(())
+}
+
+fn refresh_episode_indicators(
+    app: &mut App,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
+) -> Result<()> {
+    let indicators = {
+        let guard = tracker
+            .lock()
+            .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
+        let mut indicators = HashMap::with_capacity(app.unfiltered_episodes().len());
+        for episode in app.unfiltered_episodes() {
+            let state = guard.state_for(&episode.id);
+            let watched = state.as_ref().is_some_and(|status| status.watched);
+            let in_progress = state.as_ref().is_some_and(|status| status.in_progress);
+            let downloaded = episode_file_path(config, &episode.id).exists();
+            indicators.insert(
+                episode.id.clone(),
+                EpisodeIndicators {
+                    watched,
+                    in_progress,
+                    downloaded,
+                },
+            );
+        }
+        indicators
+    };
+    app.set_episode_indicators(indicators);
     Ok(())
 }
