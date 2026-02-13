@@ -224,7 +224,7 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(details, chunks[0]);
 
     let width = usize::from(chunks[1].width);
-    let right_hint = "? keybindings";
+    let right_hint = "Press ? to list keybinding";
     let left_len = left_status.chars().count();
     let right_len = right_hint.chars().count();
     let status_text = if width > left_len + right_len {
