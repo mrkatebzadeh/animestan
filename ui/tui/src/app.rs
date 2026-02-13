@@ -27,7 +27,7 @@ use nucleo::{
 
 use crate::events;
 
-const DEFAULT_SEARCH_QUERY: &str = "naruto";
+const DEFAULT_SEARCH_QUERY: &str = "Naruto";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Focus {
