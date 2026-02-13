@@ -29,6 +29,8 @@ cargo build --release
 The binaries will be in:
 
 ```
+target/release/animestan-cli
+target/release/animestan-tui
 ```
 
 ## Quick usage
