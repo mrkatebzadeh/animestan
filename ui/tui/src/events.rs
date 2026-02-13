@@ -21,7 +21,7 @@ use crossterm::event::{
     self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 
-use crate::app::{App, InputMode};
+use crate::app::{App, Focus, InputMode};
 
 pub enum Event {
     Tick,
@@ -103,14 +103,23 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('h' | 'l') | KeyCode::Left | KeyCode::Right => {
             app.toggle_focus();
         }
+        KeyCode::Tab => app.toggle_focus(),
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('f') => app.cycle_filter(),
         KeyCode::Char('d') => app.request_download(),
         KeyCode::Char('D') => app.request_delete(),
         KeyCode::Char(' ') => app.select_current(),
         KeyCode::Char('?') => app.show_help(),
-        KeyCode::Enter => app.request_play(),
+        KeyCode::Enter => handle_enter_in_normal_mode(app),
         _ => {}
+    }
+}
+
+fn handle_enter_in_normal_mode(app: &mut App) {
+    if matches!(app.focus(), Focus::Left) {
+        app.toggle_focus();
+    } else {
+        app.request_play();
     }
 }
 
