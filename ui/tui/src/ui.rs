@@ -215,11 +215,19 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
         ),
         Style::default().fg(Color::White).bg(Color::DarkGray),
     ));
-    lines.push(status_line);
-    let details = Paragraph::new(lines)
-        .block(details_block)
-        .wrap(Wrap { trim: true });
-    frame.render_widget(details, area);
+    let inner_area = details_block.inner(area);
+    frame.render_widget(details_block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner_area);
+
+    let details = Paragraph::new(lines).wrap(Wrap { trim: true });
+    frame.render_widget(details, chunks[0]);
+
+    let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
+    frame.render_widget(status, chunks[1]);
 }
 
 fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
