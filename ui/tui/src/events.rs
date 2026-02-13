@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,7 @@ pub enum Event {
 pub struct EventHandler {
     tick_rate: Duration,
     last_tick: Instant,
+    pressed_keys: HashSet<KeyCode>,
 }
 
 impl EventHandler {
@@ -37,6 +39,7 @@ impl EventHandler {
         Self {
             tick_rate,
             last_tick: Instant::now(),
+            pressed_keys: HashSet::new(),
         }
     }
 
@@ -45,7 +48,22 @@ impl EventHandler {
 
         if event::poll(timeout)? {
             if let CrosstermEvent::Key(key_event) = event::read()? {
-                return Ok(Event::Input(key_event));
+                let code = key_event.code;
+
+                match key_event.kind {
+                    KeyEventKind::Press => {
+                        self.pressed_keys.insert(code);
+                        return Ok(Event::Input(key_event));
+                    }
+                    KeyEventKind::Repeat => {
+                        if self.pressed_keys.contains(&code) {
+                            return Ok(Event::Input(key_event));
+                        }
+                    }
+                    KeyEventKind::Release => {
+                        self.pressed_keys.remove(&code);
+                    }
+                }
             }
         }
 
@@ -58,7 +76,7 @@ impl EventHandler {
 }
 
 pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
-    if key_event.kind != KeyEventKind::Press {
+    if !matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return;
     }
 
