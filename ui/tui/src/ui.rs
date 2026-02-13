@@ -262,7 +262,7 @@ fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
             };
             let download_icon = if indicators.downloaded { "💾" } else { "⬇" };
             ListItem::new(format!(
-                "{marker} {:>03} — {play_icon} {download_icon} {}",
+                "{marker} {play_icon} {download_icon} {:>03} — {}",
                 episode.number, episode.title
             ))
         })
