@@ -23,16 +23,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
-    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend,
+    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, delete_episode,
+    download_episode, episode_file_path, init_logging, local_playback_url,
 };
 use clap::Parser;
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use spdlog::prelude::*;
 
 use crate::app::App;

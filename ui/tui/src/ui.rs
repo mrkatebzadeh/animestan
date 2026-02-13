@@ -19,7 +19,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::app::{App, Focus, InputMode, LeftPaneMode};
+use crate::app::{App, FilterTarget, Focus, InputMode, LeftPaneMode};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -38,28 +38,49 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    let (left_title, anime_items) = match app.left_pane_mode() {
+    let (left_base_title, anime_items) = match app.left_pane_mode() {
         LeftPaneMode::Search => ("Anime", build_anime_items(app)),
         LeftPaneMode::Bookmarks => ("Bookmarks", build_bookmark_items(app)),
     };
+    let left_target = match app.left_pane_mode() {
+        LeftPaneMode::Search => FilterTarget::Anime,
+        LeftPaneMode::Bookmarks => FilterTarget::Bookmarks,
+    };
+    let mut left_title = left_base_title.to_string();
+    if app.panel_filter_active_for(left_target) {
+        left_title.push_str(" [Filtered]");
+    }
+    let left_filter_visible = should_show_panel_filter(app, left_target);
+    let (left_filter_area, left_list_area) = split_filter_area(lists[0], left_filter_visible);
+    if let Some(area) = left_filter_area {
+        render_panel_filter_input(frame, area, app, left_filter_visible);
+    }
     render_list(
         frame,
-        lists[0],
-        left_title,
+        left_list_area,
+        &left_title,
         anime_items,
         app.left_index(),
         app.focus() == Focus::Left,
     );
 
     let episode_items = build_episode_items(app);
-    let episodes_title = if let Some(label) = app.filter_label() {
+    let mut episodes_title = if let Some(label) = app.filter_label() {
         format!("Episodes [{label}]")
     } else {
         "Episodes".to_string()
     };
+    if app.panel_filter_active_for(FilterTarget::Episodes) {
+        episodes_title.push_str(" [Filtered]");
+    }
+    let right_filter_visible = should_show_panel_filter(app, FilterTarget::Episodes);
+    let (right_filter_area, right_list_area) = split_filter_area(lists[1], right_filter_visible);
+    if let Some(area) = right_filter_area {
+        render_panel_filter_input(frame, area, app, right_filter_visible);
+    }
     render_list(
         frame,
-        lists[1],
+        right_list_area,
         &episodes_title,
         episode_items,
         app.right_index(),
@@ -97,6 +118,45 @@ fn render_list(
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn split_filter_area(area: Rect, show_filter: bool) -> (Option<Rect>, Rect) {
+    if !show_filter {
+        return (None, area);
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .split(area);
+    (Some(chunks[0]), chunks[1])
+}
+
+fn render_panel_filter_input(frame: &mut Frame, area: Rect, app: &App, active: bool) {
+    let block = Block::default()
+        .title("Filter")
+        .borders(Borders::ALL)
+        .border_style(border_style(active));
+    let prompt = Line::from(vec![
+        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::raw(app.panel_filter_query()),
+    ]);
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(prompt).block(block);
+    frame.render_widget(paragraph, area);
+
+    if active {
+        let typed_chars = app.panel_filter_query().chars().count();
+        let typed_offset = u16::try_from(typed_chars).unwrap_or(u16::MAX);
+        let cursor_base = inner.x.saturating_add(2);
+        let max_cursor = inner.x.saturating_add(inner.width.saturating_sub(1));
+        let cursor_x = cursor_base.saturating_add(typed_offset).min(max_cursor);
+        frame.set_cursor_position((cursor_x, inner.y));
+    }
+}
+
+fn should_show_panel_filter(app: &App, target: FilterTarget) -> bool {
+    app.panel_filter_mode() && app.panel_filter_target() == Some(target)
 }
 
 fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {

@@ -80,6 +80,11 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.panel_filter_mode() {
+        handle_panel_filter_mode(app, key_event);
+        return;
+    }
+
     match app.input_mode() {
         InputMode::Normal => handle_normal_mode(app, key_event),
         InputMode::Search => handle_search_mode(app, key_event),
@@ -88,7 +93,10 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
 
 fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
     match key_event.code {
-        KeyCode::Char('/') => app.enter_search_mode(),
+        KeyCode::Char('s') => app.enter_search_mode(),
+        KeyCode::Char('/') => {
+            app.enter_panel_filter(app.filter_target_for_focus());
+        }
         KeyCode::Char('q') => app.request_quit(),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
@@ -102,6 +110,28 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char(' ') => app.select_current(),
         KeyCode::Char('?') => app.show_help(),
         KeyCode::Enter => app.request_play(),
+        _ => {}
+    }
+}
+
+fn handle_panel_filter_mode(app: &mut App, key_event: KeyEvent) {
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Enter => app.exit_panel_filter(),
+        KeyCode::Backspace => {
+            let mut query = app.panel_filter_query().to_string();
+            query.pop();
+            app.update_panel_filter_query(query);
+        }
+        KeyCode::Char(ch) => {
+            if !key_event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                let mut query = app.panel_filter_query().to_string();
+                query.push(ch);
+                app.update_panel_filter_query(query);
+            }
+        }
         _ => {}
     }
 }

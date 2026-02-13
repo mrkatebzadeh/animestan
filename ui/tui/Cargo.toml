@@ -11,6 +11,7 @@ crossterm = "0.28"
 ratatui = "0.28"
 spdlog = { version = "0.5", package = "spdlog-rs" }
 serde_json = "1.0"
+nucleo = "0.5"
 
 [lints.rust]
 unsafe_code = "warn"
