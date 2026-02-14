@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -27,17 +27,19 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
+            Constraint::Length(3),
             Constraint::Min(5),
             Constraint::Length(4),
         ])
         .split(frame.area());
 
-    render_search_bar(frame, chunks[0], app);
+    render_hint_panel(frame, chunks[0]);
+    render_search_bar(frame, chunks[1], app);
 
     let lists = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+        .split(chunks[2]);
 
     let (left_base_title, anime_items) = match app.left_pane_mode() {
         LeftPaneMode::Search => ("Anime", build_anime_items(app)),
@@ -88,7 +90,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         app.focus() == Focus::Right,
     );
 
-    render_details(frame, chunks[2], app);
+    render_details(frame, chunks[3], app);
     render_keybindings_modal(frame, app);
 }
 
@@ -191,6 +193,16 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+fn render_hint_panel(frame: &mut Frame, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style(false));
+    let paragraph = Paragraph::new("Press ? to list keybinding")
+        .alignment(Alignment::Center)
+        .block(block);
+    frame.render_widget(paragraph, area);
+}
+
 fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     let details_block = Block::default()
         .title("Details")
@@ -205,9 +217,6 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
-    if matches!(app.focus(), Focus::Right) && !app.episodes().is_empty() {
-        lines.push(Line::from("Hint: d download | D delete local copy"));
-    }
     if let Some(playing_id) = app.current_playing_episode_id() {
         let mut now_playing = String::from("Now playing: ▶");
         if app.current_episode_id().is_some_and(|id| id == playing_id) {
