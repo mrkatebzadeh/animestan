@@ -48,13 +48,14 @@ fn run() -> Result<()> {
     let client = AnimeClient::from_config(&config)?;
 
     match cli.command {
-        Commands::Search { query } => handle_search(&client, &query),
+        Commands::Search { query, select_nth } => handle_search(&client, &query, select_nth),
         Commands::Episodes {
             anime_id,
             unwatched,
             in_progress,
             next,
             recent,
+            select_nth,
         } => handle_episodes(
             &client,
             &config,
@@ -65,6 +66,7 @@ fn run() -> Result<()> {
                 next,
                 recent,
             },
+            select_nth,
         ),
         Commands::Url { episode_id } => handle_url(&client, &config, &episode_id),
         Commands::Play { episode_id } => handle_play(&client, &config, &episode_id),
@@ -79,10 +81,19 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> Result<()> {
+fn handle_search(
+    client: &AnimeClient<FetchBackend>,
+    query: &str,
+    select_nth: Option<usize>,
+) -> Result<()> {
     let results = client.search(query)?;
-    for entry in results {
+    if let Some(index) = select_nth {
+        let entry = select_nth_item(&results, index, "search results")?;
         println!("{}\t{}", entry.id, entry.title);
+    } else {
+        for entry in results {
+            println!("{}\t{}", entry.id, entry.title);
+        }
     }
 
     Ok(())
@@ -93,16 +104,21 @@ fn handle_episodes(
     config: &AppConfig,
     anime_id: &str,
     flags: FilterArgs,
+    select_nth: Option<usize>,
 ) -> Result<()> {
     let episodes = client.list_episodes(anime_id)?;
-    if let Some(filter) = flags.selected() {
+    let results = if let Some(filter) = flags.selected() {
         let tracker = EpisodeTracker::load_default(config)?;
-        let filtered = tracker.filter_episodes(&episodes, filter);
-        for episode in filtered {
-            println!("{}\t{}\t{}", episode.id, episode.number, episode.title);
-        }
+        tracker.filter_episodes(&episodes, filter)
     } else {
-        for episode in episodes {
+        episodes
+    };
+
+    if let Some(index) = select_nth {
+        let episode = select_nth_item(&results, index, "episode listing")?;
+        println!("{}\t{}\t{}", episode.id, episode.number, episode.title);
+    } else {
+        for episode in results {
             println!("{}\t{}\t{}", episode.id, episode.number, episode.title);
         }
     }
@@ -500,7 +516,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Search catalog by query string
-    Search { query: String },
+    Search {
+        query: String,
+        #[arg(short = 'S', long = "select-nth")]
+        select_nth: Option<usize>,
+    },
     /// List episodes for a given anime id
     Episodes {
         anime_id: String,
@@ -512,6 +532,8 @@ enum Commands {
         next: bool,
         #[arg(long, conflicts_with_all = ["unwatched", "in_progress", "next"])]
         recent: bool,
+        #[arg(short = 'S', long = "select-nth")]
+        select_nth: Option<usize>,
     },
     /// Resolve a stream URL for an episode, preferring local downloads when available
     Url { episode_id: String },
@@ -659,4 +681,15 @@ fn anime_id_from_episode_id(episode_id: &str) -> Option<&str> {
     } else {
         episode_id.rsplit_once('-').map(|(anime_id, _)| anime_id)
     }
+}
+
+fn select_nth_item<'a, T>(items: &'a [T], index: usize, context: &str) -> Result<&'a T> {
+    if index == 0 || index > items.len() {
+        return Err(anyhow!(
+            "{context}: selection {index} out of range (1..={})",
+            items.len()
+        ));
+    }
+
+    Ok(&items[index - 1])
 }
