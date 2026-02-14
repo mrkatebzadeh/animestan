@@ -22,15 +22,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use chrono::{Local, LocalResult, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use spdlog::prelude::*;
 
 use animestan_core::{
-    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter, app_log_path, delete_episode, download_episode, episode_file_path,
-    init_logging, local_playback_url,
+    app_log_path, delete_episode, download_episode, episode_file_path, init_logging,
+    local_playback_url, AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry,
+    FavoriteStore, FetchBackend, PlaybackFilter,
 };
 
 mod playback;
@@ -40,14 +40,23 @@ fn main() -> Result<()> {
 }
 
 fn run() -> Result<()> {
-    let cli = Cli::parse();
-    let config = AppConfig::load_default().context("failed to load configuration")?;
-    init_logging("animestan-cli", cli.verbosity, &config, true)
+    let Cli {
+        verbosity,
+        quality,
+        command,
+    } = Cli::parse();
+
+    let mut config = AppConfig::load_default().context("failed to load configuration")?;
+    if let Some(preferred_quality) = quality {
+        config.quality = Some(preferred_quality);
+    }
+
+    init_logging("animestan-cli", verbosity, &config, true)
         .context("failed to initialize logging")?;
-    info!("starting CLI command: {}", describe_command(&cli.command));
+    info!("starting CLI command: {}", describe_command(&command));
     let client = AnimeClient::from_config(&config)?;
 
-    match cli.command {
+    match command {
         Commands::Search { query, select_nth } => handle_search(&client, &query, select_nth),
         Commands::Episodes {
             anime_id,
@@ -137,7 +146,7 @@ fn handle_url(
     }
 
     let link = client
-        .resolve_stream_url(episode_id)
+        .resolve_stream_url(episode_id, config.quality.as_deref())
         .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
     println!("{}", link.url);
     Ok(())
@@ -164,7 +173,7 @@ fn handle_play(
     }
 
     let link = client
-        .resolve_stream_url(episode_id)
+        .resolve_stream_url(episode_id, config.quality.as_deref())
         .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
     playback::play_episode(config, &tracker, episode_id, link.url.as_str())?;
     Ok(())
@@ -258,7 +267,7 @@ fn handle_download(
 
     info!("downloading episode '{episode_id}' via CLI");
     let link = client
-        .resolve_stream_url(episode_id)
+        .resolve_stream_url(episode_id, config.quality.as_deref())
         .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
     let saved_path = download_episode(config, episode_id, &link.url)
         .with_context(|| format!("failed to download episode '{episode_id}'"))?;
@@ -509,6 +518,9 @@ const ABOUT: &str = concat!(
 struct Cli {
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbosity: u8,
+    /// Preferred stream quality (best, worst, or numeric resolution)
+    #[arg(global = true, long)]
+    quality: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }

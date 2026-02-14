@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use animestan_core::{AppConfig, EpisodeTracker};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 
 use std::{
     ffi::OsStr,
@@ -25,7 +25,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 #[cfg(unix)]
 use std::{
     io::{BufRead, BufReader, Write},

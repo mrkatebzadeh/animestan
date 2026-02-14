@@ -362,7 +362,7 @@ fn handle_download(
     }
 
     app.set_playback_status(PlaybackStatus::Downloading);
-    let stream = match client.resolve_stream_url(&episode_id) {
+    let stream = match client.resolve_stream_url(&episode_id, config.quality.as_deref()) {
         Ok(link) => link,
         Err(err) => {
             app.set_playback_status(PlaybackStatus::None);
@@ -719,7 +719,7 @@ fn run_playback_job(
         let (target_url, using_local) = if let Some(url) = local_playback_url(config, &episode_id) {
             (url.to_string(), true)
         } else {
-            let stream = client.resolve_stream_url(&episode_id)?;
+            let stream = client.resolve_stream_url(&episode_id, config.quality.as_deref())?;
             (stream.url.to_string(), false)
         };
 
