@@ -41,7 +41,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::{UnboundedSender, error::TryRecvError, unbounded_channel};
 use tokio::time::sleep;
 
-use crate::app::{App, EpisodeIndicators, PlaybackStatus};
+use crate::app::{App, EpisodeIndicators, LeftPaneMode, PlaybackStatus};
 use crate::events::{Event, EventHandler};
 
 struct EpisodeFetchRequest {
@@ -75,6 +75,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig) -> Result<()> {
     let tracker = Arc::new(Mutex::new(
         EpisodeTracker::load_default(config).context("failed to load episode tracker")?,
@@ -89,6 +90,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
     let mut active_fetch: Option<AbortHandle> = None;
 
     let mut app = App::new();
+    app.sync_bookmark_cache(&favorites);
     initialize_app(&mut app, client.as_ref());
     if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
         app.set_details(format!("Failed to refresh indicators: {err}"));
@@ -102,6 +104,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),
             Event::Tick => {}
+        }
+
+        if app.take_pending_bookmark_toggle() {
+            match app.toggle_bookmark(&mut favorites) {
+                Ok(()) => {
+                    if matches!(app.left_pane_mode(), LeftPaneMode::Bookmarks) {
+                        let details = app.details().to_string();
+                        app.load_bookmarks(&favorites);
+                        app.set_details(details);
+                    }
+                }
+                Err(err) => {
+                    app.set_details(format!("Bookmark toggle failed: {err}"));
+                }
+            }
         }
 
         handle_bookmarks_refresh(&mut app, config, &mut favorites, &mut refresh_favorites);

@@ -105,6 +105,7 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         }
         KeyCode::Tab => app.toggle_focus(),
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
+        KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),
         KeyCode::Char('d') => app.request_download(),
         KeyCode::Char('D') => app.request_delete(),

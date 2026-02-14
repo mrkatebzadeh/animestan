@@ -162,6 +162,7 @@ pub struct App {
     pending_play: bool,
     pending_download: bool,
     pending_delete: bool,
+    pending_bookmark_toggle: bool,
     anime_selection_changed: bool,
     bookmarks_refresh_pending: bool,
     filter_changed: bool,
@@ -206,6 +207,7 @@ impl App {
             pending_play: false,
             pending_download: false,
             pending_delete: false,
+            pending_bookmark_toggle: false,
             anime_selection_changed: false,
             bookmarks_refresh_pending: false,
             filter_changed: false,
@@ -392,6 +394,12 @@ impl App {
         self.current_anime().map(|anime| anime.id.clone())
     }
 
+    pub fn is_bookmarked(&self, anime_id: &str) -> bool {
+        self.bookmark_entries
+            .iter()
+            .any(|entry| entry.anime.id == anime_id)
+    }
+
     pub fn current_selection_label(&self) -> String {
         match (self.current_anime_title(), self.current_episode_title()) {
             (Some(anime), Some(episode)) => format!("{anime}-{episode}"),
@@ -451,6 +459,11 @@ impl App {
             self.set_details(format!("Loaded {} bookmarks", self.bookmark_entries.len()));
             self.anime_selection_changed = true;
         }
+    }
+
+    pub fn sync_bookmark_cache(&mut self, store: &FavoriteStore) {
+        self.bookmark_entries = store.list();
+        self.apply_saved_panel_filter(FilterTarget::Bookmarks);
     }
 
     pub fn cycle_filter(&mut self) {
@@ -702,6 +715,42 @@ impl App {
         } else {
             false
         }
+    }
+
+    pub fn request_bookmark_toggle(&mut self) {
+        self.pending_bookmark_toggle = true;
+    }
+
+    pub fn take_pending_bookmark_toggle(&mut self) -> bool {
+        if self.pending_bookmark_toggle {
+            self.pending_bookmark_toggle = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn toggle_bookmark(&mut self, store: &mut FavoriteStore) -> CoreResult<()> {
+        let Some(anime) = self.current_anime().cloned() else {
+            self.set_details("Highlight an anime to toggle bookmarks.");
+            return Ok(());
+        };
+
+        let anime_id = anime.id.clone();
+        let details = if self.is_bookmarked(&anime_id) {
+            if store.remove(&anime_id)? {
+                format!("Removed {} from bookmarks", anime.title)
+            } else {
+                format!("{} was not bookmarked", anime.title)
+            }
+        } else {
+            store.add(anime.clone())?;
+            format!("Added {} to bookmarks", anime.title)
+        };
+
+        self.sync_bookmark_cache(store);
+        self.set_details(details);
+        Ok(())
     }
 
     pub fn take_anime_selection_changed(&mut self) -> bool {

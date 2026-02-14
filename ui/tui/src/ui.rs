@@ -253,7 +253,12 @@ fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
             } else {
                 ' '
             };
-            ListItem::new(format!("{marker} {}", entry.title))
+            let bookmark_icon = if app.is_bookmarked(entry.id.as_str()) {
+                '★'
+            } else {
+                ' '
+            };
+            ListItem::new(format!("{marker} {bookmark_icon} {}", entry.title))
         })
         .collect()
 }
@@ -268,7 +273,7 @@ fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
             } else {
                 ' '
             };
-            ListItem::new(format!("{marker} {}", entry.anime.title))
+            ListItem::new(format!("{marker} ★ {}", entry.anime.title))
         })
         .collect()
 }
