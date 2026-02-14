@@ -184,6 +184,11 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.show_keybindings() {
+        app.toggle_keybindings();
+        return;
+    }
+
     if app.panel_filter_mode() {
         handle_panel_filter_mode(app, key_event);
         return;
