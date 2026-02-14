@@ -92,6 +92,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     render_details(frame, chunks[3], app);
     render_keybindings_modal(frame, app);
+    render_exit_confirmation_modal(frame, app);
 }
 
 fn render_list(
@@ -377,6 +378,36 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App) {
     let area = centered_rect(frame_area, width, height);
     let block = Block::default().title("Keybindings").borders(Borders::ALL);
     let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph, area);
+}
+
+fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
+    const TEXT: &str = "Exit Animestan? (y/n)";
+
+    if !app.confirm_exit() {
+        return;
+    }
+
+    let frame_area = frame.area();
+    if frame_area.width < 16 || frame_area.height < 3 {
+        return;
+    }
+
+    let text_width = u16::try_from(TEXT.len()).unwrap_or(u16::MAX);
+    let desired_width = text_width.saturating_add(8);
+    let width = desired_width.min(frame_area.width);
+    let height = 5.min(frame_area.height);
+
+    let area = centered_rect(frame_area, width, height);
+    let block = Block::default().title("Confirm Exit").borders(Borders::ALL);
+    let paragraph = Paragraph::new(Line::from(Span::styled(
+        TEXT,
+        Style::default().fg(Color::White),
+    )))
+    .alignment(Alignment::Center)
+    .block(block);
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);

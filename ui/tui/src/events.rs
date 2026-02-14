@@ -189,6 +189,14 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.confirm_exit() {
+        match key_event.code {
+            KeyCode::Char('y') => app.confirm_exit_and_quit(),
+            _ => app.clear_confirm_exit(),
+        }
+        return;
+    }
+
     if app.show_keybindings() {
         app.toggle_keybindings();
         return;
@@ -211,7 +219,7 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('/') => {
             app.enter_panel_filter(app.filter_target_for_focus());
         }
-        KeyCode::Char('q') => app.request_quit(),
+        KeyCode::Char('q') => app.request_exit(),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
         KeyCode::Left | KeyCode::Right => {

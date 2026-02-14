@@ -173,6 +173,7 @@ pub struct App {
     current_playing_episode_id: Option<String>,
     details_text: String,
     should_quit: bool,
+    confirm_exit: bool,
     show_keybindings: bool,
     matcher: Matcher,
     episode_indicators: HashMap<String, EpisodeIndicators>,
@@ -226,6 +227,7 @@ impl App {
             )
             .to_string(),
             should_quit: false,
+            confirm_exit: false,
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
@@ -623,8 +625,21 @@ impl App {
         self.toggle_keybindings();
     }
 
-    pub fn request_quit(&mut self) {
+    pub fn request_exit(&mut self) {
+        self.confirm_exit = true;
+    }
+
+    pub fn confirm_exit(&self) -> bool {
+        self.confirm_exit
+    }
+
+    pub fn clear_confirm_exit(&mut self) {
+        self.confirm_exit = false;
+    }
+
+    pub fn confirm_exit_and_quit(&mut self) {
         self.should_quit = true;
+        self.confirm_exit = false;
     }
 
     pub fn set_details<S: Into<String>>(&mut self, details: S) {
