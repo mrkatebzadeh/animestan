@@ -283,11 +283,15 @@ impl<F: Fetcher> AnimeClient<F> {
     ///
     /// Returns an error if the stream URL cannot be rendered, the fetcher fails to retrieve
     /// JSON, the payload cannot be parsed, or the returned URL is invalid.
-    pub fn resolve_stream_url(&self, episode_id: &str) -> CoreResult<StreamLink> {
+    pub fn resolve_stream_url(
+        &self,
+        episode_id: &str,
+        preferred_quality: Option<&str>,
+    ) -> CoreResult<StreamLink> {
         info!("resolving stream for '{episode_id}' via {}", self.source.id);
 
         let link = if self.uses_allanime() {
-            self.resolve_stream_url_allanime(episode_id)?
+            self.resolve_stream_url_allanime(episode_id, preferred_quality)?
         } else {
             let url = self.source.stream.render(&[("episode_id", episode_id)])?;
             let payload: StreamPayload = self.fetch_and_parse(&url)?;
@@ -363,7 +367,11 @@ impl<F: Fetcher> AnimeClient<F> {
         Ok(episodes)
     }
 
-    fn resolve_stream_url_allanime(&self, episode_id: &str) -> CoreResult<StreamLink> {
+    fn resolve_stream_url_allanime(
+        &self,
+        episode_id: &str,
+        preferred_quality: Option<&str>,
+    ) -> CoreResult<StreamLink> {
         let (show_id, episode_string) = split_episode_id(episode_id)?;
 
         let variables = json!({
@@ -403,7 +411,7 @@ impl<F: Fetcher> AnimeClient<F> {
         }
         let embed_url = build_allanime_embed_url(&decoded)?;
         let payload = self.fetcher.fetch_json(&embed_url)?;
-        let stream_url = select_stream_url(&payload)?;
+        let stream_url = select_stream_url(&payload, preferred_quality)?;
         let url = Url::parse(&stream_url).map_err(|source| Error::StreamUrlParse {
             url: stream_url.clone(),
             source,
@@ -744,7 +752,7 @@ fn decode_pair(pair: &str) -> Option<char> {
     }
 }
 
-fn select_stream_url(value: &Value) -> CoreResult<String> {
+fn select_stream_url(value: &Value, preferred_quality: Option<&str>) -> CoreResult<String> {
     let mut candidates = Vec::new();
     collect_stream_candidates(value, &mut candidates);
     if candidates.is_empty() {
@@ -753,15 +761,85 @@ fn select_stream_url(value: &Value) -> CoreResult<String> {
         }
         .into());
     }
+    let preference = preferred_quality.and_then(parse_quality_preference);
+    let chosen = choose_stream_candidate(&candidates, preference);
+    Ok(chosen.url.clone())
+}
 
-    let mut best = candidates.remove(0);
-    for candidate in candidates {
-        if prefers_candidate(&candidate, &best) {
-            best = candidate;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QualityPreference {
+    Best,
+    Worst,
+    Exact(u32),
+}
+
+fn choose_stream_candidate(
+    candidates: &[StreamCandidate],
+    preference: Option<QualityPreference>,
+) -> &StreamCandidate {
+    if let Some(preference) = preference {
+        if let Some(candidate) = find_candidate_by_preference(candidates, preference) {
+            return candidate;
         }
     }
 
-    Ok(best.url)
+    choose_default_candidate(candidates)
+}
+
+fn choose_default_candidate(candidates: &[StreamCandidate]) -> &StreamCandidate {
+    let mut best_index = 0;
+    for (index, candidate) in candidates.iter().enumerate().skip(1) {
+        if prefers_candidate(candidate, &candidates[best_index]) {
+            best_index = index;
+        }
+    }
+    &candidates[best_index]
+}
+
+fn find_candidate_by_preference(
+    candidates: &[StreamCandidate],
+    preference: QualityPreference,
+) -> Option<&StreamCandidate> {
+    match preference {
+        QualityPreference::Best => candidates
+            .iter()
+            .filter_map(|candidate| {
+                candidate
+                    .resolution
+                    .map(|resolution| (resolution, candidate))
+            })
+            .max_by_key(|(resolution, _)| *resolution)
+            .map(|(_, candidate)| candidate),
+        QualityPreference::Worst => candidates
+            .iter()
+            .filter_map(|candidate| {
+                candidate
+                    .resolution
+                    .map(|resolution| (resolution, candidate))
+            })
+            .min_by_key(|(resolution, _)| *resolution)
+            .map(|(_, candidate)| candidate),
+        QualityPreference::Exact(value) => candidates
+            .iter()
+            .find(|candidate| candidate.resolution == Some(value)),
+    }
+}
+
+fn parse_quality_preference(value: &str) -> Option<QualityPreference> {
+    let normalized = value.trim();
+    let normalized_lower = normalized.to_ascii_lowercase();
+    match normalized_lower.as_str() {
+        "best" => Some(QualityPreference::Best),
+        "worst" => Some(QualityPreference::Worst),
+        other => {
+            let digits: String = other.chars().filter(char::is_ascii_digit).collect();
+            if digits.is_empty() {
+                None
+            } else {
+                digits.parse().ok().map(QualityPreference::Exact)
+            }
+        }
+    }
 }
 
 fn collect_stream_candidates(value: &Value, candidates: &mut Vec<StreamCandidate>) {
@@ -844,8 +922,46 @@ mod tests {
     fn resolve_stream_url_returns_url() {
         let client = AnimeClient::with_fixtures().expect("fixtures client");
         let stream = client
-            .resolve_stream_url("naruto-1")
+            .resolve_stream_url("naruto-1", None)
             .expect("stream resolution");
         assert_eq!(stream.url.as_str(), "https://stream.example/naruto-1.m3u8");
+    }
+
+    fn quality_test_payload() -> Value {
+        json!({
+            "streams": [
+                { "link": "https://stream.example/480", "resolutionStr": "480p" },
+                { "link": "https://stream.example/720", "resolutionStr": "720p" },
+                { "link": "https://stream.example/1080", "resolutionStr": "1080p" },
+            ]
+        })
+    }
+
+    #[test]
+    fn select_stream_url_prefers_best_quality() {
+        let payload = quality_test_payload();
+        let link = select_stream_url(&payload, Some("best")).expect("best quality");
+        assert_eq!(link, "https://stream.example/1080");
+    }
+
+    #[test]
+    fn select_stream_url_prefers_worst_quality() {
+        let payload = quality_test_payload();
+        let link = select_stream_url(&payload, Some("worst")).expect("worst quality");
+        assert_eq!(link, "https://stream.example/480");
+    }
+
+    #[test]
+    fn select_stream_url_respects_numeric_quality() {
+        let payload = quality_test_payload();
+        let link = select_stream_url(&payload, Some(" 720p ")).expect("numeric quality");
+        assert_eq!(link, "https://stream.example/720");
+    }
+
+    #[test]
+    fn select_stream_url_ignores_unknown_quality() {
+        let payload = quality_test_payload();
+        let link = select_stream_url(&payload, Some("unknown")).expect("fallback quality");
+        assert_eq!(link, "https://stream.example/1080");
     }
 }
