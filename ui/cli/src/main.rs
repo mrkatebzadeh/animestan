@@ -13,16 +13,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::{Arc, Mutex};
+use std::convert::TryFrom;
+use std::io::ErrorKind;
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow};
+use chrono::{Local, LocalResult, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use spdlog::prelude::*;
 
 use animestan_core::{
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter, delete_episode, download_episode, episode_file_path, init_logging,
-    local_playback_url,
+    PlaybackFilter, app_log_path, delete_episode, download_episode, episode_file_path,
+    init_logging, local_playback_url,
 };
 
 mod playback;
@@ -62,6 +69,8 @@ fn run() -> Result<()> {
         Commands::Play { episode_id } => handle_play(&client, &config, &episode_id),
         Commands::Download { episode_id } => handle_download(&client, &config, &episode_id),
         Commands::Delete { episode_id } => handle_delete(&config, &episode_id),
+        Commands::History { command } => handle_history(&config, &command),
+        Commands::Log { command } => handle_log(&config, &command),
         Commands::Bookmarks { command } => handle_bookmarks(&client, &config, command),
     }?;
 
@@ -182,6 +191,125 @@ fn handle_delete(config: &AppConfig, episode_id: &str) -> Result<()> {
         println!("No download found for '{episode_id}'");
     }
     Ok(())
+}
+
+fn handle_history(config: &AppConfig, command: &HistoryCommand) -> Result<()> {
+    match command {
+        HistoryCommand::View => {
+            let tracker = EpisodeTracker::load_default(config)?;
+            let mut entries = tracker
+                .recorded_episode_ids()
+                .filter_map(|episode_id| {
+                    tracker
+                        .progress_for(episode_id)
+                        .map(|progress| (episode_id.clone(), progress.clone()))
+                })
+                .collect::<Vec<_>>();
+
+            if entries.is_empty() {
+                println!(
+                    "No playback history found at {}",
+                    config.progress_path().display()
+                );
+                return Ok(());
+            }
+
+            entries.sort_by(|a, b| b.1.updated_at.cmp(&a.1.updated_at));
+            println!("episode_id\tupdated_at\tlast_position\tduration\twatched");
+            for (episode_id, progress) in entries {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    episode_id,
+                    format_timestamp(progress.updated_at),
+                    format_duration(progress.last_position_sec),
+                    format_duration(progress.duration_sec),
+                    if progress.watched { "yes" } else { "no" }
+                );
+            }
+        }
+        HistoryCommand::Delete => {
+            let path = config.progress_path();
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    println!("Deleted playback history at {}", path.display());
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    println!("No playback history file found at {}", path.display());
+                }
+                Err(error) => {
+                    return Err(error)
+                        .context(format!("failed to delete history at {}", path.display()));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_log(config: &AppConfig, command: &LogCommand) -> Result<()> {
+    let path = app_log_path("animestan-cli", config);
+    match command {
+        LogCommand::View => match fs::read_to_string(&path) {
+            Ok(contents) if contents.trim().is_empty() => {
+                println!("Log file at {} is empty", path.display());
+            }
+            Ok(contents) => {
+                println!("Log file at {}:\n{}", path.display(), contents);
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                println!("No log file found at {}", path.display());
+            }
+            Err(error) => {
+                return Err(error)
+                    .context(format!("failed to read log file at {}", path.display()));
+            }
+        },
+        LogCommand::Delete => match fs::remove_file(&path) {
+            Ok(()) => {
+                println!("Deleted log file at {}", path.display());
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                println!("No log file found at {}", path.display());
+            }
+            Err(error) => {
+                return Err(error)
+                    .context(format!("failed to delete log file at {}", path.display()));
+            }
+        },
+    }
+
+    Ok(())
+}
+
+fn format_timestamp(value: u64) -> String {
+    let seconds = i64::try_from(value).unwrap_or(i64::MAX);
+    match Utc.timestamp_opt(seconds, 0) {
+        LocalResult::Single(datetime) => datetime
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S %Z")
+            .to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn format_duration(value: Option<f64>) -> String {
+    match value {
+        Some(seconds) if seconds.is_finite() => {
+            let non_negative = seconds.max(0.0);
+            let duration = Duration::from_secs_f64(non_negative);
+            let total_seconds = duration.as_secs();
+            let hours = total_seconds / 3600;
+            let minutes = (total_seconds % 3600) / 60;
+            let remaining_secs = total_seconds % 60;
+            if hours > 0 {
+                format!("{hours:02}:{minutes:02}:{remaining_secs:02}")
+            } else {
+                format!("{minutes:02}:{remaining_secs:02}")
+            }
+        }
+        _ => "--:--".to_string(),
+    }
 }
 
 fn handle_bookmarks(
@@ -321,6 +449,16 @@ enum Commands {
     Download { episode_id: String },
     /// Delete a previously downloaded episode
     Delete { episode_id: String },
+    /// Inspect playback history
+    History {
+        #[command(subcommand)]
+        command: HistoryCommand,
+    },
+    /// Inspect CLI logs
+    Log {
+        #[command(subcommand)]
+        command: LogCommand,
+    },
     /// Manage bookmarks
     Bookmarks {
         #[command(subcommand)]
@@ -349,6 +487,22 @@ enum BookmarksCommand {
     },
     /// Remove a bookmark by anime id
     Rm { anime_id: String },
+}
+
+#[derive(Subcommand)]
+enum HistoryCommand {
+    /// View the recorded playback history
+    View,
+    /// Delete the recorded playback history file
+    Delete,
+}
+
+#[derive(Subcommand)]
+enum LogCommand {
+    /// View the CLI log contents
+    View,
+    /// Delete the CLI log file
+    Delete,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -405,6 +559,14 @@ fn describe_command(command: &Commands) -> &'static str {
         Commands::Play { .. } => "play",
         Commands::Download { .. } => "download",
         Commands::Delete { .. } => "delete",
+        Commands::History { command } => match command {
+            HistoryCommand::View => "history::view",
+            HistoryCommand::Delete => "history::delete",
+        },
+        Commands::Log { command } => match command {
+            LogCommand::View => "log::view",
+            LogCommand::Delete => "log::delete",
+        },
         Commands::Bookmarks { command } => match command {
             BookmarksCommand::Ls { .. } => "bookmarks::ls",
             BookmarksCommand::Add { .. } => "bookmarks::add",

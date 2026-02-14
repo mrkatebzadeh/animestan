@@ -225,6 +225,17 @@ impl EpisodeTracker {
             .map(|(_, episode)| episode.clone())
     }
 
+    /// Returns an iterator over recorded episode IDs.
+    pub fn recorded_episode_ids(&self) -> impl Iterator<Item = &String> + '_ {
+        self.store.episodes.keys()
+    }
+
+    /// Returns the stored playback progress for the given episode ID, if available.
+    #[must_use]
+    pub fn progress_for(&self, episode_id: &str) -> Option<&EpisodeProgress> {
+        self.store.episodes.get(episode_id)
+    }
+
     fn save(&self) -> CoreResult<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|source| Error::TrackingWrite {

@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::fs;
 use std::sync::{Mutex, OnceLock};
+use std::{fs, path::PathBuf};
 
 use spdlog::{
     Level, LevelFilter, Logger,
@@ -89,6 +89,12 @@ fn configure_logger(
 
     spdlog::set_default_logger(logger);
     Ok(())
+}
+
+/// Returns the absolute path to the log file for `app_name` using the configured log directory.
+#[must_use]
+pub fn app_log_path(app_name: &str, config: &AppConfig) -> PathBuf {
+    config.logs_dir().join(format!("{app_name}.log"))
 }
 
 fn level_filter_from(verbosity: u8) -> LevelFilter {

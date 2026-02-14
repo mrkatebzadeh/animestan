@@ -32,6 +32,7 @@ pub use crate::downloads::{
 pub use crate::error::Error;
 pub type CoreResult<T> = anyhow::Result<T>;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
+pub use crate::logging::app_log_path;
 pub use crate::logging::init_logging;
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::tracking::EpisodeTracker;
