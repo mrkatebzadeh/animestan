@@ -17,7 +17,10 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::block::Title;
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
 
 use crate::app::{App, ConfirmExitChoice, FilterTarget, Focus, InputMode, LeftPaneMode};
 use crate::events::keybindings;
@@ -103,9 +106,23 @@ fn render_list(
     active_index: usize,
     focused: bool,
 ) {
+    let title = if focused {
+        Title::from(Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::BOLD),
+        ))
+    } else {
+        Title::from(title)
+    };
+
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(if focused {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        })
         .border_style(border_style(focused));
 
     let mut state = ListState::default();
