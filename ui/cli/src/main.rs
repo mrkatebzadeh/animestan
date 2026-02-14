@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::{
@@ -67,6 +68,7 @@ fn run() -> Result<()> {
         ),
         Commands::Url { episode_id } => handle_url(&client, &config, &episode_id),
         Commands::Play { episode_id } => handle_play(&client, &config, &episode_id),
+        Commands::Continue { anime_id } => handle_continue(&client, &config, anime_id),
         Commands::Download { episode_id } => handle_download(&client, &config, &episode_id),
         Commands::Delete { episode_id } => handle_delete(&config, &episode_id),
         Commands::History { command } => handle_history(&config, &command),
@@ -150,6 +152,76 @@ fn handle_play(
         .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
     playback::play_episode(config, &tracker, episode_id, link.url.as_str())?;
     Ok(())
+}
+
+fn handle_continue(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    anime_id: Option<String>,
+) -> Result<()> {
+    let tracker =
+        EpisodeTracker::load_default(config).context("failed to read playback history")?;
+    let mut seen_history = false;
+    let mut anime_updates: HashMap<String, u64> = HashMap::new();
+    for episode_id in tracker.recorded_episode_ids() {
+        seen_history = true;
+        if let Some(anime_key) = anime_id_from_episode_id(episode_id) {
+            if let Some(state) = tracker.state_for(episode_id) {
+                anime_updates
+                    .entry(anime_key.to_string())
+                    .and_modify(|existing| {
+                        if state.updated_at > *existing {
+                            *existing = state.updated_at;
+                        }
+                    })
+                    .or_insert(state.updated_at);
+            }
+        }
+    }
+
+    if !seen_history {
+        return Err(anyhow!(
+            "playback history is empty; start an episode to build history"
+        ));
+    }
+
+    if anime_updates.is_empty() {
+        return Err(anyhow!(
+            "playback history lacks identifiable anime entries; watch an episode again"
+        ));
+    }
+
+    let selected_anime = if let Some(requested) = anime_id {
+        if anime_updates.contains_key(&requested) {
+            requested
+        } else {
+            return Err(anyhow!("no playback history found for anime '{requested}'"));
+        }
+    } else {
+        anime_updates
+            .iter()
+            .max_by_key(|(_, updated)| *updated)
+            .map(|(anime_id, _)| anime_id.clone())
+            .ok_or_else(|| {
+                anyhow!("playback history is empty; start an episode to build history")
+            })?
+    };
+
+    let episodes = client
+        .list_episodes(&selected_anime)
+        .with_context(|| format!("failed to list episodes for '{}'", selected_anime.clone()))?;
+
+    let filtered = tracker.filter_episodes(&episodes, PlaybackFilter::Next);
+    let episode = filtered
+        .first()
+        .ok_or_else(|| anyhow!("no unwatched episodes found for '{selected_anime}'"))?;
+
+    println!(
+        "Continuing '{}' from the next unwatched episode: {} - {}",
+        selected_anime, episode.id, episode.title
+    );
+
+    handle_play(client, config, &episode.id)
 }
 
 fn handle_download(
@@ -445,6 +517,11 @@ enum Commands {
     Url { episode_id: String },
     /// Resolve (or reuse downloads) and play an episode via the configured player
     Play { episode_id: String },
+    /// Continue playback from the most recently watched anime
+    Continue {
+        #[arg(long)]
+        anime_id: Option<String>,
+    },
     /// Download an episode for offline playback
     Download { episode_id: String },
     /// Delete a previously downloaded episode
@@ -557,6 +634,7 @@ fn describe_command(command: &Commands) -> &'static str {
         Commands::Episodes { .. } => "episodes",
         Commands::Url { .. } => "url",
         Commands::Play { .. } => "play",
+        Commands::Continue { .. } => "continue",
         Commands::Download { .. } => "download",
         Commands::Delete { .. } => "delete",
         Commands::History { command } => match command {
@@ -572,5 +650,13 @@ fn describe_command(command: &Commands) -> &'static str {
             BookmarksCommand::Add { .. } => "bookmarks::add",
             BookmarksCommand::Rm { .. } => "bookmarks::rm",
         },
+    }
+}
+
+fn anime_id_from_episode_id(episode_id: &str) -> Option<&str> {
+    if let Some((anime_id, _)) = episode_id.split_once(':') {
+        Some(anime_id)
+    } else {
+        episode_id.rsplit_once('-').map(|(anime_id, _)| anime_id)
     }
 }
