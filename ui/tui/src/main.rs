@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, delete_episode,
-    download_episode, episode_file_path, init_logging, local_playback_url,
+    AnimeClient, AppConfig, CoreResult, Episode, EpisodeTracker, FavoriteStore, FetchBackend,
+    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -33,12 +33,26 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use futures::future::{AbortHandle, Abortable};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use spdlog::prelude::*;
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::{UnboundedSender, error::TryRecvError, unbounded_channel};
+use tokio::time::sleep;
 
 use crate::app::{App, EpisodeIndicators, PlaybackStatus};
 use crate::events::{Event, EventHandler};
+
+struct EpisodeFetchRequest {
+    generation: u64,
+    anime_id: String,
+}
+
+struct EpisodeFetchResult {
+    generation: u64,
+    result: CoreResult<Vec<Episode>>,
+}
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -67,10 +81,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
     ));
     let mut favorites = FavoriteStore::load_default(config).context("failed to load favorites")?;
     let mut refresh_favorites = false;
-    let client = AnimeClient::from_config(config)?;
+    let client = Arc::new(AnimeClient::from_config(config)?);
+    let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    let runtime_handle = runtime.handle().clone();
+    let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
+    let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
+    let mut active_fetch: Option<AbortHandle> = None;
 
     let mut app = App::new();
-    initialize_app(&mut app, &client);
+    initialize_app(&mut app, client.as_ref());
     if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
         app.set_details(format!("Failed to refresh indicators: {err}"));
     }
@@ -87,10 +106,70 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
 
         handle_bookmarks_refresh(&mut app, config, &mut favorites, &mut refresh_favorites);
 
-        handle_search(&mut app, &client, &tracker, config);
-        handle_filters(&mut app, &client, &tracker, config);
+        handle_search(&mut app, client.as_ref());
+        handle_filters(&mut app, &tracker, &request_tx);
 
-        if handle_download(&mut app, config, &client, &tracker) {
+        loop {
+            match request_rx.try_recv() {
+                Ok(request) => {
+                    if let Some(handle) = active_fetch.take() {
+                        handle.abort();
+                    }
+                    let abort_handle = spawn_episode_fetch_task(
+                        &runtime_handle,
+                        Arc::clone(&client),
+                        request,
+                        result_tx.clone(),
+                    );
+                    active_fetch = Some(abort_handle);
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    app.set_details("Episode fetch queue disconnected.");
+                    app.set_episodes_loading(false);
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match result_rx.try_recv() {
+                Ok(fetch_result) => {
+                    if fetch_result.generation != app.current_fetch_generation() {
+                        continue;
+                    }
+
+                    match fetch_result.result {
+                        Ok(episodes) => {
+                            let count = episodes.len();
+                            app.set_episodes(episodes);
+                            app.set_details(format!("Loaded {count} episodes"));
+                            if app.current_filter().is_some() {
+                                if let Err(err) = apply_episode_filter(&mut app, &tracker) {
+                                    app.set_details(format!("Filter failed: {err}"));
+                                }
+                            }
+                            if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config)
+                            {
+                                app.set_details(format!("Failed to refresh indicators: {err}"));
+                            }
+                        }
+                        Err(err) => {
+                            app.set_episodes_loading(false);
+                            app.set_details(format!("Episode load failed: {err}"));
+                        }
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    app.set_details("Episode fetch worker disconnected.");
+                    app.set_episodes_loading(false);
+                    break;
+                }
+            }
+        }
+
+        if handle_download(&mut app, config, client.as_ref(), &tracker) {
             continue;
         }
 
@@ -98,13 +177,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
             continue;
         }
 
-        if handle_playback(&mut app, config, &tracker, &client) {
+        if handle_playback(&mut app, config, &tracker, client.as_ref()) {
             continue;
         }
 
         if app.should_quit() {
             break;
         }
+    }
+
+    if let Some(handle) = active_fetch.take() {
+        handle.abort();
     }
 
     Ok(())
@@ -144,54 +227,41 @@ fn handle_bookmarks_refresh(
     app.load_bookmarks(favorites);
 }
 
-fn handle_search(
-    app: &mut App,
-    client: &AnimeClient<FetchBackend>,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    config: &AppConfig,
-) {
+fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
     if !app.take_pending_search() {
         return;
     }
 
-    match app.search(client) {
-        Ok(()) => {
-            if app.current_filter().is_some() {
-                if let Err(err) = apply_episode_filter(app, tracker) {
-                    app.set_details(format!("Filter failed: {err}"));
-                }
-            }
-            if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-                app.set_details(format!("Failed to refresh indicators: {err}"));
-            }
-        }
-        Err(err) => {
-            app.set_details(format!("Search failed: {err}"));
-        }
+    if let Err(err) = app.search(client) {
+        app.set_details(format!("Search failed: {err}"));
     }
 }
 
 fn handle_filters(
     app: &mut App,
-    client: &AnimeClient<FetchBackend>,
     tracker: &Arc<Mutex<EpisodeTracker>>,
-    config: &AppConfig,
+    request_tx: &UnboundedSender<EpisodeFetchRequest>,
 ) {
     let mut apply_filter = false;
 
     if app.take_anime_selection_changed() {
-        match app.load_episodes(client) {
-            Ok(()) => {
-                if app.current_filter().is_some() {
-                    apply_filter = true;
-                }
-                if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-                    app.set_details(format!("Failed to refresh indicators: {err}"));
-                }
+        if let Some(anime_id) = app.current_anime_id() {
+            app.set_episodes_loading(true);
+            let generation = app.next_fetch_generation();
+            let request = EpisodeFetchRequest {
+                generation,
+                anime_id,
+            };
+            if request_tx.send(request).is_err() {
+                app.set_episodes_loading(false);
+                app.set_details("Episode fetch queue unavailable.");
+            } else {
+                app.set_details("Fetching episodes...");
             }
-            Err(err) => {
-                app.set_details(format!("Episode load failed: {err}"));
-            }
+        } else {
+            app.clear_episodes();
+            app.set_episodes_loading(false);
+            app.set_details("Select an anime to load episodes.");
         }
     }
 
@@ -441,4 +511,38 @@ fn refresh_episode_indicators(
     };
     app.set_episode_indicators(indicators);
     Ok(())
+}
+
+fn spawn_episode_fetch_task(
+    runtime: &Handle,
+    client: Arc<AnimeClient<FetchBackend>>,
+    request: EpisodeFetchRequest,
+    result_tx: UnboundedSender<EpisodeFetchResult>,
+) -> AbortHandle {
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let EpisodeFetchRequest {
+        generation,
+        anime_id,
+    } = request;
+
+    runtime.spawn({
+        let fut = Abortable::new(
+            async move {
+                sleep(Duration::from_millis(200)).await;
+                let blocking_result =
+                    tokio::task::spawn_blocking(move || client.list_episodes(&anime_id)).await;
+                let result = match blocking_result {
+                    Ok(res) => res,
+                    Err(err) => Err(anyhow!("episode fetch join failed: {err}")),
+                };
+                let _ = result_tx.send(EpisodeFetchResult { generation, result });
+            },
+            abort_registration,
+        );
+        async move {
+            let _ = fut.await;
+        }
+    });
+
+    abort_handle
 }

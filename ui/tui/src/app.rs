@@ -155,6 +155,8 @@ pub struct App {
     anime_filter_query: String,
     bookmark_filter_query: String,
     episode_filter_query: String,
+    episodes_loading: bool,
+    fetch_generation: u64,
     search_query: String,
     pending_search: bool,
     pending_play: bool,
@@ -197,6 +199,8 @@ impl App {
             anime_filter_query: String::new(),
             bookmark_filter_query: String::new(),
             episode_filter_query: String::new(),
+            episodes_loading: false,
+            fetch_generation: 0,
             search_query: DEFAULT_SEARCH_QUERY.to_string(),
             pending_search: false,
             pending_play: false,
@@ -317,6 +321,23 @@ impl App {
         self.visible_episodes()
     }
 
+    pub fn set_episodes_loading(&mut self, loading: bool) {
+        self.episodes_loading = loading;
+    }
+
+    pub fn episodes_loading(&self) -> bool {
+        self.episodes_loading
+    }
+
+    pub fn next_fetch_generation(&mut self) -> u64 {
+        self.fetch_generation = self.fetch_generation.wrapping_add(1);
+        self.fetch_generation
+    }
+
+    pub fn current_fetch_generation(&self) -> u64 {
+        self.fetch_generation
+    }
+
     pub fn unfiltered_episodes(&self) -> &[Episode] {
         &self.episodes
     }
@@ -365,6 +386,10 @@ impl App {
 
     pub fn current_anime_title(&self) -> Option<String> {
         self.current_anime_title_ref().map(ToString::to_string)
+    }
+
+    pub fn current_anime_id(&self) -> Option<String> {
+        self.current_anime().map(|anime| anime.id.clone())
     }
 
     pub fn current_selection_label(&self) -> String {
@@ -440,6 +465,28 @@ impl App {
             self.set_details("Filters cleared");
             self.clear_filtered_episodes();
         }
+    }
+
+    pub fn set_episodes(&mut self, episodes: Vec<Episode>) {
+        self.episodes = episodes;
+        self.filtered_episodes.clear();
+        self.filtered_episode_entries.clear();
+        self.episode_indicators.clear();
+        self.apply_saved_panel_filter(FilterTarget::Episodes);
+        self.right_index = 0;
+        self.selected_episode = None;
+        self.episodes_loading = false;
+    }
+
+    pub fn clear_episodes(&mut self) {
+        self.episodes.clear();
+        self.filtered_episodes.clear();
+        self.filtered_episode_entries.clear();
+        self.episode_indicators.clear();
+        self.apply_saved_panel_filter(FilterTarget::Episodes);
+        self.right_index = 0;
+        self.selected_episode = None;
+        self.episodes_loading = false;
     }
 
     pub fn set_filtered_episodes(&mut self, episodes: Vec<Episode>) {
@@ -672,15 +719,11 @@ impl App {
             self.left_pane_mode = LeftPaneMode::Search;
             self.bookmarks_refresh_pending = false;
             self.anime_entries.clear();
-            self.episodes.clear();
-            self.filtered_episodes.clear();
             self.filtered_anime_entries.clear();
-            self.filtered_episode_entries.clear();
-            self.episode_indicators.clear();
+            self.clear_episodes();
             self.left_index = 0;
-            self.right_index = 0;
             self.selected_anime = None;
-            self.selected_episode = None;
+            self.anime_selection_changed = false;
             self.set_details("Enter a search term with 's'.");
             return Ok(());
         }
@@ -690,41 +733,33 @@ impl App {
         self.left_pane_mode = LeftPaneMode::Search;
         self.left_index = 0;
         self.selected_anime = None;
-        self.anime_selection_changed = false;
         self.right_index = 0;
         self.selected_episode = None;
         self.apply_saved_panel_filter(FilterTarget::Anime);
 
         if self.anime_entries.is_empty() {
-            self.episodes.clear();
-            self.filtered_episode_entries.clear();
-            self.episode_indicators.clear();
+            self.clear_episodes();
+            self.anime_selection_changed = false;
             self.set_details(format!("No results for '{query}'"));
             return Ok(());
         }
 
+        self.clear_episodes();
+        self.anime_selection_changed = !self.visible_anime_entries().is_empty();
         self.set_details(format!("Loaded {} results", self.anime_entries.len()));
-        self.load_episodes(client)
+        Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn load_episodes(&mut self, client: &AnimeClient<FetchBackend>) -> CoreResult<()> {
         let Some(anime) = self.current_anime() else {
-            self.episodes.clear();
-            self.filtered_episodes.clear();
-            self.episode_indicators.clear();
-            self.right_index = 0;
-            self.selected_episode = None;
+            self.clear_episodes();
             self.set_details("Select an anime to load episodes.");
             return Ok(());
         };
 
         let episodes = client.list_episodes(&anime.id)?;
-        self.episodes = episodes;
-        self.filtered_episodes.clear();
-        self.episode_indicators.clear();
-        self.apply_saved_panel_filter(FilterTarget::Episodes);
-        self.right_index = 0;
-        self.selected_episode = None;
+        self.set_episodes(episodes);
         self.set_details(format!("Loaded {} episodes", self.episodes.len()));
         self.anime_selection_changed = false;
         Ok(())
@@ -732,13 +767,8 @@ impl App {
 
     fn reset_navigation_state(&mut self) {
         self.left_index = 0;
-        self.right_index = 0;
         self.selected_anime = None;
-        self.selected_episode = None;
-        self.episodes.clear();
-        self.filtered_episodes.clear();
-        self.filtered_episode_entries.clear();
-        self.episode_indicators.clear();
+        self.clear_episodes();
     }
 
     fn active_list_len(&self) -> usize {

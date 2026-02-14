@@ -13,6 +13,8 @@ ratatui = "0.28"
 spdlog = { version = "0.5", package = "spdlog-rs" }
 serde_json = "1.0"
 nucleo = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+futures = "0.3"
 
 [lints.rust]
 unsafe_code = "warn"

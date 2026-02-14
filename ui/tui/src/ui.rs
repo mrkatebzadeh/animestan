@@ -274,6 +274,10 @@ fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
 }
 
 fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
+    if app.episodes_loading() {
+        return vec![ListItem::new("Fetching episodes...")];
+    }
+
     app.episodes()
         .iter()
         .enumerate()
