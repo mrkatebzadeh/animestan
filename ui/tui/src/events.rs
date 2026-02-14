@@ -48,8 +48,13 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
-            keys: "Tab / h / l / ← / →",
-            description: "Switch pane focus",
+            keys: "Tab",
+            description: "Cycle focus: Anime → Episode → Search",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "← / →",
+            description: "Switch between anime and episodes",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -209,10 +214,10 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('q') => app.request_quit(),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-        KeyCode::Char('h' | 'l') | KeyCode::Left | KeyCode::Right => {
+        KeyCode::Left | KeyCode::Right => {
             app.toggle_focus();
         }
-        KeyCode::Tab => app.toggle_focus(),
+        KeyCode::Tab => app.cycle_focus(),
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),

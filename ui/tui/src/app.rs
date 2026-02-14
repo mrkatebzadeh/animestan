@@ -577,6 +577,25 @@ impl App {
         });
     }
 
+    pub fn cycle_focus(&mut self) {
+        if matches!(self.input_mode, InputMode::Search) {
+            self.exit_search_mode();
+            self.focus = Focus::Left;
+            self.set_details("Focus: Anime list");
+            return;
+        }
+
+        match self.focus {
+            Focus::Left => {
+                self.focus = Focus::Right;
+                self.set_details("Focus: Episode list");
+            }
+            Focus::Right => {
+                self.enter_search_mode();
+            }
+        }
+    }
+
     pub fn select_current(&mut self) {
         match self.focus {
             Focus::Left => {
