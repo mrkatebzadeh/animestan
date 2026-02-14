@@ -33,6 +33,14 @@ target/release/animestan-cli
 target/release/animestan-tui
 ```
 
+## Requirements
+
+- `mpv` is currently required for playback.
+
+## Configuration
+
+Animestan stores configuration in the OS-specific config directory, under an `animestan/config.toml` file. On Linux this resolves to `$HOME/.config/animestan/config.toml`.
+
 ## Quick usage
 
 CLI:
