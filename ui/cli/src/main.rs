@@ -187,76 +187,6 @@ fn handle_play(
     Ok(())
 }
 
-fn handle_continue(
-    client: &AnimeClient<FetchBackend>,
-    config: &AppConfig,
-    anime_id: Option<String>,
-) -> Result<()> {
-    let tracker =
-        EpisodeTracker::load_default(config).context("failed to read playback history")?;
-    let mut seen_history = false;
-    let mut anime_updates: HashMap<String, u64> = HashMap::new();
-    for episode_id in tracker.recorded_episode_ids() {
-        seen_history = true;
-        if let Some(anime_key) = anime_id_from_episode_id(episode_id) {
-            if let Some(state) = tracker.state_for(episode_id) {
-                anime_updates
-                    .entry(anime_key.to_string())
-                    .and_modify(|existing| {
-                        if state.updated_at > *existing {
-                            *existing = state.updated_at;
-                        }
-                    })
-                    .or_insert(state.updated_at);
-            }
-        }
-    }
-
-    if !seen_history {
-        return Err(anyhow!(
-            "playback history is empty; start an episode to build history"
-        ));
-    }
-
-    if anime_updates.is_empty() {
-        return Err(anyhow!(
-            "playback history lacks identifiable anime entries; watch an episode again"
-        ));
-    }
-
-    let selected_anime = if let Some(requested) = anime_id {
-        if anime_updates.contains_key(&requested) {
-            requested
-        } else {
-            return Err(anyhow!("no playback history found for anime '{requested}'"));
-        }
-    } else {
-        anime_updates
-            .iter()
-            .max_by_key(|(_, updated)| *updated)
-            .map(|(anime_id, _)| anime_id.clone())
-            .ok_or_else(|| {
-                anyhow!("playback history is empty; start an episode to build history")
-            })?
-    };
-
-    let episodes = client
-        .list_episodes(&selected_anime)
-        .with_context(|| format!("failed to list episodes for '{}'", selected_anime.clone()))?;
-
-    let filtered = tracker.filter_episodes(&episodes, PlaybackFilter::Next);
-    let episode = filtered
-        .first()
-        .ok_or_else(|| anyhow!("no unwatched episodes found for '{selected_anime}'"))?;
-
-    println!(
-        "Continuing '{}' from the next unwatched episode: {} - {}",
-        selected_anime, episode.id, episode.title
-    );
-
-    handle_play(client, config, &episode.id)
-}
-
 fn handle_download(
     client: &AnimeClient<FetchBackend>,
     config: &AppConfig,
@@ -320,10 +250,10 @@ fn handle_history(config: &AppConfig, command: &HistoryCommand) -> Result<()> {
             }
 
             entries.sort_by(|a, b| b.1.updated_at.cmp(&a.1.updated_at));
-            println!("episode_id\tupdated_at\tlast_position\tduration\twatched");
+            println!("episode_id	updated_at	last_position	duration	watched");
             for (episode_id, progress) in entries {
                 println!(
-                    "{}\t{}\t{}\t{}\t{}",
+                    "{}	{}	{}	{}	{}",
                     episode_id,
                     format_timestamp(progress.updated_at),
                     format_duration(progress.last_position_sec),
@@ -352,6 +282,76 @@ fn handle_history(config: &AppConfig, command: &HistoryCommand) -> Result<()> {
     Ok(())
 }
 
+fn handle_continue(
+    client: &AnimeClient<FetchBackend>,
+    config: &AppConfig,
+    anime_id: Option<String>,
+) -> Result<()> {
+    let tracker =
+        EpisodeTracker::load_default(config).context("failed to read playback history")?;
+    let mut seen_history = false;
+    let mut anime_updates: HashMap<String, u64> = HashMap::new();
+    for episode_id in tracker.episode_ids() {
+        seen_history = true;
+        if let Some(anime_key) = anime_id_from_episode_id(episode_id) {
+            if let Some(state) = tracker.state_for(episode_id) {
+                anime_updates
+                    .entry(anime_key.to_string())
+                    .and_modify(|existing| {
+                        if state.updated_at > *existing {
+                            *existing = state.updated_at;
+                        }
+                    })
+                    .or_insert(state.updated_at);
+            }
+        }
+    }
+
+    if !seen_history {
+        return Err(anyhow!(
+            "playback history is empty; start an episode to build history"
+        ));
+    }
+
+    if anime_updates.is_empty() {
+        return Err(anyhow!(
+            "playback history lacks identifiable anime entries; watch an episode again"
+        ));
+    }
+
+    let selected_anime = if let Some(requested) = anime_id {
+        if anime_updates.contains_key(&requested) {
+            requested
+        } else {
+            return Err(anyhow!("no playback history found for anime '{requested}'"));
+        }
+    } else {
+        anime_updates
+            .iter()
+            .max_by_key(|(_, updated)| *updated)
+            .map(|(anime_id, _)| anime_id.clone())
+            .ok_or_else(|| {
+                anyhow!("playback history is empty; start an episode to build history")
+            })?
+    };
+
+    let episodes = client
+        .list_episodes(&selected_anime)
+        .with_context(|| format!("failed to list episodes for '{}'", selected_anime.clone()))?;
+
+    let filtered = tracker.filter_episodes(&episodes, PlaybackFilter::Next);
+    let episode = filtered
+        .first()
+        .ok_or_else(|| anyhow!("no unwatched episodes found for '{selected_anime}'"))?;
+
+    println!(
+        "Continuing '{}' from the next unwatched episode: {} - {}",
+        selected_anime, episode.id, episode.title
+    );
+
+    handle_play(client, config, &episode.id)
+}
+
 fn handle_log(config: &AppConfig, command: &LogCommand) -> Result<()> {
     let path = app_log_path("animestan-cli", config);
     match command {
@@ -360,7 +360,12 @@ fn handle_log(config: &AppConfig, command: &LogCommand) -> Result<()> {
                 println!("Log file at {} is empty", path.display());
             }
             Ok(contents) => {
-                println!("Log file at {}:\n{}", path.display(), contents);
+                println!(
+                    "Log file at {}:
+{}",
+                    path.display(),
+                    contents
+                );
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 println!("No log file found at {}", path.display());
@@ -416,7 +421,6 @@ fn format_duration(value: Option<f64>) -> String {
         _ => "--:--".to_string(),
     }
 }
-
 fn handle_bookmarks(
     client: &AnimeClient<FetchBackend>,
     config: &AppConfig,

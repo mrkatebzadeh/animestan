@@ -159,6 +159,11 @@ impl EpisodeTracker {
             })
     }
 
+    /// Returns the set of episode IDs that have been recorded in the tracker.
+    pub fn episode_ids(&self) -> impl Iterator<Item = &String> {
+        self.store.episodes.keys()
+    }
+
     /// Indicates whether the episode has been marked as watched.
     #[must_use]
     pub fn is_watched(&self, episode_id: &str) -> bool {
