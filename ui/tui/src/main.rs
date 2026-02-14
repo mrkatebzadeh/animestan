@@ -38,7 +38,9 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use spdlog::prelude::*;
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::{UnboundedSender, error::TryRecvError, unbounded_channel};
+use tokio::sync::mpsc::{
+    UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel,
+};
 use tokio::time::sleep;
 
 use crate::app::{App, EpisodeIndicators, LeftPaneMode, PlaybackStatus};
@@ -54,9 +56,20 @@ struct EpisodeFetchResult {
     result: CoreResult<Vec<Episode>>,
 }
 
+#[derive(Clone)]
+struct PlaybackRequest {
+    episode_id: String,
+    episode_title: Option<String>,
+}
+
+struct PlaybackResult {
+    episode_title: Option<String>,
+    outcome: Result<()>,
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
-    let config = AppConfig::load_default().context("failed to load configuration")?;
+    let config = Arc::new(AppConfig::load_default().context("failed to load configuration")?);
     init_logging("animestan-tui", args.verbosity, &config, false)
         .context("failed to initialize logging")?;
     info!("launching animestan-tui");
@@ -76,18 +89,24 @@ fn main() -> Result<()> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig) -> Result<()> {
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    config: &Arc<AppConfig>,
+) -> Result<()> {
     let tracker = Arc::new(Mutex::new(
         EpisodeTracker::load_default(config).context("failed to load episode tracker")?,
     ));
     let mut favorites = FavoriteStore::load_default(config).context("failed to load favorites")?;
     let mut refresh_favorites = false;
-    let client = Arc::new(AnimeClient::from_config(config)?);
+    let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
+    let (playback_request_tx, mut playback_request_rx) = unbounded_channel::<PlaybackRequest>();
+    let (playback_result_tx, mut playback_result_rx) = unbounded_channel::<PlaybackResult>();
+    let mut active_playback: Option<AbortHandle> = None;
 
     let mut app = App::new();
     app.sync_bookmark_cache(&favorites);
@@ -194,9 +213,24 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
             continue;
         }
 
-        if handle_playback(&mut app, config, &tracker, client.as_ref()) {
-            continue;
-        }
+        handle_playback_requests(&mut app, config, &playback_request_tx);
+        drain_playback_request_queue(
+            &mut app,
+            &runtime_handle,
+            &client,
+            config,
+            &tracker,
+            &mut playback_request_rx,
+            &playback_result_tx,
+            &mut active_playback,
+        );
+        drain_playback_results(
+            &mut app,
+            &tracker,
+            config,
+            &mut playback_result_rx,
+            &mut active_playback,
+        );
 
         if app.should_quit() {
             break;
@@ -204,6 +238,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, config: &AppConfig
     }
 
     if let Some(handle) = active_fetch.take() {
+        handle.abort();
+    }
+    if let Some(handle) = active_playback.take() {
         handle.abort();
     }
 
@@ -396,49 +433,27 @@ fn handle_delete(app: &mut App, config: &AppConfig, tracker: &Arc<Mutex<EpisodeT
     false
 }
 
-fn handle_playback(
+fn handle_playback_requests(
     app: &mut App,
-    config: &AppConfig,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    client: &AnimeClient<FetchBackend>,
-) -> bool {
-    if !app.take_pending_play() {
-        return false;
+    config: &Arc<AppConfig>,
+    playback_request_tx: &UnboundedSender<PlaybackRequest>,
+) {
+    if !app.take_pending_play_async() {
+        return;
+    }
+
+    if app.playback_in_progress() {
+        app.set_details("Playback already running");
+        return;
     }
 
     let Some(episode_id) = app.current_episode_id() else {
         app.set_details("Highlight an episode to play");
-        return true;
+        return;
     };
 
     let episode_title = app.current_episode_title();
-    app.set_playback_status(PlaybackStatus::Playing);
-    let (target_url, using_local): (String, bool) =
-        if local_playback_url(config, &episode_id).is_some() {
-            let path = episode_file_path(config, &episode_id);
-            (path.to_string_lossy().into_owned(), true)
-        } else {
-            let stream = match client.resolve_stream_url(&episode_id) {
-                Ok(link) => link,
-                Err(err) => {
-                    app.set_playback_status(PlaybackStatus::None);
-                    app.set_details(format!("Failed to resolve stream: {err}"));
-                    return true;
-                }
-            };
-            (stream.url.to_string(), false)
-        };
-
-    info!(
-        "playback requested for '{episode_id}' using {} source",
-        if using_local { "local" } else { "remote" }
-    );
-
-    if let Err(err) = mark_episode_started(tracker, &episode_id) {
-        app.set_playback_status(PlaybackStatus::None);
-        app.set_details(format!("Playback failed: {err}"));
-        return true;
-    }
+    let using_local = local_playback_url(config, &episode_id).is_some();
 
     if let Some(title) = &episode_title {
         if using_local {
@@ -452,22 +467,103 @@ fn handle_playback(
         app.set_details("Launching player...");
     }
 
-    let playback_result = playback::play_episode(config, tracker, &episode_id, target_url.as_str());
-    app.set_playback_status(PlaybackStatus::None);
+    let request = PlaybackRequest {
+        episode_id,
+        episode_title,
+    };
 
-    if let Err(err) = playback_result {
-        app.set_details(format!("Playback failed: {err}"));
-    } else if let Some(title) = episode_title {
-        app.set_details(format!("Finished playing {title}"));
-    } else {
-        app.set_details("Playback finished");
+    if playback_request_tx.send(request).is_err() {
+        app.set_details("Playback queue disconnected.");
+        return;
     }
 
-    if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-        app.set_details(format!("Failed to refresh indicators: {err}"));
-    }
+    app.set_playback_in_progress(true);
+    app.set_playback_status(PlaybackStatus::Playing);
+}
 
-    false
+#[allow(clippy::too_many_arguments)]
+fn drain_playback_request_queue(
+    app: &mut App,
+    runtime: &Handle,
+    client: &Arc<AnimeClient<FetchBackend>>,
+    config: &Arc<AppConfig>,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    request_rx: &mut UnboundedReceiver<PlaybackRequest>,
+    result_tx: &UnboundedSender<PlaybackResult>,
+    active_playback: &mut Option<AbortHandle>,
+) {
+    loop {
+        match request_rx.try_recv() {
+            Ok(request) => {
+                if let Some(handle) = active_playback.take() {
+                    handle.abort();
+                }
+                let abort_handle = spawn_playback_task(
+                    runtime,
+                    Arc::clone(client),
+                    Arc::clone(config),
+                    Arc::clone(tracker),
+                    request,
+                    result_tx.clone(),
+                );
+                *active_playback = Some(abort_handle);
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                app.set_details("Playback request queue disconnected.");
+                app.set_playback_status(PlaybackStatus::None);
+                app.set_playback_in_progress(false);
+                break;
+            }
+        }
+    }
+}
+
+fn drain_playback_results(
+    app: &mut App,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &Arc<AppConfig>,
+    result_rx: &mut UnboundedReceiver<PlaybackResult>,
+    active_playback: &mut Option<AbortHandle>,
+) {
+    loop {
+        match result_rx.try_recv() {
+            Ok(result) => {
+                *active_playback = None;
+                app.set_playback_status(PlaybackStatus::None);
+                app.set_playback_in_progress(false);
+
+                let PlaybackResult {
+                    episode_title,
+                    outcome,
+                } = result;
+
+                match outcome {
+                    Ok(()) => {
+                        if let Some(title) = episode_title {
+                            app.set_details(format!("Finished playing {title}"));
+                        } else {
+                            app.set_details("Playback finished");
+                        }
+                    }
+                    Err(err) => {
+                        app.set_details(format!("Playback failed: {err}"));
+                    }
+                }
+
+                if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                    app.set_details(format!("Failed to refresh indicators: {err}"));
+                }
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                app.set_details("Playback worker disconnected.");
+                app.set_playback_status(PlaybackStatus::None);
+                app.set_playback_in_progress(false);
+                break;
+            }
+        }
+    }
 }
 
 #[derive(Parser)]
@@ -562,4 +658,78 @@ fn spawn_episode_fetch_task(
     });
 
     abort_handle
+}
+
+fn spawn_playback_task(
+    runtime: &Handle,
+    client: Arc<AnimeClient<FetchBackend>>,
+    config: Arc<AppConfig>,
+    tracker: Arc<Mutex<EpisodeTracker>>,
+    request: PlaybackRequest,
+    result_tx: UnboundedSender<PlaybackResult>,
+) -> AbortHandle {
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let fallback_title = request.episode_title.clone();
+
+    runtime.spawn({
+        let fut = Abortable::new(
+            async move {
+                let blocking_result = tokio::task::spawn_blocking(move || {
+                    run_playback_job(&config, &tracker, &client, request)
+                })
+                .await;
+
+                let playback_result = match blocking_result {
+                    Ok(result) => result,
+                    Err(err) => PlaybackResult {
+                        episode_title: fallback_title,
+                        outcome: Err(anyhow!("playback join failed: {err}")),
+                    },
+                };
+
+                let _ = result_tx.send(playback_result);
+            },
+            abort_registration,
+        );
+        async move {
+            let _ = fut.await;
+        }
+    });
+
+    abort_handle
+}
+
+fn run_playback_job(
+    config: &Arc<AppConfig>,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    client: &Arc<AnimeClient<FetchBackend>>,
+    request: PlaybackRequest,
+) -> PlaybackResult {
+    let PlaybackRequest {
+        episode_id,
+        episode_title,
+    } = request;
+
+    let outcome: Result<()> = (|| {
+        let (target_url, using_local) = if let Some(url) = local_playback_url(config, &episode_id) {
+            (url.to_string(), true)
+        } else {
+            let stream = client.resolve_stream_url(&episode_id)?;
+            (stream.url.to_string(), false)
+        };
+
+        info!(
+            "playback requested for '{episode_id}' using {} source",
+            if using_local { "local" } else { "remote" }
+        );
+
+        mark_episode_started(tracker, &episode_id)?;
+        playback::play_episode(config, tracker, &episode_id, target_url.as_str())?;
+        Ok(())
+    })();
+
+    PlaybackResult {
+        episode_title,
+        outcome,
+    }
 }

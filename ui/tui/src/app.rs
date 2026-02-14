@@ -159,7 +159,7 @@ pub struct App {
     fetch_generation: u64,
     search_query: String,
     pending_search: bool,
-    pending_play: bool,
+    pending_playback_request: bool,
     pending_download: bool,
     pending_delete: bool,
     pending_bookmark_toggle: bool,
@@ -169,6 +169,7 @@ pub struct App {
     left_pane_mode: LeftPaneMode,
     filter_mode: FilterMode,
     playback_status: PlaybackStatus,
+    playback_in_progress: bool,
     details_text: String,
     should_quit: bool,
     show_keybindings: bool,
@@ -205,7 +206,7 @@ impl App {
             fetch_generation: 0,
             search_query: DEFAULT_SEARCH_QUERY.to_string(),
             pending_search: false,
-            pending_play: false,
+            pending_playback_request: false,
             pending_download: false,
             pending_delete: false,
             pending_bookmark_toggle: false,
@@ -215,6 +216,7 @@ impl App {
             left_pane_mode: LeftPaneMode::Search,
             filter_mode: FilterMode::None,
             playback_status: PlaybackStatus::None,
+            playback_in_progress: false,
             details_text: concat!(
                 "Press s to search, / to filter panels, b for bookmarks, f for filters, ",
                 "Space to select, ",
@@ -666,16 +668,28 @@ impl App {
     }
 
     pub fn request_play(&mut self) {
-        self.pending_play = true;
+        self.request_play_async();
     }
 
-    pub fn take_pending_play(&mut self) -> bool {
-        if self.pending_play {
-            self.pending_play = false;
+    pub fn request_play_async(&mut self) {
+        self.pending_playback_request = true;
+    }
+
+    pub fn take_pending_play_async(&mut self) -> bool {
+        if self.pending_playback_request {
+            self.pending_playback_request = false;
             true
         } else {
             false
         }
+    }
+
+    pub fn set_playback_in_progress(&mut self, in_progress: bool) {
+        self.playback_in_progress = in_progress;
+    }
+
+    pub fn playback_in_progress(&self) -> bool {
+        self.playback_in_progress
     }
 
     pub fn request_download(&mut self) {
