@@ -171,6 +171,7 @@ pub struct App {
     playback_status: PlaybackStatus,
     details_text: String,
     should_quit: bool,
+    show_keybindings: bool,
     matcher: Matcher,
     episode_indicators: HashMap<String, EpisodeIndicators>,
 }
@@ -221,6 +222,7 @@ impl App {
             )
             .to_string(),
             should_quit: false,
+            show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
         }
@@ -595,10 +597,7 @@ impl App {
     }
 
     pub fn show_help(&mut self) {
-        self.set_details(concat!(
-            "Controls: s search, / filter panel, b bookmarks, f episode filter, j/k move, h/l focus, ",
-            "Space select, d download, D delete, q quit."
-        ));
+        self.toggle_keybindings();
     }
 
     pub fn request_quit(&mut self) {
@@ -607,6 +606,14 @@ impl App {
 
     pub fn set_details<S: Into<String>>(&mut self, details: S) {
         self.details_text = details.into();
+    }
+
+    pub fn toggle_keybindings(&mut self) {
+        self.show_keybindings = !self.show_keybindings;
+    }
+
+    pub fn show_keybindings(&self) -> bool {
+        self.show_keybindings
     }
 
     pub fn set_search_query<S: Into<String>>(&mut self, query: S) {

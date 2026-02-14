@@ -23,6 +23,110 @@ use crossterm::event::{
 
 use crate::app::{App, Focus, InputMode};
 
+#[derive(Clone, Copy, Debug)]
+pub struct KeyBinding {
+    pub keys: &'static str,
+    pub description: &'static str,
+    pub mode: InputMode,
+}
+
+pub fn keybindings() -> &'static [KeyBinding] {
+    static BINDINGS: &[KeyBinding] = &[
+        KeyBinding {
+            keys: "?",
+            description: "Toggle keybindings modal",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "s",
+            description: "Search for anime",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "/",
+            description: "Filter the focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Tab / h / l / ← / →",
+            description: "Switch pane focus",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "j / ↓",
+            description: "Move selection down",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "k / ↑",
+            description: "Move selection up",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "b",
+            description: "Toggle bookmarks pane",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "m",
+            description: "Toggle bookmark for selection",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "f",
+            description: "Cycle episode filters",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Space",
+            description: "Select focused item",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Enter",
+            description: "Play episode / move focus",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "d",
+            description: "Download highlighted episode",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "D",
+            description: "Delete downloaded episode",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "q",
+            description: "Quit the app",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Esc",
+            description: "Cancel search / input",
+            mode: InputMode::Search,
+        },
+        KeyBinding {
+            keys: "Enter",
+            description: "Submit search query",
+            mode: InputMode::Search,
+        },
+        KeyBinding {
+            keys: "Backspace",
+            description: "Delete last character",
+            mode: InputMode::Search,
+        },
+        KeyBinding {
+            keys: "Text",
+            description: "Append to search query",
+            mode: InputMode::Search,
+        },
+    ];
+
+    BINDINGS
+}
+
 pub enum Event {
     Tick,
     Input(KeyEvent),

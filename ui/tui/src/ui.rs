@@ -17,9 +17,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::app::{App, FilterTarget, Focus, InputMode, LeftPaneMode};
+use crate::events::keybindings;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -88,6 +89,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     render_details(frame, chunks[2], app);
+    render_keybindings_modal(frame, app);
 }
 
 fn render_list(
@@ -223,20 +225,8 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     let details = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(details, chunks[0]);
 
-    let width = usize::from(chunks[1].width);
-    let right_hint = "Press ? to list keybinding";
-    let left_len = left_status.chars().count();
-    let right_len = right_hint.chars().count();
-    let status_text = if width > left_len + right_len {
-        let mut s = left_status;
-        s.push_str(&" ".repeat(width - left_len - right_len));
-        s.push_str(right_hint);
-        s
-    } else {
-        format!("{left_status} {right_hint}")
-    };
     let status_line = Line::from(Span::styled(
-        status_text,
+        left_status,
         Style::default().fg(Color::White).bg(Color::DarkGray),
     ));
     let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
@@ -314,5 +304,81 @@ fn border_style(focused: bool) -> Style {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default()
+    }
+}
+
+fn render_keybindings_modal(frame: &mut Frame, app: &App) {
+    if !app.show_keybindings() {
+        return;
+    }
+
+    let bindings = keybindings();
+    if bindings.is_empty() {
+        return;
+    }
+
+    let key_width = bindings
+        .iter()
+        .map(|binding| binding.keys.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(1);
+
+    let mut lines = Vec::new();
+    let mut current_mode: Option<InputMode> = None;
+    for binding in bindings {
+        if current_mode != Some(binding.mode) {
+            if current_mode.is_some() {
+                lines.push(Line::default());
+            }
+            current_mode = Some(binding.mode);
+            lines.push(Line::from(Span::styled(
+                format!("{} mode", input_mode_label(binding.mode)),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+
+        let key_label = format!("{:<width$}", binding.keys, width = key_width);
+        lines.push(Line::from(vec![
+            Span::styled(key_label, Style::default().fg(Color::Cyan)),
+            Span::raw("  "),
+            Span::raw(binding.description),
+        ]));
+    }
+
+    let frame_area = frame.area();
+    let width = frame_area.width.saturating_sub(4).min(80);
+    let max_height = frame_area.height.saturating_sub(4);
+    if width == 0 || max_height == 0 {
+        return;
+    }
+    let content_height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    let mut height = content_height.saturating_add(4);
+    if height > max_height {
+        height = max_height;
+    }
+
+    let area = centered_rect(frame_area, width, height);
+    let block = Block::default().title("Keybindings").borders(Borders::ALL);
+    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph, area);
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let capped_width = width.min(area.width);
+    let capped_height = height.min(area.height);
+    let offset_x = area.x + area.width.saturating_sub(capped_width) / 2;
+    let offset_y = area.y + area.height.saturating_sub(capped_height) / 2;
+    Rect::new(offset_x, offset_y, capped_width, capped_height)
+}
+
+fn input_mode_label(mode: InputMode) -> &'static str {
+    match mode {
+        InputMode::Normal => "Normal",
+        InputMode::Search => "Search",
     }
 }
