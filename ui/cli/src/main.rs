@@ -22,15 +22,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::{Local, LocalResult, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use spdlog::prelude::*;
 
 use animestan_core::{
-    app_log_path, delete_episode, download_episode, episode_file_path, init_logging,
-    local_playback_url, AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry,
-    FavoriteStore, FetchBackend, PlaybackFilter,
+    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
+    PlaybackFilter, app_log_path, delete_episode, download_episode, episode_file_path,
+    init_logging, local_playback_url,
 };
 
 mod playback;
@@ -43,12 +43,20 @@ fn run() -> Result<()> {
     let Cli {
         verbosity,
         quality,
+        player,
         command,
     } = Cli::parse();
 
     let mut config = AppConfig::load_default().context("failed to load configuration")?;
     if let Some(preferred_quality) = quality {
         config.quality = Some(preferred_quality);
+    }
+
+    if let Some(player_choice) = player.as_deref() {
+        config.player = Some(match player_choice {
+            "vlc" => default_vlc_command().to_string(),
+            _ => "mpv".to_string(),
+        });
     }
 
     init_logging("animestan-cli", verbosity, &config, true)
@@ -521,6 +529,9 @@ struct Cli {
     /// Preferred stream quality (best, worst, or numeric resolution)
     #[arg(global = true, long)]
     quality: Option<String>,
+    /// Select the player binary to launch (mpv or vlc)
+    #[arg(global = true, long, value_parser = ["mpv", "vlc"])]
+    player: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -687,6 +698,14 @@ fn describe_command(command: &Commands) -> &'static str {
     }
 }
 
+fn default_vlc_command() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "vlc.exe"
+    } else {
+        "vlc"
+    }
+}
+
 fn anime_id_from_episode_id(episode_id: &str) -> Option<&str> {
     if let Some((anime_id, _)) = episode_id.split_once(':') {
         Some(anime_id)
@@ -704,4 +723,18 @@ fn select_nth_item<'a, T>(items: &'a [T], index: usize, context: &str) -> Result
     }
 
     Ok(&items[index - 1])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_vlc_command;
+
+    #[test]
+    fn default_vlc_command_matches_platform() {
+        if cfg!(target_os = "windows") {
+            assert_eq!(default_vlc_command(), "vlc.exe");
+        } else {
+            assert_eq!(default_vlc_command(), "vlc");
+        }
+    }
 }
