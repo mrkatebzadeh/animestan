@@ -45,6 +45,21 @@ impl Focus {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfirmExitChoice {
+    Yes,
+    No,
+}
+
+impl ConfirmExitChoice {
+    const fn toggle(self) -> Self {
+        match self {
+            Self::Yes => Self::No,
+            Self::No => Self::Yes,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputMode {
     Normal,
     Search,
@@ -174,6 +189,7 @@ pub struct App {
     details_text: String,
     should_quit: bool,
     confirm_exit: bool,
+    confirm_exit_choice: ConfirmExitChoice,
     show_keybindings: bool,
     matcher: Matcher,
     episode_indicators: HashMap<String, EpisodeIndicators>,
@@ -228,6 +244,7 @@ impl App {
             .to_string(),
             should_quit: false,
             confirm_exit: false,
+            confirm_exit_choice: ConfirmExitChoice::Yes,
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
@@ -627,6 +644,7 @@ impl App {
 
     pub fn request_exit(&mut self) {
         self.confirm_exit = true;
+        self.confirm_exit_choice = ConfirmExitChoice::Yes;
     }
 
     pub fn confirm_exit(&self) -> bool {
@@ -635,11 +653,25 @@ impl App {
 
     pub fn clear_confirm_exit(&mut self) {
         self.confirm_exit = false;
+        self.confirm_exit_choice = ConfirmExitChoice::Yes;
     }
 
     pub fn confirm_exit_and_quit(&mut self) {
         self.should_quit = true;
         self.confirm_exit = false;
+        self.confirm_exit_choice = ConfirmExitChoice::Yes;
+    }
+
+    pub fn confirm_exit_choice(&self) -> ConfirmExitChoice {
+        self.confirm_exit_choice
+    }
+
+    pub fn set_confirm_exit_choice(&mut self, choice: ConfirmExitChoice) {
+        self.confirm_exit_choice = choice;
+    }
+
+    pub fn toggle_confirm_exit_choice(&mut self) {
+        self.confirm_exit_choice = self.confirm_exit_choice.toggle();
     }
 
     pub fn set_details<S: Into<String>>(&mut self, details: S) {

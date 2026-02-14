@@ -19,7 +19,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::app::{App, FilterTarget, Focus, InputMode, LeftPaneMode};
+use crate::app::{App, ConfirmExitChoice, FilterTarget, Focus, InputMode, LeftPaneMode};
 use crate::events::keybindings;
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -384,30 +384,69 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App) {
 }
 
 fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
-    const TEXT: &str = "Exit Animestan? (y/n)";
+    const QUESTION_TEXT: &str = "Exit Animestan?";
+    const BUTTON_ROW_TEXT: &str = "[ Yes ]   [ No ]";
+    const HINT_TEXT: &str = "Use ←/→/Tab to switch, Enter to confirm.";
 
     if !app.confirm_exit() {
         return;
     }
 
     let frame_area = frame.area();
-    if frame_area.width < 16 || frame_area.height < 3 {
+    if frame_area.width < 20 || frame_area.height < 5 {
         return;
     }
 
-    let text_width = u16::try_from(TEXT.len()).unwrap_or(u16::MAX);
-    let desired_width = text_width.saturating_add(8);
+    let question_width = u16::try_from(QUESTION_TEXT.len()).unwrap_or(u16::MAX);
+    let button_width = u16::try_from(BUTTON_ROW_TEXT.len()).unwrap_or(u16::MAX);
+    let hint_width = u16::try_from(HINT_TEXT.len()).unwrap_or(u16::MAX);
+    let max_content_width = question_width.max(button_width).max(hint_width);
+    let desired_width = max_content_width.saturating_add(8);
     let width = desired_width.min(frame_area.width);
-    let height = 5.min(frame_area.height);
+
+    let yes_selected = matches!(app.confirm_exit_choice(), ConfirmExitChoice::Yes);
+    let button_style = |selected| {
+        if selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        }
+    };
+
+    let button_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("[ Yes ]", button_style(yes_selected)),
+        Span::raw("   "),
+        Span::styled("[ No ]", button_style(!yes_selected)),
+        Span::raw(" "),
+    ]);
+
+    let lines = vec![
+        Line::from(Span::styled(
+            QUESTION_TEXT,
+            Style::default().fg(Color::White),
+        )),
+        Line::default(),
+        button_line,
+        Line::default(),
+        Line::from(Span::styled(
+            HINT_TEXT,
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let content_height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    let height = content_height.saturating_add(2).min(frame_area.height);
 
     let area = centered_rect(frame_area, width, height);
     let block = Block::default().title("Confirm Exit").borders(Borders::ALL);
-    let paragraph = Paragraph::new(Line::from(Span::styled(
-        TEXT,
-        Style::default().fg(Color::White),
-    )))
-    .alignment(Alignment::Center)
-    .block(block);
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Center)
+        .block(block)
+        .wrap(Wrap { trim: true });
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);

@@ -21,7 +21,7 @@ use crossterm::event::{
     self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 
-use crate::app::{App, Focus, InputMode};
+use crate::app::{App, ConfirmExitChoice, Focus, InputMode};
 
 #[derive(Clone, Copy, Debug)]
 pub struct KeyBinding {
@@ -191,7 +191,30 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
 
     if app.confirm_exit() {
         match key_event.code {
-            KeyCode::Char('y') => app.confirm_exit_and_quit(),
+            KeyCode::Left | KeyCode::Char('h') => {
+                app.set_confirm_exit_choice(ConfirmExitChoice::Yes);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                app.set_confirm_exit_choice(ConfirmExitChoice::No);
+            }
+            KeyCode::Tab => {
+                app.toggle_confirm_exit_choice();
+            }
+            KeyCode::Enter => match app.confirm_exit_choice() {
+                ConfirmExitChoice::Yes => app.confirm_exit_and_quit(),
+                ConfirmExitChoice::No => {
+                    app.set_confirm_exit_choice(ConfirmExitChoice::No);
+                    app.clear_confirm_exit();
+                }
+            },
+            KeyCode::Char('y') => {
+                app.set_confirm_exit_choice(ConfirmExitChoice::Yes);
+                app.confirm_exit_and_quit();
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                app.set_confirm_exit_choice(ConfirmExitChoice::No);
+                app.clear_confirm_exit();
+            }
             _ => app.clear_confirm_exit(),
         }
         return;
