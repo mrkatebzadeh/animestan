@@ -33,7 +33,10 @@ fn main() -> Result<()> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = AppConfig::load_default().context("failed to load configuration")?;
+    let mut config = AppConfig::load_default().context("failed to load configuration")?;
+    if cli.vlc {
+        config.player = Some(default_vlc_command().to_string());
+    }
     init_logging("animestan-cli", cli.verbosity, &config, true)
         .context("failed to initialize logging")?;
     info!("starting CLI command: {}", describe_command(&cli.command));
@@ -293,6 +296,12 @@ const ABOUT: &str = concat!(
 struct Cli {
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbosity: u8,
+    #[arg(
+        long,
+        global = true,
+        help = "Use VLC for playback (overrides AppConfig::player)."
+    )]
+    vlc: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -410,5 +419,27 @@ fn describe_command(command: &Commands) -> &'static str {
             BookmarksCommand::Add { .. } => "bookmarks::add",
             BookmarksCommand::Rm { .. } => "bookmarks::rm",
         },
+    }
+}
+
+fn default_vlc_command() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "vlc.exe"
+    } else {
+        "vlc"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_vlc_command;
+
+    #[test]
+    fn default_vlc_command_matches_platform() {
+        if cfg!(target_os = "windows") {
+            assert_eq!(default_vlc_command(), "vlc.exe");
+        } else {
+            assert_eq!(default_vlc_command(), "vlc");
+        }
     }
 }

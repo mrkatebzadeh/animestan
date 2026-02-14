@@ -36,6 +36,7 @@ target/release/animestan-tui
 ## Requirements
 
 - `mpv` is currently required for playback.
+- Use `--vlc` to temporarily override `AppConfig::player` with the default VLC executable (`vlc` on Unix/macOS, `vlc.exe` on Windows).
 
 ## Configuration
 
