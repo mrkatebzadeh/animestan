@@ -164,13 +164,8 @@ fn should_show_panel_filter(app: &App, target: FilterTarget) -> bool {
 }
 
 fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let title = match app.input_mode() {
-        InputMode::Normal => "Mode: Normal",
-        InputMode::Search => "Mode: Search",
-    };
-
     let block = Block::default()
-        .title(title)
+        .title("Search Anime")
         .borders(Borders::ALL)
         .border_style(border_style(app.input_mode() == InputMode::Search));
 
@@ -228,7 +223,7 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(now_playing));
     }
     let left_status = format!(
-        "{} | {} | {}",
+        "Mode: {} | {} | {}",
         app.mode_label(),
         app.current_selection_label(),
         app.playback_status().label()
