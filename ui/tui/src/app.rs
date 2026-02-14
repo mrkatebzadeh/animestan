@@ -170,6 +170,7 @@ pub struct App {
     filter_mode: FilterMode,
     playback_status: PlaybackStatus,
     playback_in_progress: bool,
+    current_playing_episode_id: Option<String>,
     details_text: String,
     should_quit: bool,
     show_keybindings: bool,
@@ -217,6 +218,7 @@ impl App {
             filter_mode: FilterMode::None,
             playback_status: PlaybackStatus::None,
             playback_in_progress: false,
+            current_playing_episode_id: None,
             details_text: concat!(
                 "Press s to search, / to filter panels, b for bookmarks, f for filters, ",
                 "Space to select, ",
@@ -690,6 +692,14 @@ impl App {
 
     pub fn playback_in_progress(&self) -> bool {
         self.playback_in_progress
+    }
+
+    pub fn set_current_playing_episode(&mut self, id: Option<String>) {
+        self.current_playing_episode_id = id;
+    }
+
+    pub fn current_playing_episode_id(&self) -> Option<&str> {
+        self.current_playing_episode_id.as_deref()
     }
 
     pub fn request_download(&mut self) {

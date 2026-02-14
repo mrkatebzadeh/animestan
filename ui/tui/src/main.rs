@@ -468,15 +468,17 @@ fn handle_playback_requests(
     }
 
     let request = PlaybackRequest {
-        episode_id,
+        episode_id: episode_id.clone(),
         episode_title,
     };
 
     if playback_request_tx.send(request).is_err() {
         app.set_details("Playback queue disconnected.");
+        app.set_current_playing_episode(None);
         return;
     }
 
+    app.set_current_playing_episode(Some(episode_id));
     app.set_playback_in_progress(true);
     app.set_playback_status(PlaybackStatus::Playing);
 }
@@ -513,6 +515,7 @@ fn drain_playback_request_queue(
                 app.set_details("Playback request queue disconnected.");
                 app.set_playback_status(PlaybackStatus::None);
                 app.set_playback_in_progress(false);
+                app.set_current_playing_episode(None);
                 break;
             }
         }
@@ -532,6 +535,7 @@ fn drain_playback_results(
                 *active_playback = None;
                 app.set_playback_status(PlaybackStatus::None);
                 app.set_playback_in_progress(false);
+                app.set_current_playing_episode(None);
 
                 let PlaybackResult {
                     episode_title,
@@ -560,6 +564,7 @@ fn drain_playback_results(
                 app.set_details("Playback worker disconnected.");
                 app.set_playback_status(PlaybackStatus::None);
                 app.set_playback_in_progress(false);
+                app.set_current_playing_episode(None);
                 break;
             }
         }
