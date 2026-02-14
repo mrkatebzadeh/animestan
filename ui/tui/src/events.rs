@@ -266,6 +266,9 @@ fn handle_search_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Enter => {
             app.exit_search_mode();
             app.request_search();
+            if !matches!(app.focus(), Focus::Left) {
+                app.toggle_focus();
+            }
         }
         KeyCode::Backspace => {
             app.pop_search_char();
