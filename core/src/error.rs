@@ -76,6 +76,12 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    #[error("failed to write config file at '{path}': {source}")]
+    ConfigWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("failed to parse config file at '{path}': {source}")]
     ConfigParse {
         path: PathBuf,
