@@ -41,6 +41,12 @@ target/release/animestan-tui
 
 Animestan stores configuration in the OS-specific config directory, under an `animestan/config.toml` file. On Linux this resolves to `$HOME/.config/animestan/config.toml`.
 
+## TUI
+
+The TUI provides the full interactive experience (search, browse, playback, and tracking) in a single terminal view.
+
+<video src="https://github.com/mrkatebzadeh/animestan/releases/download/v0.1.3/animestan-tui.mp4" controls muted></video>
+
 ## CLI
 
 `animestan-cli` is a structured, script-friendly interface intended for piping into tools like **dmenu** or **rofi**, not a fully interactive experience like `ani-cli`. The CLI exposes **search**, **episodes**, **url**, **play**, **download**, **delete**, and **bookmarks** commands.
