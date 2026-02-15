@@ -45,7 +45,7 @@ Animestan stores configuration in the OS-specific config directory, under an `an
 
 The TUI provides the full interactive experience (search, browse, playback, and tracking) in a single terminal view.
 
-<video src="https://github.com/mrkatebzadeh/animestan/releases/download/v0.1.3/animestan-tui.mp4" controls muted></video>
+https://github.com/user-attachments/assets/c4c7e533-9e08-4979-970e-dbf4c7658c5f
 
 ## CLI
 
