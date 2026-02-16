@@ -852,11 +852,13 @@ impl App {
             action: QuickLaunchAction::GoToSearch,
         });
 
-        candidates.push(QuickLaunchCandidate {
-            label: "Focus anime panel".to_string(),
-            score: 30,
-            action: QuickLaunchAction::FocusAnimePanel,
-        });
+        if !matches!(self.focus, Focus::Left) {
+            candidates.push(QuickLaunchCandidate {
+                label: "Focus anime panel".to_string(),
+                score: 30,
+                action: QuickLaunchAction::FocusAnimePanel,
+            });
+        }
 
         candidates.push(QuickLaunchCandidate {
             label: "Focus episode panel".to_string(),
