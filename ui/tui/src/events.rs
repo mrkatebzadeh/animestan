@@ -30,6 +30,7 @@ pub struct KeyBinding {
     pub mode: InputMode,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn keybindings() -> &'static [KeyBinding] {
     static BINDINGS: &[KeyBinding] = &[
         KeyBinding {
@@ -70,6 +71,11 @@ pub fn keybindings() -> &'static [KeyBinding] {
         KeyBinding {
             keys: "b",
             description: "Toggle bookmarks pane",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "i",
+            description: "Show anime info",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -220,6 +226,15 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.info_modal_visible() {
+        match key_event.code {
+            KeyCode::Esc => app.close_info_modal(),
+            KeyCode::Char('q') => app.request_exit(),
+            _ => {}
+        }
+        return;
+    }
+
     if app.show_keybindings() {
         app.toggle_keybindings();
         return;
@@ -252,6 +267,10 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),
+        KeyCode::Char('i') => {
+            app.open_info_modal();
+            app.set_details("Press Esc to close info modal.");
+        }
         KeyCode::Char('d') => app.request_download(),
         KeyCode::Char('D') => app.request_delete(),
         KeyCode::Char(' ') => app.select_current(),
