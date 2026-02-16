@@ -21,8 +21,8 @@ use spdlog::prelude::*;
 
 use animestan_core::{
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter, delete_episode, download_episode, episode_file_path, init_logging,
-    local_playback_url,
+    MetadataProvider, MetadataResolver, MetadataSource, PlaybackFilter, delete_episode, download_episode,
+    episode_file_path, init_logging, local_playback_url,
 };
 
 mod playback;
@@ -41,6 +41,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Search { query } => handle_search(&client, &query),
+        Commands::Info { title } => handle_info(&title),
         Commands::Episodes {
             anime_id,
             unwatched,
@@ -73,6 +74,27 @@ fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> Result<()> 
     for entry in results {
         println!("{}\t{}", entry.id, entry.title);
     }
+
+    Ok(())
+}
+
+fn handle_info(title: &str) -> Result<()> {
+    let resolver = MetadataResolver::new();
+    let metadata = resolver
+        .fetch_by_query(title)
+        .with_context(|| format!("failed to fetch metadata for '{title}'"))?;
+
+    println!("Title: {}", metadata.title);
+    println!("Status/Score: {}", format_status_score(metadata.status.as_deref(), metadata.score));
+    println!("Genres: {}", format_list(&metadata.genres));
+    println!("Studios: {}", format_list(&metadata.studios));
+    println!("Season/Year: {}", format_season_year(metadata.season.as_deref(), metadata.year));
+    println!("Trailer: {}", metadata.trailer_url.as_deref().unwrap_or("N/A"));
+    println!(
+        "Source: {} ({})",
+        metadata.source_url,
+        metadata_source_label(metadata.source)
+    );
 
     Ok(())
 }
@@ -301,6 +323,8 @@ struct Cli {
 enum Commands {
     /// Search catalog by query string
     Search { query: String },
+    /// Show metadata for a given anime title
+    Info { title: String },
     /// List episodes for a given anime id
     Episodes {
         anime_id: String,
@@ -397,9 +421,43 @@ impl FilterArgs {
     }
 }
 
+fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
+    match (status, score) {
+        (Some(status), Some(score)) => format!("{status} / {score:.1}"),
+        (Some(status), None) => status.to_string(),
+        (None, Some(score)) => format!("Score {score:.1}"),
+        _ => "N/A".to_string(),
+    }
+}
+
+fn format_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "N/A".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
+fn format_season_year(season: Option<&str>, year: Option<u16>) -> String {
+    match (season, year) {
+        (Some(season), Some(year)) => format!("{season} {year}"),
+        (Some(season), None) => season.to_string(),
+        (None, Some(year)) => year.to_string(),
+        _ => "N/A".to_string(),
+    }
+}
+
+fn metadata_source_label(source: MetadataSource) -> &'static str {
+    match source {
+        MetadataSource::AniList => "AniList",
+        MetadataSource::Kitsu => "Kitsu",
+    }
+}
+
 fn describe_command(command: &Commands) -> &'static str {
     match command {
         Commands::Search { .. } => "search",
+        Commands::Info { .. } => "info",
         Commands::Episodes { .. } => "episodes",
         Commands::Url { .. } => "url",
         Commands::Play { .. } => "play",
