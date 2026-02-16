@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use animestan_core::Episode;
+use animestan_core::{Episode, MetadataSource};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
@@ -102,6 +102,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_details(frame, chunks[4], app);
     render_status_bar(frame, chunks[5], app);
     render_keybindings_modal(frame, app);
+    render_info_modal(frame, app);
     render_exit_confirmation_modal(frame, app);
 }
 
@@ -658,6 +659,157 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);
+}
+
+fn render_info_modal(frame: &mut Frame, app: &App) {
+    if !app.info_modal_visible() {
+        return;
+    }
+
+    let frame_area = frame.area();
+    if frame_area.width < 20 || frame_area.height < 10 {
+        return;
+    }
+
+    let width = frame_area.width.saturating_sub(6).min(110);
+    let height = frame_area.height.saturating_sub(6);
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let area = centered_rect(frame_area, width, height);
+    let title = app
+        .info_modal_metadata()
+        .map(|metadata| metadata.title.clone())
+        .or_else(|| app.current_anime_title())
+        .unwrap_or_else(|| "Anime Info".to_string());
+
+    let block = Block::default()
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let paragraph = Paragraph::new(build_info_modal_lines(app))
+        .wrap(Wrap { trim: true })
+        .block(block);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph, area);
+}
+
+fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
+    if app.info_modal_loading() {
+        return vec![
+            Line::from(Span::styled(
+                "Loading anime metadata...",
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::default(),
+            Line::from("This may take a moment. Press Esc to cancel."),
+        ];
+    }
+
+    if let Some(error) = app.info_modal_error() {
+        return vec![
+            Line::from(Span::styled(
+                "Failed to load metadata:",
+                Style::default().fg(Color::Red),
+            )),
+            Line::from(error),
+            Line::default(),
+            Line::from(Span::styled(
+                "Press Esc to close.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+    }
+
+    if let Some(metadata) = app.info_modal_metadata() {
+        let mut lines = Vec::new();
+        let status_score = format_status_score(metadata.status.as_deref(), metadata.score);
+        let season_year = format_season_year(metadata.season.as_deref(), metadata.year);
+        let genres = format_list(&metadata.genres);
+        let studios = format_list(&metadata.studios);
+        let synopsis = metadata
+            .synopsis
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or("Synopsis not available.");
+        lines.push(Line::from(Span::styled(
+            format!("Status / Score: {status_score}"),
+            Style::default().fg(Color::Cyan),
+        )));
+        lines.push(Line::from(format!("Season / Year: {season_year}")));
+        lines.push(Line::from(format!("Genres: {genres}")));
+        lines.push(Line::from(format!("Studios: {studios}")));
+        lines.push(Line::default());
+        lines.push(Line::from("Synopsis:"));
+        lines.push(Line::from(synopsis));
+        lines.push(Line::default());
+        lines.push(Line::from(format!(
+            "Trailer: {}",
+            metadata.trailer_url.as_deref().unwrap_or("N/A")
+        )));
+        lines.push(Line::from(format!(
+            "Source: {} ({})",
+            &metadata.source_url,
+            metadata_source_label(metadata.source)
+        )));
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Press Esc to close.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        return lines;
+    }
+
+    vec![
+        Line::from("No metadata available for selection."),
+        Line::default(),
+        Line::from(Span::styled(
+            "Press Esc to close.",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]
+}
+
+fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
+    match (status, score) {
+        (Some(status), Some(score)) => format!("{status} / {score:.1}"),
+        (Some(status), None) => status.to_string(),
+        (None, Some(score)) => format!("Score {score:.1}"),
+        _ => "N/A".to_string(),
+    }
+}
+
+fn format_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "N/A".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
+fn format_season_year(season: Option<&str>, year: Option<u16>) -> String {
+    match (season, year) {
+        (Some(season), Some(year)) => format!("{season} {year}"),
+        (Some(season), None) => season.to_string(),
+        (None, Some(year)) => year.to_string(),
+        _ => "N/A".to_string(),
+    }
+}
+
+fn metadata_source_label(source: MetadataSource) -> &'static str {
+    match source {
+        MetadataSource::AniList => "AniList",
+        MetadataSource::Kitsu => "Kitsu",
+    }
 }
 
 fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
