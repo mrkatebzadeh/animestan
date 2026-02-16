@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use animestan_core::MetadataSource;
+use animestan_core::{Episode, MetadataSource};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
@@ -23,7 +23,9 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 
-use crate::app::{App, ConfirmExitChoice, FilterTarget, Focus, InputMode, LeftPaneMode};
+use crate::app::{
+    App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode, LeftPaneMode,
+};
 use crate::events::keybindings;
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -33,7 +35,9 @@ pub fn render(frame: &mut Frame, app: &App) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(5),
+            Constraint::Length(7),
             Constraint::Length(4),
+            Constraint::Length(3),
         ])
         .split(frame.area());
 
@@ -94,7 +98,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         app.focus() == Focus::Right,
     );
 
-    render_details(frame, chunks[3], app);
+    render_episode_heatmap(frame, chunks[3], app);
+    render_details(frame, chunks[4], app);
+    render_status_bar(frame, chunks[5], app);
     render_keybindings_modal(frame, app);
     render_info_modal(frame, app);
     render_exit_confirmation_modal(frame, app);
@@ -267,6 +273,48 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(status, chunks[1]);
 }
 
+fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let now_playing_label = app
+        .current_playback_label()
+        .unwrap_or_else(|| "Idle".to_string());
+    let elapsed = format_elapsed(app.playback_elapsed());
+    let hint = "Space=Play/Pause q=Quit";
+
+    let spans = vec![
+        Span::styled(
+            now_playing_label,
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("Elapsed: {elapsed}"),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" | "),
+        Span::styled(hint, Style::default().fg(Color::DarkGray)),
+    ];
+
+    let block = Block::default()
+        .title("Now Playing")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(border_style(false));
+
+    let paragraph = Paragraph::new(Line::from(spans))
+        .block(block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+fn format_elapsed(seconds: Option<f64>) -> String {
+    let secs = seconds.unwrap_or(0.0).max(0.0);
+    let duration = std::time::Duration::from_secs_f64(secs);
+    let total_seconds = duration.as_secs();
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes:02}:{seconds:02}")
+}
+
 fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
     app.anime_entries()
         .iter()
@@ -331,6 +379,217 @@ fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
             ))
         })
         .collect()
+}
+
+fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let block = Block::default()
+        .title("Episode Heatmap")
+        .borders(Borders::ALL)
+        .border_style(border_style(false));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(inner);
+
+    render_heatmap_grid(frame, chunks[0], app);
+    render_heatmap_info(frame, chunks[1], app);
+}
+
+fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let episodes = app.episodes();
+    if episodes.is_empty() {
+        let placeholder =
+            Paragraph::new("Load episodes to view heatmap").alignment(Alignment::Center);
+        frame.render_widget(placeholder, area);
+        return;
+    }
+
+    let normalized = heatmap_scalars(episodes);
+    let columns = heatmap_columns(area.width as usize);
+    if columns == 0 {
+        return;
+    }
+
+    let selected = app.current_episode_index();
+    let rows = episodes.len().div_ceil(columns);
+    let mut lines = Vec::new();
+
+    for row in 0..rows {
+        let start = row * columns;
+        let mut spans = Vec::new();
+        for col in 0..columns {
+            let idx = start + col;
+            if idx >= episodes.len() {
+                break;
+            }
+
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+
+            let indicators = app.episode_indicators(&episodes[idx].id);
+            let mut style = heatmap_cell_style(indicators, normalized[idx]);
+            if selected == Some(idx) {
+                style = style.add_modifier(Modifier::REVERSED);
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            spans.push(Span::styled("▉", style));
+        }
+
+        if spans.is_empty() {
+            continue;
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    if lines.is_empty() {
+        let placeholder = Paragraph::new("No episodes available").alignment(Alignment::Center);
+        frame.render_widget(placeholder, area);
+        return;
+    }
+
+    let grid = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    frame.render_widget(grid, area);
+}
+
+fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let lines = if let Some(episode) = app.current_episode() {
+        let mut info = vec![Line::from(format!(
+            "#{:03} — {}",
+            episode.number, episode.title
+        ))];
+
+        if let Some(duration) = episode.duration_secs {
+            info.push(Line::from(format!(
+                "Duration: {}",
+                format_duration(duration)
+            )));
+        }
+
+        if let Some(synopsis) = episode.synopsis.as_deref() {
+            let trimmed = synopsis.trim();
+            if !trimmed.is_empty() {
+                info.push(Line::from(trimmed));
+            }
+        }
+
+        info
+    } else {
+        vec![Line::from("Select an episode to show title and synopsis.")]
+    };
+
+    let info = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    frame.render_widget(info, area);
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
+    if episodes.is_empty() {
+        return Vec::new();
+    }
+
+    let has_air_dates = episodes.iter().any(|episode| episode.air_date.is_some());
+    let offset = if has_air_dates {
+        episodes
+            .iter()
+            .filter_map(|episode| episode.air_date)
+            .min()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let values: Vec<f64> = episodes
+        .iter()
+        .map(|episode| {
+            let raw = if has_air_dates {
+                episode
+                    .air_date
+                    .unwrap_or(offset + i64::from(episode.number))
+            } else {
+                i64::from(episode.number)
+            };
+            raw as f64
+        })
+        .collect();
+
+    let min_value = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_value = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let range = max_value - min_value;
+
+    if range.abs() < f64::EPSILON {
+        return vec![0.5; values.len()];
+    }
+
+    values
+        .into_iter()
+        .map(|value| ((value - min_value) / range).clamp(0.0, 1.0))
+        .collect()
+}
+
+fn heatmap_columns(width: usize) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    ((width + 1).saturating_div(2)).max(1)
+}
+
+fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64) -> Style {
+    let base = if indicators.watched {
+        (32, 180, 90)
+    } else if indicators.in_progress {
+        (225, 200, 70)
+    } else {
+        (110, 115, 140)
+    };
+
+    let color = tinted_color(base, intensity);
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
+    let factor = 0.5 + intensity.clamp(0.0, 1.0) * 0.5;
+    let red = (f64::from(r) * factor).clamp(0.0, 255.0) as u8;
+    let green = (f64::from(g) * factor).clamp(0.0, 255.0) as u8;
+    let blue = (f64::from(b) * factor).clamp(0.0, 255.0) as u8;
+    Color::Rgb(red, green, blue)
+}
+
+fn format_duration(seconds: u32) -> String {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 fn border_style(focused: bool) -> Style {
