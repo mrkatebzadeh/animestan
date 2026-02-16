@@ -20,6 +20,7 @@ mod error;
 mod favorites;
 mod fixtures;
 mod logging;
+mod metadata;
 mod models;
 mod source;
 mod tracking;
@@ -30,9 +31,14 @@ pub use crate::downloads::{
     delete_episode, download_episode, episode_file_path, local_playback_url,
 };
 pub use crate::error::Error;
+pub use crate::error::Error as CoreError;
 pub type CoreResult<T> = anyhow::Result<T>;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
 pub use crate::logging::init_logging;
+pub use crate::metadata::{
+    AniListMetadataProvider, AnimeMetadata, KitsuMetadataProvider, MetadataProvider,
+    MetadataResolver, MetadataSource,
+};
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::tracking::EpisodeTracker;
 pub use anyhow::Result as AnyhowResult;
