@@ -794,12 +794,22 @@ impl App {
                     self.set_details("Focus: search input");
                 }
                 QuickLaunchAction::FocusAnimePanel => {
+                    if matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
+                        self.toggle_bookmarks_mode();
+                    }
                     self.focus = Focus::Left;
                     self.set_details("Focus: anime panel");
                 }
                 QuickLaunchAction::FocusEpisodePanel => {
                     self.focus = Focus::Right;
                     self.set_details("Focus: episode panel");
+                }
+                QuickLaunchAction::FocusBookmarksPanel => {
+                    if matches!(self.left_pane_mode, LeftPaneMode::Search) {
+                        self.toggle_bookmarks_mode();
+                    }
+                    self.focus = Focus::Left;
+                    self.set_details("Focus: bookmarks panel");
                 }
                 QuickLaunchAction::DownloadCurrentEpisode => {
                     self.request_download();
@@ -828,7 +838,7 @@ impl App {
                     if !matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
                         self.toggle_bookmarks_mode();
                     }
-                    self.set_details("Showing favorites");
+                    self.set_details("Showing bookmarks");
                 }
             }
             self.refresh_quick_launch_items();
@@ -857,6 +867,14 @@ impl App {
                 label: "Focus anime panel".to_string(),
                 score: 30,
                 action: QuickLaunchAction::FocusAnimePanel,
+            });
+        }
+
+        if !matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
+            candidates.push(QuickLaunchCandidate {
+                label: "Focus bookmarks panel".to_string(),
+                score: 30,
+                action: QuickLaunchAction::FocusBookmarksPanel,
             });
         }
 
@@ -892,7 +910,7 @@ impl App {
         }
 
         candidates.push(QuickLaunchCandidate {
-            label: "Open favorites".to_string(),
+            label: "Open bookmarks".to_string(),
             score: 15,
             action: QuickLaunchAction::OpenFavorites,
         });
@@ -1469,6 +1487,7 @@ pub enum QuickLaunchAction {
     GoToSearch,
     FocusAnimePanel,
     FocusEpisodePanel,
+    FocusBookmarksPanel,
     DownloadCurrentEpisode,
     OpenInfo,
     PlayLastEpisode {
