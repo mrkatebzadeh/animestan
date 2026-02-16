@@ -31,7 +31,6 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Length(6),
             Constraint::Min(5),
             Constraint::Length(4),
             Constraint::Length(3),
@@ -40,12 +39,11 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     render_hint_panel(frame, chunks[0]);
     render_search_bar(frame, chunks[1], app);
-    render_trending_carousel(frame, chunks[2], app);
 
     let lists = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[3]);
+        .split(chunks[2]);
 
     let (left_base_title, anime_items) = match app.left_pane_mode() {
         LeftPaneMode::Search => ("Anime", build_anime_items(app)),
@@ -96,8 +94,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         app.focus() == Focus::Right,
     );
 
-    render_details(frame, chunks[4], app);
-    render_status_bar(frame, chunks[5], app);
+    render_details(frame, chunks[3], app);
+    render_status_bar(frame, chunks[4], app);
     render_keybindings_modal(frame, app);
     render_exit_confirmation_modal(frame, app);
 }
@@ -208,57 +206,6 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
         let cursor_x = cursor_base.saturating_add(typed_offset).min(max_cursor);
         frame.set_cursor_position((cursor_x, inner.y));
     }
-}
-
-fn render_trending_carousel(frame: &mut Frame, area: Rect, app: &App) {
-    let focused = app.focus() == Focus::Trending;
-    let block = Block::default()
-        .title("Trending Now")
-        .borders(Borders::ALL)
-        .border_style(border_style(focused));
-
-    let mut lines = Vec::new();
-    if let Some(entry) = app.trending_entry() {
-        let position = format!("{}/{}", app.trending_index() + 1, app.trending_count());
-        let header = Line::from(vec![
-            Span::styled(
-                entry.title.as_str(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(position, Style::default().fg(Color::DarkGray)),
-        ]);
-        lines.push(header);
-
-        let season_label = entry
-            .season_year_label()
-            .unwrap_or_else(|| "TBA".to_string());
-        lines.push(Line::from(vec![
-            Span::raw("Score: "),
-            Span::styled(entry.score_label(), Style::default().fg(Color::Green)),
-            Span::raw("   Season: "),
-            Span::styled(season_label, Style::default().fg(Color::Blue)),
-            Span::raw("   Source: "),
-            Span::styled(entry.source.label(), Style::default().fg(Color::Cyan)),
-        ]));
-
-        if let Some(synopsis) = entry.synopsis.as_deref() {
-            lines.push(Line::from(Span::raw(synopsis)));
-        }
-        if let Some(url) = entry.site_url.as_deref() {
-            lines.push(Line::from(Span::styled(
-                format!("More info: {url}"),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-    } else {
-        lines.push(Line::from("Trending data not available yet."));
-    }
-
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, area);
 }
 
 fn render_hint_panel(frame: &mut Frame, area: Rect) {

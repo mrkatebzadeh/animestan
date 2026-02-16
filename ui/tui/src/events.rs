@@ -30,7 +30,6 @@ pub struct KeyBinding {
     pub mode: InputMode,
 }
 
-#[allow(clippy::too_many_lines)]
 pub fn keybindings() -> &'static [KeyBinding] {
     static BINDINGS: &[KeyBinding] = &[
         KeyBinding {
@@ -55,7 +54,7 @@ pub fn keybindings() -> &'static [KeyBinding] {
         },
         KeyBinding {
             keys: "← / →",
-            description: "Switch panels or rotate trending carousel",
+            description: "Switch between anime and episodes",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -71,11 +70,6 @@ pub fn keybindings() -> &'static [KeyBinding] {
         KeyBinding {
             keys: "b",
             description: "Toggle bookmarks pane",
-            mode: InputMode::Normal,
-        },
-        KeyBinding {
-            keys: "g",
-            description: "Focus trending carousel",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -252,15 +246,10 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
         KeyCode::Left | KeyCode::Right => {
-            if matches!(app.focus(), Focus::Trending) {
-                app.rotate_trending(matches!(key_event.code, KeyCode::Right));
-            } else {
-                app.toggle_focus();
-            }
+            app.toggle_focus();
         }
         KeyCode::Tab => app.cycle_focus(),
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
-        KeyCode::Char('g') => app.focus_trending(),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),
         KeyCode::Char('d') => app.request_download(),
@@ -273,14 +262,10 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
 }
 
 fn handle_enter_in_normal_mode(app: &mut App) {
-    match app.focus() {
-        Focus::Trending => {
-            if let Some(entry) = app.trending_entry() {
-                app.set_details(entry.detail_summary());
-            }
-        }
-        Focus::Left => app.toggle_focus(),
-        Focus::Right => app.request_play(),
+    if matches!(app.focus(), Focus::Left) {
+        app.toggle_focus();
+    } else {
+        app.request_play();
     }
 }
 

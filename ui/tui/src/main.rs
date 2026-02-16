@@ -25,8 +25,7 @@ use std::time::Duration;
 
 use animestan_core::{
     AnimeClient, AppConfig, CoreResult, Episode, EpisodeTracker, FavoriteStore, FetchBackend,
-    MetadataResolver, delete_episode, download_episode, episode_file_path, init_logging,
-    local_playback_url,
+    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -114,21 +113,6 @@ fn run_app(
     initialize_app(&mut app, client.as_ref());
     if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
         app.set_details(format!("Failed to refresh indicators: {err}"));
-    }
-
-    if let Ok(mut resolver) = MetadataResolver::new(config.as_ref()) {
-        match resolver.fetch_trending() {
-            Ok(entries) => {
-                if !entries.is_empty() {
-                    app.set_trending_entries(entries);
-                }
-            }
-            Err(err) => {
-                warn!("Trending fetch failed: {err}");
-            }
-        }
-    } else {
-        warn!("Trending resolver unavailable");
     }
 
     let mut events = EventHandler::new(Duration::from_millis(250));
