@@ -30,6 +30,7 @@ pub struct KeyBinding {
     pub mode: InputMode,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn keybindings() -> &'static [KeyBinding] {
     static BINDINGS: &[KeyBinding] = &[
         KeyBinding {

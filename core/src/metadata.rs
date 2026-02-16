@@ -23,12 +23,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spdlog::prelude::*;
 
-use crate::{config::AppConfig, error::Error, CoreResult};
+use crate::{CoreResult, config::AppConfig, error::Error};
 
 const SYNOPSIS_LIMIT: usize = 180;
 const TRENDING_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 const ANILIST_ENDPOINT: &str = "https://graphql.anilist.co";
-const ANILIST_TRENDING_QUERY: &str = r#"query ($perPage: Int!) {\n  Page(perPage: $perPage) {\n    media(type: ANIME, sort: TRENDING_DESC) {\n      id\n      siteUrl\n      title {\n        userPreferred\n        english\n        romaji\n      }\n      averageScore\n      season\n      seasonYear\n      description(asHtml: false)\n    }\n  }\n}"#;
+const ANILIST_TRENDING_QUERY: &str = r"query ($perPage: Int!) {\n  Page(perPage: $perPage) {\n    media(type: ANIME, sort: TRENDING_DESC) {\n      id\n      siteUrl\n      title {\n        userPreferred\n        english\n        romaji\n      }\n      averageScore\n      season\n      seasonYear\n      description(asHtml: false)\n    }\n  }\n}";
 const KITSU_TRENDING_URL: &str = "https://kitsu.io/api/edge/trending/anime";
 const KITSU_ANIME_BASE_URL: &str = "https://kitsu.io/anime/";
 
@@ -74,8 +74,7 @@ impl TrendingEntry {
     #[must_use]
     pub fn score_label(&self) -> String {
         self.score
-            .map(|score| format!("{score:.1}"))
-            .unwrap_or_else(|| "N/A".to_string())
+            .map_or_else(|| "N/A".to_string(), |score| format!("{score:.1}"))
     }
 
     #[must_use]
@@ -85,11 +84,12 @@ impl TrendingEntry {
         parts.push(format!(
             "Score: {} | Season: {} | Source: {}",
             self.score_label(),
-            self.season_year_label().unwrap_or_else(|| "TBA".to_string()),
+            self.season_year_label()
+                .unwrap_or_else(|| "TBA".to_string()),
             self.source.label()
         ));
         if let Some(synopsis) = self.synopsis.as_deref() {
-            parts.push(format!("Synopsis: {}", synopsis));
+            parts.push(format!("Synopsis: {synopsis}"));
         }
         if let Some(url) = self.site_url.as_deref() {
             parts.push(format!("More info: {url}"));
@@ -144,10 +144,11 @@ impl TrendingSnapshot {
             })?;
         }
 
-        let payload = serde_json::to_string_pretty(self).map_err(|source| Error::TrendingCacheWrite {
-            path: path.to_path_buf(),
-            source: io::Error::new(io::ErrorKind::Other, source),
-        })?;
+        let payload =
+            serde_json::to_string_pretty(self).map_err(|source| Error::TrendingCacheWrite {
+                path: path.to_path_buf(),
+                source: io::Error::other(source),
+            })?;
         let tmp_path = path.with_extension("json.tmp");
         fs::write(&tmp_path, payload).map_err(|source| Error::TrendingCacheWrite {
             path: path.to_path_buf(),
@@ -168,6 +169,9 @@ pub struct MetadataResolver {
 }
 
 impl MetadataResolver {
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be constructed or the cache cannot be loaded.
     pub fn new(config: &AppConfig) -> CoreResult<Self> {
         let client = Client::builder()
             .user_agent("Animestan/0.1")
@@ -182,11 +186,17 @@ impl MetadataResolver {
         })
     }
 
+    /// # Errors
+    ///
+    /// Propagates all errors from [`AppConfig::load_default`] and [`Self::new`].
     pub fn load_default() -> CoreResult<Self> {
         let config = AppConfig::load_default()?;
         Self::new(&config)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when both `AniList` and `Kitsu` endpoints cannot be queried or parsed.
     pub fn fetch_trending(&mut self) -> CoreResult<Vec<TrendingEntry>> {
         if let Some(snapshot) = &self.cache {
             if snapshot.is_fresh() {
@@ -211,16 +221,16 @@ impl MetadataResolver {
             }
         };
 
-        self.update_cache(entries)
+        Ok(self.update_cache(entries))
     }
 
-    fn update_cache(&mut self, entries: Vec<TrendingEntry>) -> CoreResult<Vec<TrendingEntry>> {
+    fn update_cache(&mut self, entries: Vec<TrendingEntry>) -> Vec<TrendingEntry> {
         let snapshot = TrendingSnapshot::new(entries.clone());
         if let Err(err) = snapshot.save(&self.cache_path) {
             warn!("failed to write trending cache: {err}");
         }
         self.cache = Some(snapshot);
-        Ok(entries)
+        entries
     }
 
     fn cached_entries(&self) -> Option<Vec<TrendingEntry>> {
@@ -254,10 +264,11 @@ impl MetadataResolver {
             url: ANILIST_ENDPOINT.to_string(),
             source,
         })?;
-        let payload: AniListTrendingResponse = serde_json::from_str(&body).map_err(|source| Error::ResponseParse {
-            url: ANILIST_ENDPOINT.to_string(),
-            source,
-        })?;
+        let payload: AniListTrendingResponse =
+            serde_json::from_str(&body).map_err(|source| Error::ResponseParse {
+                url: ANILIST_ENDPOINT.to_string(),
+                source,
+            })?;
 
         Ok(payload
             .data
@@ -291,10 +302,11 @@ impl MetadataResolver {
             url: KITSU_TRENDING_URL.to_string(),
             source,
         })?;
-        let payload: KitsuTrendingResponse = serde_json::from_str(&body).map_err(|source| Error::ResponseParse {
-            url: KITSU_TRENDING_URL.to_string(),
-            source,
-        })?;
+        let payload: KitsuTrendingResponse =
+            serde_json::from_str(&body).map_err(|source| Error::ResponseParse {
+                url: KITSU_TRENDING_URL.to_string(),
+                source,
+            })?;
 
         Ok(payload
             .data
@@ -335,11 +347,7 @@ impl TrendingEntry {
             .average_rating
             .as_deref()
             .and_then(|raw| raw.parse::<f32>().ok());
-        let year = kitsu
-            .attributes
-            .start_date
-            .as_deref()
-            .and_then(parse_year);
+        let year = kitsu.attributes.start_date.as_deref().and_then(parse_year);
         let site_url = kitsu
             .attributes
             .slug
@@ -378,7 +386,7 @@ fn strip_html_tags(input: &str) -> String {
             '>' => {
                 in_tag = false;
             }
-            _ if in_tag => continue,
+            _ if in_tag => {}
             c => result.push(c),
         }
     }
@@ -458,8 +466,14 @@ mod tests {
 
     #[test]
     fn standardize_season_formats_properly() {
-        assert_eq!(standardize_season(Some("SPRING".to_string())), Some("Spring".to_string()));
-        assert_eq!(standardize_season(Some("winter".to_string())), Some("Winter".to_string()));
+        assert_eq!(
+            standardize_season(Some("SPRING".to_string())),
+            Some("Spring".to_string())
+        );
+        assert_eq!(
+            standardize_season(Some("winter".to_string())),
+            Some("Winter".to_string())
+        );
     }
 
     #[test]

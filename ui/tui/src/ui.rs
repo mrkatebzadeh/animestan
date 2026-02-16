@@ -255,9 +255,7 @@ fn render_trending_carousel(frame: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from("Trending data not available yet."));
     }
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: true });
+    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
 }
 

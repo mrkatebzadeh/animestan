@@ -40,8 +40,7 @@ impl Focus {
     fn toggle(self) -> Self {
         match self {
             Self::Left => Self::Right,
-            Self::Right => Self::Left,
-            Self::Trending => Self::Left,
+            Self::Right | Self::Trending => Self::Left,
         }
     }
 }
