@@ -864,11 +864,13 @@ impl App {
             action: QuickLaunchAction::FocusEpisodePanel,
         });
 
-        candidates.push(QuickLaunchCandidate {
-            label: "Download current episode".to_string(),
-            score: 25,
-            action: QuickLaunchAction::DownloadCurrentEpisode,
-        });
+        if matches!(self.focus, Focus::Right) {
+            candidates.push(QuickLaunchCandidate {
+                label: "Download current episode".to_string(),
+                score: 25,
+                action: QuickLaunchAction::DownloadCurrentEpisode,
+            });
+        }
 
         if let Some(entry) = &self.last_played_episode {
             let label = if let Some(title) = &entry.title {
