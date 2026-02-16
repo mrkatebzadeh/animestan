@@ -44,6 +44,11 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "Ctrl+K",
+            description: "Open quick launch palette",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "/",
             description: "Filter the focused list",
             mode: InputMode::Normal,
@@ -240,6 +245,11 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.quick_launch_active() {
+        handle_quick_launch_mode(app, key_event);
+        return;
+    }
+
     if app.panel_filter_mode() {
         handle_panel_filter_mode(app, key_event);
         return;
@@ -259,6 +269,9 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         }
         KeyCode::Char('q') => app.request_exit(),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+        KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.open_quick_launch();
+        }
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
         KeyCode::Left | KeyCode::Right => {
             app.toggle_focus();
@@ -276,6 +289,30 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char(' ') => app.select_current(),
         KeyCode::Char('?') => app.show_help(),
         KeyCode::Enter => handle_enter_in_normal_mode(app),
+        _ => {}
+    }
+}
+
+fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
+    let candidates_len = app.quick_launch_items().len();
+    match key_event.code {
+        KeyCode::Esc => app.close_quick_launch(),
+        KeyCode::Enter => app.run_quick_launch_selection(),
+        KeyCode::Backspace => app.pop_quick_launch_char(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.move_quick_launch_selection_down(candidates_len);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.move_quick_launch_selection_up();
+        }
+        KeyCode::Char(ch) => {
+            if !key_event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                app.append_quick_launch_char(ch);
+            }
+        }
         _ => {}
     }
 }
