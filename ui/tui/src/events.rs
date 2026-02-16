@@ -73,6 +73,11 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "i",
+            description: "Show anime info",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "m",
             description: "Toggle bookmark for selection",
             mode: InputMode::Normal,
@@ -215,7 +220,16 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
                 app.set_confirm_exit_choice(ConfirmExitChoice::No);
                 app.clear_confirm_exit();
             }
-            _ => app.clear_confirm_exit(),
+        _ => app.clear_confirm_exit(),
+        }
+        return;
+    }
+
+    if app.info_modal_visible() {
+        match key_event.code {
+            KeyCode::Esc => app.close_info_modal(),
+            KeyCode::Char('q') => app.request_exit(),
+            _ => {}
         }
         return;
     }
@@ -252,6 +266,10 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),
+        KeyCode::Char('i') => {
+            app.open_info_modal();
+            app.set_details("Press Esc to close info modal.");
+        }
         KeyCode::Char('d') => app.request_download(),
         KeyCode::Char('D') => app.request_delete(),
         KeyCode::Char(' ') => app.select_current(),

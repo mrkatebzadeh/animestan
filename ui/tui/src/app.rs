@@ -16,8 +16,8 @@
 use std::collections::HashMap;
 
 use animestan_core::{
-    AnimeClient, AnimeEntry, CoreResult, Episode, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter,
+    AnimeClient, AnimeEntry, AnimeMetadata, CoreResult, Episode, FavoriteEntry, FavoriteStore,
+    FetchBackend, PlaybackFilter,
 };
 use crossterm::event::KeyEvent;
 use nucleo::{
@@ -193,6 +193,12 @@ pub struct App {
     show_keybindings: bool,
     matcher: Matcher,
     episode_indicators: HashMap<String, EpisodeIndicators>,
+    info_modal_visible: bool,
+    info_modal_loading: bool,
+    info_modal_metadata: Option<AnimeMetadata>,
+    info_modal_error: Option<String>,
+    pending_info_fetch: bool,
+    info_fetch_generation: u64,
 }
 
 impl App {
@@ -248,6 +254,12 @@ impl App {
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
+            info_modal_visible: false,
+            info_modal_loading: false,
+            info_modal_metadata: None,
+            info_modal_error: None,
+            pending_info_fetch: false,
+            info_fetch_generation: 0,
         }
     }
 
@@ -684,6 +696,71 @@ impl App {
 
     pub fn show_keybindings(&self) -> bool {
         self.show_keybindings
+    }
+
+    pub fn info_modal_visible(&self) -> bool {
+        self.info_modal_visible
+    }
+
+    pub fn info_modal_loading(&self) -> bool {
+        self.info_modal_loading
+    }
+
+    pub fn info_modal_metadata(&self) -> Option<&AnimeMetadata> {
+        self.info_modal_metadata.as_ref()
+    }
+
+    pub fn info_modal_error(&self) -> Option<&str> {
+        self.info_modal_error.as_deref()
+    }
+
+    pub fn open_info_modal(&mut self) {
+        self.info_modal_visible = true;
+        self.info_modal_metadata = None;
+        self.info_modal_error = None;
+        self.pending_info_fetch = true;
+    }
+
+    pub fn close_info_modal(&mut self) {
+        self.info_modal_visible = false;
+        self.info_modal_loading = false;
+        self.pending_info_fetch = false;
+    }
+
+    pub fn request_info_fetch(&mut self) {
+        self.pending_info_fetch = true;
+    }
+
+    pub fn take_pending_info_fetch(&mut self) -> bool {
+        if self.pending_info_fetch {
+            self.pending_info_fetch = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn next_info_fetch_generation(&mut self) -> u64 {
+        self.info_fetch_generation = self.info_fetch_generation.wrapping_add(1);
+        self.info_fetch_generation
+    }
+
+    pub fn current_info_fetch_generation(&self) -> u64 {
+        self.info_fetch_generation
+    }
+
+    pub fn set_info_modal_loading(&mut self, loading: bool) {
+        self.info_modal_loading = loading;
+    }
+
+    pub fn set_info_modal_metadata(&mut self, metadata: AnimeMetadata) {
+        self.info_modal_metadata = Some(metadata);
+        self.info_modal_error = None;
+    }
+
+    pub fn set_info_modal_error(&mut self, error: impl Into<String>) {
+        self.info_modal_error = Some(error.into());
+        self.info_modal_metadata = None;
     }
 
     pub fn set_search_query<S: Into<String>>(&mut self, query: S) {
