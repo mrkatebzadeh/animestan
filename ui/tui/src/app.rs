@@ -793,23 +793,23 @@ impl App {
                     self.focus = Focus::Left;
                     self.set_details("Focus: search input");
                 }
-                QuickLaunchAction::FocusAnimePanel => {
+                QuickLaunchAction::OpenAnimePanel => {
                     if matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
                         self.toggle_bookmarks_mode();
                     }
                     self.focus = Focus::Left;
-                    self.set_details("Focus: anime panel");
+                    self.set_details("Open: anime panel");
                 }
-                QuickLaunchAction::FocusEpisodePanel => {
+                QuickLaunchAction::OpenEpisodePanel => {
                     self.focus = Focus::Right;
-                    self.set_details("Focus: episode panel");
+                    self.set_details("Open: episode panel");
                 }
-                QuickLaunchAction::FocusBookmarksPanel => {
+                QuickLaunchAction::OpenBookmarksPanel => {
                     if matches!(self.left_pane_mode, LeftPaneMode::Search) {
                         self.toggle_bookmarks_mode();
                     }
                     self.focus = Focus::Left;
-                    self.set_details("Focus: bookmarks panel");
+                    self.set_details("Open: bookmarks panel");
                 }
                 QuickLaunchAction::DownloadCurrentEpisode => {
                     self.request_download();
@@ -833,12 +833,6 @@ impl App {
                     } else {
                         self.set_details("Quick Launch: replaying last episode");
                     }
-                }
-                QuickLaunchAction::OpenFavorites => {
-                    if !matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
-                        self.toggle_bookmarks_mode();
-                    }
-                    self.set_details("Showing bookmarks");
                 }
             }
             self.refresh_quick_launch_items();
@@ -864,25 +858,25 @@ impl App {
 
         if !matches!(self.focus, Focus::Left) || matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
             candidates.push(QuickLaunchCandidate {
-                label: "Focus anime panel".to_string(),
+                label: "Open anime".to_string(),
                 score: 30,
-                action: QuickLaunchAction::FocusAnimePanel,
+                action: QuickLaunchAction::OpenAnimePanel,
             });
         }
 
         if !matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
             candidates.push(QuickLaunchCandidate {
-                label: "Focus bookmarks panel".to_string(),
+                label: "Open bookmarks".to_string(),
                 score: 30,
-                action: QuickLaunchAction::FocusBookmarksPanel,
+                action: QuickLaunchAction::OpenBookmarksPanel,
             });
         }
 
         if !matches!(self.focus, Focus::Right) {
             candidates.push(QuickLaunchCandidate {
-                label: "Focus episode panel".to_string(),
+                label: "Open episodes".to_string(),
                 score: 30,
-                action: QuickLaunchAction::FocusEpisodePanel,
+                action: QuickLaunchAction::OpenEpisodePanel,
             });
         }
 
@@ -908,12 +902,6 @@ impl App {
                 },
             });
         }
-
-        candidates.push(QuickLaunchCandidate {
-            label: "Open bookmarks".to_string(),
-            score: 15,
-            action: QuickLaunchAction::OpenFavorites,
-        });
 
         candidates.push(QuickLaunchCandidate {
             label: "Open anime info".to_string(),
@@ -1485,15 +1473,14 @@ where
 #[derive(Clone)]
 pub enum QuickLaunchAction {
     GoToSearch,
-    FocusAnimePanel,
-    FocusEpisodePanel,
-    FocusBookmarksPanel,
+    OpenAnimePanel,
+    OpenEpisodePanel,
+    OpenBookmarksPanel,
     DownloadCurrentEpisode,
     OpenInfo,
     PlayLastEpisode {
         episode_id: String,
     },
-    OpenFavorites,
 }
 
 #[derive(Clone)]
