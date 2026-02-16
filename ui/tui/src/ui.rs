@@ -301,7 +301,9 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
-    let total_seconds = seconds.unwrap_or(0.0).max(0.0).floor() as u64;
+    let secs = seconds.unwrap_or(0.0).max(0.0);
+    let duration = std::time::Duration::from_secs_f64(secs);
+    let total_seconds = duration.as_secs();
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{minutes:02}:{seconds:02}")

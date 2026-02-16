@@ -118,6 +118,7 @@ fn run_app(
     let mut events = EventHandler::new(Duration::from_millis(250));
 
     loop {
+        update_playback_elapsed(&mut app, &tracker);
         terminal.draw(|frame| ui::render(frame, &app))?;
 
         match events.next()? {
@@ -631,6 +632,22 @@ fn refresh_episode_indicators(
     };
     app.set_episode_indicators(indicators);
     Ok(())
+}
+
+fn update_playback_elapsed(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) {
+    if let Some(episode_id) = app.current_playing_episode_id() {
+        if let Ok(guard) = tracker.lock() {
+            let elapsed = guard
+                .progress_for(episode_id)
+                .and_then(|progress| progress.last_position_sec);
+            app.set_playback_elapsed(elapsed);
+        } else {
+            warn!("episode tracker lock poisoned while updating playback progress");
+            app.set_playback_elapsed(None);
+        }
+    } else {
+        app.set_playback_elapsed(None);
+    }
 }
 
 fn spawn_episode_fetch_task(

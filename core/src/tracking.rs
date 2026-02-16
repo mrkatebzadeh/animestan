@@ -159,6 +159,11 @@ impl EpisodeTracker {
             })
     }
 
+    #[must_use]
+    pub fn progress_for(&self, episode_id: &str) -> Option<EpisodeProgress> {
+        self.store.episodes.get(episode_id).cloned()
+    }
+
     /// Indicates whether the episode has been marked as watched.
     #[must_use]
     pub fn is_watched(&self, episode_id: &str) -> bool {

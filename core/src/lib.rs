@@ -34,5 +34,5 @@ pub type CoreResult<T> = anyhow::Result<T>;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
 pub use crate::logging::init_logging;
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
-pub use crate::tracking::EpisodeTracker;
+pub use crate::tracking::{EpisodeProgress, EpisodeTracker};
 pub use anyhow::Result as AnyhowResult;
