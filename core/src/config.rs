@@ -143,6 +143,11 @@ impl AppConfig {
     }
 
     #[must_use]
+    pub fn trending_cache_path(&self) -> PathBuf {
+        Self::data_dir().join("trending.json")
+    }
+
+    #[must_use]
     pub fn downloads_dir(&self) -> PathBuf {
         let _ = self;
 
