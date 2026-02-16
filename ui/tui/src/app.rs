@@ -14,7 +14,6 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::collections::{HashMap, VecDeque};
-use std::convert::TryFrom;
 
 use animestan_core::{
     AnimeClient, AnimeEntry, CoreResult, Episode, FavoriteEntry, FavoriteStore, FetchBackend,
@@ -789,23 +788,21 @@ impl App {
         if let Some(candidate) = self.quick_launch_items.get(self.quick_launch_selection) {
             let action = candidate.action.clone();
             match action {
-                QuickLaunchAction::JumpToAnime {
-                    index,
-                    anime_title,
-                    anime_id,
-                } => {
-                    let available = self.visible_anime_entries().len();
-                    if available == 0 {
-                        self.set_details("No anime available to jump to.");
-                    } else {
-                        self.left_pane_mode = LeftPaneMode::Search;
-                        self.focus = Focus::Left;
-                        self.left_index = index.min(available.saturating_sub(1));
-                        self.selected_anime = None;
-                        self.anime_selection_changed = true;
-                        self.record_anime_history(&anime_id);
-                        self.set_details(format!("Jumped to {anime_title}"));
-                    }
+                QuickLaunchAction::GoToSearch => {
+                    self.enter_search_mode();
+                    self.focus = Focus::Left;
+                    self.set_details("Focus: search input");
+                }
+                QuickLaunchAction::FocusAnimePanel => {
+                    self.focus = Focus::Left;
+                    self.set_details("Focus: anime panel");
+                }
+                QuickLaunchAction::FocusEpisodePanel => {
+                    self.focus = Focus::Right;
+                    self.set_details("Focus: episode panel");
+                }
+                QuickLaunchAction::DownloadCurrentEpisode => {
+                    self.request_download();
                 }
                 QuickLaunchAction::OpenInfo => {
                     self.set_details("Anime info is not available through quick launch yet.");
@@ -849,18 +846,29 @@ impl App {
 
     fn build_quick_launch_candidates(&self) -> Vec<QuickLaunchCandidate> {
         let mut candidates = Vec::new();
-        for (idx, anime) in self.visible_anime_entries().iter().enumerate() {
-            let score = 20 + self.quick_launch_priority_for_anime(&anime.id);
-            candidates.push(QuickLaunchCandidate {
-                label: format!("Jump to {}", &anime.title),
-                score,
-                action: QuickLaunchAction::JumpToAnime {
-                    index: idx,
-                    anime_title: anime.title.clone(),
-                    anime_id: anime.id.clone(),
-                },
-            });
-        }
+        candidates.push(QuickLaunchCandidate {
+            label: "Go to search".to_string(),
+            score: 40,
+            action: QuickLaunchAction::GoToSearch,
+        });
+
+        candidates.push(QuickLaunchCandidate {
+            label: "Focus anime panel".to_string(),
+            score: 30,
+            action: QuickLaunchAction::FocusAnimePanel,
+        });
+
+        candidates.push(QuickLaunchCandidate {
+            label: "Focus episode panel".to_string(),
+            score: 30,
+            action: QuickLaunchAction::FocusEpisodePanel,
+        });
+
+        candidates.push(QuickLaunchCandidate {
+            label: "Download current episode".to_string(),
+            score: 25,
+            action: QuickLaunchAction::DownloadCurrentEpisode,
+        });
 
         if let Some(entry) = &self.last_played_episode {
             let label = if let Some(title) = &entry.title {
@@ -879,13 +887,13 @@ impl App {
 
         candidates.push(QuickLaunchCandidate {
             label: "Open favorites".to_string(),
-            score: 8,
+            score: 15,
             action: QuickLaunchAction::OpenFavorites,
         });
 
         candidates.push(QuickLaunchCandidate {
             label: "Open anime info".to_string(),
-            score: 2,
+            score: 10,
             action: QuickLaunchAction::OpenInfo,
         });
 
@@ -927,41 +935,6 @@ impl App {
             .into_iter()
             .map(|(candidate, _)| candidates[candidate.index].clone())
             .collect()
-    }
-
-    fn quick_launch_priority_for_anime(&self, anime_id: &str) -> i32 {
-        let mut score = 0;
-        if let Some(position) = self
-            .quick_launch_history
-            .iter()
-            .position(|id| id == anime_id)
-        {
-            if let Ok(boost) = i32::try_from(QUICK_LAUNCH_HISTORY_SIZE.saturating_sub(position)) {
-                score += boost;
-            }
-        }
-        if let Some(position) = self
-            .quick_launch_recently_played
-            .iter()
-            .position(|id| id == anime_id)
-        {
-            if let Ok(boost) = i32::try_from(QUICK_LAUNCH_RECENT_PLAY_SIZE.saturating_sub(position))
-            {
-                score += boost;
-            }
-        }
-        if self
-            .last_played_episode
-            .as_ref()
-            .and_then(|entry| entry.anime_id.as_deref())
-            .is_some_and(|id| id == anime_id)
-        {
-            score += 10;
-        }
-        if self.is_bookmarked(anime_id) {
-            score += 15;
-        }
-        score
     }
 
     pub fn record_anime_history(&mut self, anime_id: &str) {
@@ -1487,11 +1460,10 @@ where
 
 #[derive(Clone)]
 pub enum QuickLaunchAction {
-    JumpToAnime {
-        index: usize,
-        anime_title: String,
-        anime_id: String,
-    },
+    GoToSearch,
+    FocusAnimePanel,
+    FocusEpisodePanel,
+    DownloadCurrentEpisode,
     OpenInfo,
     PlayLastEpisode {
         episode_id: String,
