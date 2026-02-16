@@ -862,7 +862,7 @@ impl App {
             action: QuickLaunchAction::GoToSearch,
         });
 
-        if !matches!(self.focus, Focus::Left) {
+        if !matches!(self.focus, Focus::Left) || matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
             candidates.push(QuickLaunchCandidate {
                 label: "Focus anime panel".to_string(),
                 score: 30,
