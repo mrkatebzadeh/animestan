@@ -948,13 +948,19 @@ impl App {
     }
 
     pub fn current_episode_id(&self) -> Option<String> {
-        self.current_episode_index()
-            .and_then(|index| self.visible_episodes().get(index).map(|episode| episode.id.clone()))
+        self.current_episode_index().and_then(|index| {
+            self.visible_episodes()
+                .get(index)
+                .map(|episode| episode.id.clone())
+        })
     }
 
     fn current_episode_title_ref(&self) -> Option<&str> {
-        self.current_episode_index()
-            .and_then(|index| self.visible_episodes().get(index).map(|episode| episode.title.as_str()))
+        self.current_episode_index().and_then(|index| {
+            self.visible_episodes()
+                .get(index)
+                .map(|episode| episode.title.as_str())
+        })
     }
 
     pub fn current_episode_title(&self) -> Option<String> {

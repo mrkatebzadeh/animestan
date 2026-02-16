@@ -367,7 +367,8 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
 
     let episodes = app.episodes();
     if episodes.is_empty() {
-        let placeholder = Paragraph::new("Load episodes to view heatmap").alignment(Alignment::Center);
+        let placeholder =
+            Paragraph::new("Load episodes to view heatmap").alignment(Alignment::Center);
         frame.render_widget(placeholder, area);
         return;
     }
@@ -379,7 +380,7 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let selected = app.current_episode_index();
-    let rows = (episodes.len() + columns - 1) / columns;
+    let rows = episodes.len().div_ceil(columns);
     let mut lines = Vec::new();
 
     for row in 0..rows {
@@ -429,12 +430,16 @@ fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let lines = if let Some(episode) = app.current_episode() {
-        let mut info = vec![
-            Line::from(format!("#{:03} — {}", episode.number, episode.title)),
-        ];
+        let mut info = vec![Line::from(format!(
+            "#{:03} — {}",
+            episode.number, episode.title
+        ))];
 
         if let Some(duration) = episode.duration_secs {
-            info.push(Line::from(format!("Duration: {}", format_duration(duration))));
+            info.push(Line::from(format!(
+                "Duration: {}",
+                format_duration(duration)
+            )));
         }
 
         if let Some(synopsis) = episode.synopsis.as_deref() {
@@ -455,6 +460,7 @@ fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(info, area);
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
     if episodes.is_empty() {
         return Vec::new();
@@ -475,22 +481,18 @@ fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
         .iter()
         .map(|episode| {
             let raw = if has_air_dates {
-                episode.air_date.unwrap_or(offset + episode.number as i64)
+                episode
+                    .air_date
+                    .unwrap_or(offset + i64::from(episode.number))
             } else {
-                episode.number as i64
+                i64::from(episode.number)
             };
             raw as f64
         })
         .collect();
 
-    let min_value = values
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min);
-    let max_value = values
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
+    let min_value = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_value = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let range = max_value - min_value;
 
     if range.abs() < f64::EPSILON {
@@ -523,11 +525,12 @@ fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
     let factor = 0.5 + intensity.clamp(0.0, 1.0) * 0.5;
-    let red = (r as f64 * factor).clamp(0.0, 255.0) as u8;
-    let green = (g as f64 * factor).clamp(0.0, 255.0) as u8;
-    let blue = (b as f64 * factor).clamp(0.0, 255.0) as u8;
+    let red = (f64::from(r) * factor).clamp(0.0, 255.0) as u8;
+    let green = (f64::from(g) * factor).clamp(0.0, 255.0) as u8;
+    let blue = (f64::from(b) * factor).clamp(0.0, 255.0) as u8;
     Color::Rgb(red, green, blue)
 }
 
@@ -536,11 +539,11 @@ fn format_duration(seconds: u32) -> String {
     let minutes = (seconds % 3600) / 60;
     let seconds = seconds % 60;
     if hours > 0 {
-        format!("{}h {}m {}s", hours, minutes, seconds)
+        format!("{hours}h {minutes}m {seconds}s")
     } else if minutes > 0 {
-        format!("{}m {}s", minutes, seconds)
+        format!("{minutes}m {seconds}s")
     } else {
-        format!("{}s", seconds)
+        format!("{seconds}s")
     }
 }
 
