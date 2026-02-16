@@ -199,9 +199,9 @@ impl MetadataProvider for MetadataResolver {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
         match self.primary.fetch_by_query(query) {
             Ok(metadata) => Ok(metadata),
-            Err(err) => match err {
-                CoreError::MetadataNotFound { .. } => self.fallback.fetch_by_query(query),
-                other => Err(other),
+            Err(primary_err) => match self.fallback.fetch_by_query(query) {
+                Ok(metadata) => Ok(metadata),
+                Err(_) => Err(primary_err),
             },
         }
     }
