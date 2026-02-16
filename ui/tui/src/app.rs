@@ -860,11 +860,13 @@ impl App {
             });
         }
 
-        candidates.push(QuickLaunchCandidate {
-            label: "Focus episode panel".to_string(),
-            score: 30,
-            action: QuickLaunchAction::FocusEpisodePanel,
-        });
+        if !matches!(self.focus, Focus::Right) {
+            candidates.push(QuickLaunchCandidate {
+                label: "Focus episode panel".to_string(),
+                score: 30,
+                action: QuickLaunchAction::FocusEpisodePanel,
+            });
+        }
 
         if matches!(self.focus, Focus::Right) {
             candidates.push(QuickLaunchCandidate {
