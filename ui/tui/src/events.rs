@@ -44,7 +44,7 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
-            keys: "Ctrl+Shift+P",
+            keys: "Ctrl+K",
             description: "Open quick launch palette",
             mode: InputMode::Normal,
         },
@@ -269,11 +269,7 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         }
         KeyCode::Char('q') => app.request_exit(),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-        KeyCode::Char('p') | KeyCode::Char('P')
-            if key_event
-                .modifiers
-                .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
-        {
+        KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
             app.open_quick_launch();
         }
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
