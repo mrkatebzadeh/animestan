@@ -67,24 +67,11 @@ pub enum InputMode {
     Search,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlaybackStatus {
     None,
     Playing,
-    Paused,
     Downloading,
-}
-
-impl PlaybackStatus {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::None => "Idle",
-            Self::Playing => "Playing",
-            Self::Paused => "Paused",
-            Self::Downloading => "Downloading",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -309,10 +296,6 @@ impl App {
 
     pub fn set_playback_status(&mut self, status: PlaybackStatus) {
         self.playback_status = status;
-    }
-
-    pub fn playback_status(&self) -> PlaybackStatus {
-        self.playback_status
     }
 
     pub fn panel_filter_mode(&self) -> bool {

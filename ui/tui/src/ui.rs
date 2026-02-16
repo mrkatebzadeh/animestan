@@ -241,21 +241,10 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
-    if let Some(playing_id) = app.current_playing_episode_id() {
-        let mut now_playing = String::from("Now playing: ▶");
-        if app.current_episode_id().is_some_and(|id| id == playing_id) {
-            if let Some(title) = app.current_episode_title() {
-                now_playing.push(' ');
-                now_playing.push_str(&title);
-            }
-        }
-        lines.push(Line::from(now_playing));
-    }
     let left_status = format!(
-        "Mode: {} | {} | {}",
+        "Mode: {} | {}",
         app.mode_label(),
-        app.current_selection_label(),
-        app.playback_status().label()
+        app.current_selection_label()
     );
     let inner_area = details_block.inner(area);
     frame.render_widget(details_block, area);
