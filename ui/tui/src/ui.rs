@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::convert::TryFrom;
+
 use animestan_core::{Episode, MetadataSource};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
@@ -104,6 +106,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_keybindings_modal(frame, app);
     render_info_modal(frame, app);
     render_exit_confirmation_modal(frame, app);
+    render_quick_launch_palette(frame, app);
 }
 
 fn render_list(
@@ -879,6 +882,89 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);
+}
+
+fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
+    if !app.quick_launch_active() {
+        return;
+    }
+
+    let candidates = app.quick_launch_items();
+    let list_height = u16::try_from(candidates.len()).unwrap_or(u16::MAX);
+    let height = (list_height + 6).max(8);
+    let frame_area = frame.area();
+    if frame_area.width < 30 || frame_area.height < height {
+        return;
+    }
+
+    let width = frame_area.width.saturating_sub(8).min(80);
+    let area = centered_rect(frame_area, width, height);
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title("Quick Launch")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(border_style(true));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let prompt = Line::from(vec![
+        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::raw(app.quick_launch_query()),
+    ]);
+    let paragraph = Paragraph::new(prompt);
+    frame.render_widget(paragraph, chunks[0]);
+    let typed_chars = app.quick_launch_query().chars().count();
+    let typed_offset = u16::try_from(typed_chars).unwrap_or(u16::MAX);
+    let cursor_base = chunks[0].x.saturating_add(2);
+    let max_cursor = chunks[0]
+        .x
+        .saturating_add(chunks[0].width.saturating_sub(1));
+    let cursor_x = cursor_base.saturating_add(typed_offset).min(max_cursor);
+    frame.set_cursor_position((cursor_x, chunks[0].y));
+
+    let items = if candidates.is_empty() {
+        vec![ListItem::new("No quick launch items")]
+    } else {
+        candidates
+            .iter()
+            .map(|candidate| ListItem::new(candidate.label.clone()))
+            .collect()
+    };
+
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        let idx = app.quick_launch_selection().min(items.len() - 1);
+        state.select(Some(idx));
+    }
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::NONE))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+    frame.render_stateful_widget(list, chunks[1], &mut state);
+
+    let hint = Paragraph::new(Line::from(vec![
+        Span::raw("Enter to run · Esc to close"),
+        Span::styled(
+            " · Ctrl+K opens this palette",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]))
+    .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hint, chunks[2]);
 }
 
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
