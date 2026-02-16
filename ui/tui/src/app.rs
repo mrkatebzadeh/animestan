@@ -16,8 +16,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use animestan_core::{
-    AnimeClient, AnimeEntry, CoreResult, Episode, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter,
+    AnimeClient, AnimeEntry, AnimeMetadata, CoreResult, Episode, FavoriteEntry, FavoriteStore,
+    FetchBackend, PlaybackFilter,
 };
 use crossterm::event::KeyEvent;
 use nucleo::{
@@ -188,6 +188,9 @@ pub struct App {
     playback_status: PlaybackStatus,
     playback_in_progress: bool,
     current_playing_episode_id: Option<String>,
+    current_playing_anime_title: Option<String>,
+    current_playing_episode_title: Option<String>,
+    playback_elapsed_seconds: Option<f64>,
     details_text: String,
     should_quit: bool,
     confirm_exit: bool,
@@ -203,6 +206,12 @@ pub struct App {
     quick_launch_recently_played: VecDeque<String>,
     last_played_episode: Option<LastPlayedEpisode>,
     pending_playback_override: Option<PendingPlayback>,
+    info_modal_visible: bool,
+    info_modal_loading: bool,
+    info_modal_metadata: Option<AnimeMetadata>,
+    info_modal_error: Option<String>,
+    pending_info_fetch: bool,
+    info_fetch_generation: u64,
 }
 
 impl App {
@@ -246,6 +255,9 @@ impl App {
             playback_status: PlaybackStatus::None,
             playback_in_progress: false,
             current_playing_episode_id: None,
+            current_playing_anime_title: None,
+            current_playing_episode_title: None,
+            playback_elapsed_seconds: None,
             details_text: concat!(
                 "Press s to search, / to filter panels, b for bookmarks, f for filters, ",
                 "Space to select, ",
@@ -266,6 +278,12 @@ impl App {
             quick_launch_recently_played: VecDeque::new(),
             last_played_episode: None,
             pending_playback_override: None,
+            info_modal_visible: false,
+            info_modal_loading: false,
+            info_modal_metadata: None,
+            info_modal_error: None,
+            pending_info_fetch: false,
+            info_fetch_generation: 0,
         }
     }
 
@@ -706,6 +724,67 @@ impl App {
         self.show_keybindings
     }
 
+    pub fn info_modal_visible(&self) -> bool {
+        self.info_modal_visible
+    }
+
+    pub fn info_modal_loading(&self) -> bool {
+        self.info_modal_loading
+    }
+
+    pub fn info_modal_metadata(&self) -> Option<&AnimeMetadata> {
+        self.info_modal_metadata.as_ref()
+    }
+
+    pub fn info_modal_error(&self) -> Option<&str> {
+        self.info_modal_error.as_deref()
+    }
+
+    pub fn open_info_modal(&mut self) {
+        self.info_modal_visible = true;
+        self.info_modal_metadata = None;
+        self.info_modal_error = None;
+        self.pending_info_fetch = true;
+    }
+
+    pub fn close_info_modal(&mut self) {
+        self.info_modal_visible = false;
+        self.info_modal_loading = false;
+        self.pending_info_fetch = false;
+    }
+
+    pub fn take_pending_info_fetch(&mut self) -> bool {
+        if self.pending_info_fetch {
+            self.pending_info_fetch = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn next_info_fetch_generation(&mut self) -> u64 {
+        self.info_fetch_generation = self.info_fetch_generation.wrapping_add(1);
+        self.info_fetch_generation
+    }
+
+    pub fn current_info_fetch_generation(&self) -> u64 {
+        self.info_fetch_generation
+    }
+
+    pub fn set_info_modal_loading(&mut self, loading: bool) {
+        self.info_modal_loading = loading;
+    }
+
+    pub fn set_info_modal_metadata(&mut self, metadata: AnimeMetadata) {
+        self.info_modal_metadata = Some(metadata);
+        self.info_modal_error = None;
+    }
+
+    pub fn set_info_modal_error(&mut self, error: impl Into<String>) {
+        self.info_modal_error = Some(error.into());
+        self.info_modal_metadata = None;
+    }
+
     pub fn set_search_query<S: Into<String>>(&mut self, query: S) {
         self.search_query = query.into();
     }
@@ -815,7 +894,8 @@ impl App {
                     self.request_download();
                 }
                 QuickLaunchAction::OpenInfo => {
-                    self.set_details("Anime info is not available through quick launch yet.");
+                    self.open_info_modal();
+                    self.set_details("Press Esc to close info modal.");
                 }
                 QuickLaunchAction::PlayLastEpisode { episode_id } => {
                     let title = self
@@ -1063,10 +1143,40 @@ impl App {
 
     pub fn set_current_playing_episode(&mut self, id: Option<String>) {
         self.current_playing_episode_id = id;
+        if self.current_playing_episode_id.is_none() {
+            self.current_playing_anime_title = None;
+            self.current_playing_episode_title = None;
+            self.playback_elapsed_seconds = None;
+        }
     }
 
     pub fn current_playing_episode_id(&self) -> Option<&str> {
         self.current_playing_episode_id.as_deref()
+    }
+
+    pub fn set_current_playback_titles(&mut self, anime: Option<String>, episode: Option<String>) {
+        self.current_playing_anime_title = anime;
+        self.current_playing_episode_title = episode;
+    }
+
+    pub fn current_playback_label(&self) -> Option<String> {
+        match (
+            self.current_playing_anime_title.as_deref(),
+            self.current_playing_episode_title.as_deref(),
+        ) {
+            (Some(anime), Some(episode)) => Some(format!("{anime} — {episode}")),
+            (Some(anime), None) => Some(anime.to_string()),
+            (None, Some(episode)) => Some(episode.to_string()),
+            _ => None,
+        }
+    }
+
+    pub fn set_playback_elapsed(&mut self, elapsed: Option<f64>) {
+        self.playback_elapsed_seconds = elapsed;
+    }
+
+    pub fn playback_elapsed(&self) -> Option<f64> {
+        self.playback_elapsed_seconds
     }
 
     pub fn request_download(&mut self) {
@@ -1242,20 +1352,38 @@ impl App {
         self.current_anime().map(|anime| anime.title.as_str())
     }
 
+    pub fn current_episode_index(&self) -> Option<usize> {
+        let available = self.visible_episodes();
+        if available.is_empty() {
+            return None;
+        }
+        let index = self.selected_episode.unwrap_or(self.right_index);
+        Some(index.min(available.len() - 1))
+    }
+
     pub fn current_episode_id(&self) -> Option<String> {
-        self.visible_episodes()
-            .get(self.selected_episode.unwrap_or(self.right_index))
-            .map(|episode| episode.id.clone())
+        self.current_episode_index().and_then(|index| {
+            self.visible_episodes()
+                .get(index)
+                .map(|episode| episode.id.clone())
+        })
     }
 
     fn current_episode_title_ref(&self) -> Option<&str> {
-        self.visible_episodes()
-            .get(self.selected_episode.unwrap_or(self.right_index))
-            .map(|episode| episode.title.as_str())
+        self.current_episode_index().and_then(|index| {
+            self.visible_episodes()
+                .get(index)
+                .map(|episode| episode.title.as_str())
+        })
     }
 
     pub fn current_episode_title(&self) -> Option<String> {
         self.current_episode_title_ref().map(ToString::to_string)
+    }
+
+    pub fn current_episode(&self) -> Option<&Episode> {
+        self.current_episode_index()
+            .and_then(|index| self.visible_episodes().get(index))
     }
 
     fn left_items_len(&self) -> usize {
