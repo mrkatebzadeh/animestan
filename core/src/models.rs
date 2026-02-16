@@ -32,6 +32,12 @@ pub struct Episode {
     pub title: String,
     pub anime_id: String,
     pub source_id: SourceId,
+    #[serde(default)]
+    pub synopsis: Option<String>,
+    #[serde(default)]
+    pub duration_secs: Option<u32>,
+    #[serde(default)]
+    pub air_date: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

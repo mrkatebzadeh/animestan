@@ -974,20 +974,38 @@ impl App {
         self.current_anime().map(|anime| anime.title.as_str())
     }
 
+    pub fn current_episode_index(&self) -> Option<usize> {
+        let available = self.visible_episodes();
+        if available.is_empty() {
+            return None;
+        }
+        let index = self.selected_episode.unwrap_or(self.right_index);
+        Some(index.min(available.len() - 1))
+    }
+
     pub fn current_episode_id(&self) -> Option<String> {
-        self.visible_episodes()
-            .get(self.selected_episode.unwrap_or(self.right_index))
-            .map(|episode| episode.id.clone())
+        self.current_episode_index().and_then(|index| {
+            self.visible_episodes()
+                .get(index)
+                .map(|episode| episode.id.clone())
+        })
     }
 
     fn current_episode_title_ref(&self) -> Option<&str> {
-        self.visible_episodes()
-            .get(self.selected_episode.unwrap_or(self.right_index))
-            .map(|episode| episode.title.as_str())
+        self.current_episode_index().and_then(|index| {
+            self.visible_episodes()
+                .get(index)
+                .map(|episode| episode.title.as_str())
+        })
     }
 
     pub fn current_episode_title(&self) -> Option<String> {
         self.current_episode_title_ref().map(ToString::to_string)
+    }
+
+    pub fn current_episode(&self) -> Option<&Episode> {
+        self.current_episode_index()
+            .and_then(|index| self.visible_episodes().get(index))
     }
 
     fn left_items_len(&self) -> usize {
