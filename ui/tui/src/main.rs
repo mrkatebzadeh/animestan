@@ -300,6 +300,7 @@ fn handle_filters(
 
     if app.take_anime_selection_changed() {
         if let Some(anime_id) = app.current_anime_id() {
+            app.record_anime_history(&anime_id);
             app.set_episodes_loading(true);
             let generation = app.next_fetch_generation();
             let request = EpisodeFetchRequest {
@@ -447,12 +448,18 @@ fn handle_playback_requests(
         return;
     }
 
-    let Some(episode_id) = app.current_episode_id() else {
-        app.set_details("Highlight an episode to play");
-        return;
-    };
-
-    let episode_title = app.current_episode_title();
+    let (episode_id, episode_title, anime_id) =
+        if let Some((episode_id, episode_title, anime_id)) = app.take_pending_playback_override() {
+            (episode_id, episode_title, anime_id)
+        } else {
+            let Some(episode_id) = app.current_episode_id() else {
+                app.set_details("Highlight an episode to play");
+                return;
+            };
+            let anime_id = app.current_anime_id();
+            let episode_title = app.current_episode_title();
+            (episode_id, episode_title, anime_id)
+        };
     let using_local = local_playback_url(config, &episode_id).is_some();
 
     if let Some(title) = &episode_title {
@@ -471,6 +478,7 @@ fn handle_playback_requests(
         episode_id: episode_id.clone(),
         episode_title,
     };
+    let requested_title = request.episode_title.clone();
 
     if playback_request_tx.send(request).is_err() {
         app.set_details("Playback queue disconnected.");
@@ -478,6 +486,7 @@ fn handle_playback_requests(
         return;
     }
 
+    app.record_played_episode(episode_id.clone(), anime_id, requested_title);
     app.set_current_playing_episode(Some(episode_id));
     app.set_playback_in_progress(true);
     app.set_playback_status(PlaybackStatus::Playing);

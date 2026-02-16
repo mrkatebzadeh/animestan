@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::convert::TryFrom;
+
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
@@ -475,8 +477,8 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let candidates = app.quick_launch_candidates();
-    let list_height = candidates.len() as u16;
+    let candidates = app.quick_launch_items();
+    let list_height = u16::try_from(candidates.len()).unwrap_or(u16::MAX);
     let height = (list_height + 6).max(8);
     let frame_area = frame.area();
     if frame_area.width < 30 || frame_area.height < height {
@@ -511,14 +513,19 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
     let typed_chars = app.quick_launch_query().chars().count();
     let typed_offset = u16::try_from(typed_chars).unwrap_or(u16::MAX);
     let cursor_base = chunks[0].x.saturating_add(2);
-    let max_cursor = chunks[0].x.saturating_add(chunks[0].width.saturating_sub(1));
+    let max_cursor = chunks[0]
+        .x
+        .saturating_add(chunks[0].width.saturating_sub(1));
     let cursor_x = cursor_base.saturating_add(typed_offset).min(max_cursor);
     frame.set_cursor_position((cursor_x, chunks[0].y));
 
     let items = if candidates.is_empty() {
         vec![ListItem::new("No quick launch items")]
     } else {
-        candidates.into_iter().map(ListItem::new).collect()
+        candidates
+            .iter()
+            .map(|candidate| ListItem::new(candidate.label.clone()))
+            .collect()
     };
 
     let mut state = ListState::default();

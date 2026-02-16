@@ -215,10 +215,10 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
                 app.set_confirm_exit_choice(ConfirmExitChoice::No);
                 app.clear_confirm_exit();
             }
-        _ => app.clear_confirm_exit(),
+            _ => app.clear_confirm_exit(),
+        }
+        return;
     }
-    return;
-}
 
     if app.show_keybindings() {
         app.toggle_keybindings();
@@ -270,7 +270,7 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
 }
 
 fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
-    let candidates_len = app.quick_launch_candidates().len();
+    let candidates_len = app.quick_launch_items().len();
     match key_event.code {
         KeyCode::Esc => app.close_quick_launch(),
         KeyCode::Enter => app.run_quick_launch_selection(),
