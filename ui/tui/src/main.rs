@@ -24,8 +24,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AppConfig, CoreResult, Episode, EpisodeTracker, FavoriteStore, FetchBackend,
-    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
+    AnimeClient, AnimeMetadata, AppConfig, CoreResult, Episode, EpisodeTracker, FavoriteStore,
+    FetchBackend, MetadataProvider, MetadataResolver, delete_episode, download_episode,
+    episode_file_path, init_logging, local_playback_url,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -54,6 +55,16 @@ struct EpisodeFetchRequest {
 struct EpisodeFetchResult {
     generation: u64,
     result: CoreResult<Vec<Episode>>,
+}
+
+struct MetadataFetchRequest {
+    generation: u64,
+    query: String,
+}
+
+struct MetadataFetchResult {
+    generation: u64,
+    result: Result<AnimeMetadata, anyhow::Error>,
 }
 
 #[derive(Clone)]
@@ -101,12 +112,15 @@ fn run_app(
     let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
+    let metadata_resolver = Arc::new(MetadataResolver::new());
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
     let (playback_request_tx, mut playback_request_rx) = unbounded_channel::<PlaybackRequest>();
     let (playback_result_tx, mut playback_result_rx) = unbounded_channel::<PlaybackResult>();
     let mut active_playback: Option<AbortHandle> = None;
+    let (metadata_result_tx, mut metadata_result_rx) = unbounded_channel::<MetadataFetchResult>();
+    let mut active_metadata_fetch: Option<AbortHandle> = None;
 
     let mut app = App::new();
     app.sync_bookmark_cache(&favorites);
@@ -144,6 +158,13 @@ fn run_app(
 
         handle_search(&mut app, client.as_ref());
         handle_filters(&mut app, &tracker, &request_tx);
+        handle_metadata_fetch(
+            &mut app,
+            &metadata_resolver,
+            &runtime_handle,
+            &metadata_result_tx,
+            &mut active_metadata_fetch,
+        );
 
         loop {
             match request_rx.try_recv() {
@@ -200,6 +221,36 @@ fn run_app(
                 Err(TryRecvError::Disconnected) => {
                     app.set_details("Episode fetch worker disconnected.");
                     app.set_episodes_loading(false);
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match metadata_result_rx.try_recv() {
+                Ok(fetch_result) => {
+                    if fetch_result.generation != app.current_info_fetch_generation() {
+                        continue;
+                    }
+
+                    app.set_info_modal_loading(false);
+                    match fetch_result.result {
+                        Ok(metadata) => {
+                            let title = metadata.title.clone();
+                            app.set_info_modal_metadata(metadata);
+                            app.set_details(format!("Loaded metadata for {title}"));
+                        }
+                        Err(err) => {
+                            let message = format!("Metadata load failed: {err}");
+                            app.set_info_modal_error(message.clone());
+                            app.set_details(message);
+                        }
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    app.set_info_modal_loading(false);
+                    app.set_info_modal_error("Metadata fetch worker disconnected.");
                     break;
                 }
             }
@@ -328,6 +379,40 @@ fn handle_filters(
             app.set_details(format!("Filter failed: {err}"));
         }
     }
+}
+
+fn handle_metadata_fetch(
+    app: &mut App,
+    resolver: &Arc<MetadataResolver>,
+    runtime: &Handle,
+    result_tx: &UnboundedSender<MetadataFetchResult>,
+    active_fetch: &mut Option<AbortHandle>,
+) {
+    if !app.take_pending_info_fetch() {
+        return;
+    }
+
+    let query = match app.current_anime_title() {
+        Some(query) => query,
+        None => {
+            app.set_info_modal_error("Highlight an anime to view metadata.");
+            app.set_info_modal_loading(false);
+            return;
+        }
+    };
+
+    let generation = app.next_info_fetch_generation();
+    app.set_info_modal_loading(true);
+    app.set_details(format!("Fetching metadata for {query}..."));
+
+    if let Some(handle) = active_fetch.take() {
+        handle.abort();
+    }
+
+    let request = MetadataFetchRequest { generation, query };
+    let abort_handle =
+        spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone());
+    *active_fetch = Some(abort_handle);
 }
 
 fn handle_download(
@@ -654,6 +739,36 @@ fn spawn_episode_fetch_task(
                     Err(err) => Err(anyhow!("episode fetch join failed: {err}")),
                 };
                 let _ = result_tx.send(EpisodeFetchResult { generation, result });
+            },
+            abort_registration,
+        );
+        async move {
+            let _ = fut.await;
+        }
+    });
+
+    abort_handle
+}
+
+fn spawn_metadata_fetch_task(
+    runtime: &Handle,
+    resolver: Arc<MetadataResolver>,
+    request: MetadataFetchRequest,
+    result_tx: UnboundedSender<MetadataFetchResult>,
+) -> AbortHandle {
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let MetadataFetchRequest { generation, query } = request;
+
+    runtime.spawn({
+        let fut = Abortable::new(
+            async move {
+                let blocking_result =
+                    tokio::task::spawn_blocking(move || resolver.fetch_by_query(&query)).await;
+                let result = match blocking_result {
+                    Ok(inner) => inner.map_err(|err| anyhow!("metadata fetch failed: {err}")),
+                    Err(err) => Err(anyhow!("metadata fetch join failed: {err}")),
+                };
+                let _ = result_tx.send(MetadataFetchResult { generation, result });
             },
             abort_registration,
         );

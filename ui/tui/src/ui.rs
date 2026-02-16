@@ -443,7 +443,7 @@ fn render_info_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn build_info_modal_lines(app: &App) -> Vec<Line> {
+fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
     if app.info_modal_loading() {
         return vec![
             Line::from(Span::styled(

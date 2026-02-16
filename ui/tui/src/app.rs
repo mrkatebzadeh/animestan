@@ -727,10 +727,6 @@ impl App {
         self.pending_info_fetch = false;
     }
 
-    pub fn request_info_fetch(&mut self) {
-        self.pending_info_fetch = true;
-    }
-
     pub fn take_pending_info_fetch(&mut self) -> bool {
         if self.pending_info_fetch {
             self.pending_info_fetch = false;
