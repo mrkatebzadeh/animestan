@@ -356,6 +356,9 @@ impl<F: Fetcher> AnimeClient<F> {
                 title: format!("Episode {episode_string}"),
                 anime_id: show.id.clone(),
                 source_id: self.source.id.clone(),
+                synopsis: None,
+                duration_secs: None,
+                air_date: None,
             })
             .collect();
 
