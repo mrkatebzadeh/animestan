@@ -193,6 +193,9 @@ pub struct App {
     show_keybindings: bool,
     matcher: Matcher,
     episode_indicators: HashMap<String, EpisodeIndicators>,
+    quick_launch_active: bool,
+    quick_launch_query: String,
+    quick_launch_selection: usize,
 }
 
 impl App {
@@ -248,6 +251,9 @@ impl App {
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
+            quick_launch_active: false,
+            quick_launch_query: String::new(),
+            quick_launch_selection: 0,
         }
     }
 
@@ -708,6 +714,72 @@ impl App {
         }
         self.set_search_query(String::new());
         self.set_details("Search mode: type a query and press Enter.");
+    }
+
+    pub fn quick_launch_active(&self) -> bool {
+        self.quick_launch_active
+    }
+
+    pub fn quick_launch_query(&self) -> &str {
+        &self.quick_launch_query
+    }
+
+    pub fn quick_launch_selection(&self) -> usize {
+        self.quick_launch_selection
+    }
+
+    pub fn quick_launch_candidates(&self) -> Vec<String> {
+        vec![
+            "Jump to anime in current results".to_string(),
+            "Open info (stub)".to_string(),
+            "Play last episode".to_string(),
+            "Open favorites".to_string(),
+        ]
+    }
+
+    pub fn open_quick_launch(&mut self) {
+        self.quick_launch_active = true;
+        self.quick_launch_selection = 0;
+        self.quick_launch_query.clear();
+        self.set_details("Quick Launch: type to filter, Enter to run, Esc to close.");
+    }
+
+    pub fn close_quick_launch(&mut self) {
+        self.quick_launch_active = false;
+    }
+
+    pub fn append_quick_launch_char(&mut self, ch: char) {
+        self.quick_launch_query.push(ch);
+    }
+
+    pub fn pop_quick_launch_char(&mut self) {
+        self.quick_launch_query.pop();
+    }
+
+    pub fn move_quick_launch_selection_up(&mut self) {
+        if self.quick_launch_selection > 0 {
+            self.quick_launch_selection -= 1;
+        }
+    }
+
+    pub fn move_quick_launch_selection_down(&mut self, len: usize) {
+        if len == 0 {
+            self.quick_launch_selection = 0;
+            return;
+        }
+        if self.quick_launch_selection + 1 < len {
+            self.quick_launch_selection += 1;
+        }
+    }
+
+    pub fn run_quick_launch_selection(&mut self) {
+        let candidates = self.quick_launch_candidates();
+        let label = candidates
+            .get(self.quick_launch_selection)
+            .cloned()
+            .unwrap_or_else(|| "Quick Launch action".to_string());
+        self.set_details(format!("Quick Launch executed: {label}"));
+        self.close_quick_launch();
     }
 
     pub fn exit_search_mode(&mut self) {
