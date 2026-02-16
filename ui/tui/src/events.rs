@@ -30,6 +30,7 @@ pub struct KeyBinding {
     pub mode: InputMode,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn keybindings() -> &'static [KeyBinding] {
     static BINDINGS: &[KeyBinding] = &[
         KeyBinding {
@@ -220,7 +221,7 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
                 app.set_confirm_exit_choice(ConfirmExitChoice::No);
                 app.clear_confirm_exit();
             }
-        _ => app.clear_confirm_exit(),
+            _ => app.clear_confirm_exit(),
         }
         return;
     }

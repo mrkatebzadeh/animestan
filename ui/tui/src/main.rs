@@ -392,13 +392,10 @@ fn handle_metadata_fetch(
         return;
     }
 
-    let query = match app.current_anime_title() {
-        Some(query) => query,
-        None => {
-            app.set_info_modal_error("Highlight an anime to view metadata.");
-            app.set_info_modal_loading(false);
-            return;
-        }
+    let Some(query) = app.current_anime_title() else {
+        app.set_info_modal_error("Highlight an anime to view metadata.");
+        app.set_info_modal_loading(false);
+        return;
     };
 
     let generation = app.next_info_fetch_generation();

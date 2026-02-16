@@ -51,7 +51,21 @@ pub struct AnimeMetadata {
     pub source: MetadataSource,
 }
 
+/// Provides metadata for the requested query string.
+///
+/// # Errors
+///
+/// * `CoreError::MetadataNotFound` if the query cannot be resolved.
+/// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
+///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
+/// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
 pub trait MetadataProvider: Send + Sync {
+    /// # Errors
+    ///
+    /// * `CoreError::MetadataNotFound` if the query cannot be resolved.
+    /// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
+    ///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
+    /// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError>;
 }
 
@@ -126,6 +140,7 @@ pub struct MetadataResolver {
 }
 
 impl AniListMetadataProvider {
+    #[must_use]
     pub fn new(client: Client) -> Self {
         Self {
             client,
@@ -141,6 +156,7 @@ impl Default for AniListMetadataProvider {
 }
 
 impl KitsuMetadataProvider {
+    #[must_use]
     pub fn new(client: Client) -> Self {
         Self {
             client,
@@ -156,6 +172,7 @@ impl Default for KitsuMetadataProvider {
 }
 
 impl MetadataResolver {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             primary: AniListMetadataProvider::default(),
@@ -163,6 +180,7 @@ impl MetadataResolver {
         }
     }
 
+    #[must_use]
     pub fn with_clients(primary: Client, fallback: Client) -> Self {
         Self {
             primary: AniListMetadataProvider::new(primary),
@@ -294,7 +312,7 @@ impl KitsuMetadataProvider {
 fn media_to_metadata(media: AniListMedia, query: &str) -> AnimeMetadata {
     let title = select_title(&media.title).unwrap_or_else(|| query.to_string());
     let synopsis = media.description;
-    let score = media.average_score.map(|score| score as f32);
+    let score = media.average_score;
     let genres = media.genres;
     let studios = media
         .studios
@@ -328,8 +346,8 @@ fn select_title(title: &AniListTitle) -> Option<String> {
     title
         .user_preferred
         .as_ref()
-        .or_else(|| title.romaji.as_ref())
-        .or_else(|| title.english.as_ref())
+        .or(title.romaji.as_ref())
+        .or(title.english.as_ref())
         .cloned()
 }
 
@@ -369,11 +387,10 @@ fn record_to_metadata(record: KitsuRecord, query: &str) -> AnimeMetadata {
     let trailer_url = attributes
         .youtube_video_id
         .map(|id| format!("https://www.youtube.com/watch?v={id}"));
-    let source_url = attributes
-        .slug
-        .clone()
-        .map(|slug| format!("https://kitsu.io/anime/{slug}"))
-        .unwrap_or_else(|| format!("https://kitsu.io/anime/{}", record.id));
+    let source_url = attributes.slug.map_or_else(
+        || format!("https://kitsu.io/anime/{}", record.id),
+        |slug| format!("https://kitsu.io/anime/{slug}"),
+    );
     AnimeMetadata {
         title,
         synopsis,

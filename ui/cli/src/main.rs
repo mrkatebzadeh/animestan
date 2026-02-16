@@ -21,8 +21,8 @@ use spdlog::prelude::*;
 
 use animestan_core::{
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    MetadataProvider, MetadataResolver, MetadataSource, PlaybackFilter, delete_episode, download_episode,
-    episode_file_path, init_logging, local_playback_url,
+    MetadataProvider, MetadataResolver, MetadataSource, PlaybackFilter, delete_episode,
+    download_episode, episode_file_path, init_logging, local_playback_url,
 };
 
 mod playback;
@@ -85,11 +85,20 @@ fn handle_info(title: &str) -> Result<()> {
         .with_context(|| format!("failed to fetch metadata for '{title}'"))?;
 
     println!("Title: {}", metadata.title);
-    println!("Status/Score: {}", format_status_score(metadata.status.as_deref(), metadata.score));
+    println!(
+        "Status/Score: {}",
+        format_status_score(metadata.status.as_deref(), metadata.score)
+    );
     println!("Genres: {}", format_list(&metadata.genres));
     println!("Studios: {}", format_list(&metadata.studios));
-    println!("Season/Year: {}", format_season_year(metadata.season.as_deref(), metadata.year));
-    println!("Trailer: {}", metadata.trailer_url.as_deref().unwrap_or("N/A"));
+    println!(
+        "Season/Year: {}",
+        format_season_year(metadata.season.as_deref(), metadata.year)
+    );
+    println!(
+        "Trailer: {}",
+        metadata.trailer_url.as_deref().unwrap_or("N/A")
+    );
     println!(
         "Source: {} ({})",
         metadata.source_url,
