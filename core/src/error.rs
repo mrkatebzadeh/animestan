@@ -126,6 +126,30 @@ pub enum Error {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to read trending cache at '{path}': {source}")]
+    TrendingCacheRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse trending cache at '{path}': {source}")]
+    TrendingCacheParse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("failed to write trending cache at '{path}': {source}")]
+    TrendingCacheWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to fetch trending data from '{url}': {source}")]
+    TrendingFetch {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
     #[error("failed to create downloads directory at '{path}': {source}")]
     DownloadCreateDir {
         path: PathBuf,

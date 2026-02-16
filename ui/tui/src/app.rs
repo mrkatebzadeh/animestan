@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use animestan_core::{
     AnimeClient, AnimeEntry, CoreResult, Episode, FavoriteEntry, FavoriteStore, FetchBackend,
-    PlaybackFilter,
+    PlaybackFilter, TrendingEntry,
 };
 use crossterm::event::KeyEvent;
 use nucleo::{
@@ -31,6 +31,7 @@ const DEFAULT_SEARCH_QUERY: &str = "Naruto";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Focus {
+    Trending,
     Left,
     Right,
 }
@@ -39,7 +40,7 @@ impl Focus {
     fn toggle(self) -> Self {
         match self {
             Self::Left => Self::Right,
-            Self::Right => Self::Left,
+            Self::Right | Self::Trending => Self::Left,
         }
     }
 }
@@ -196,6 +197,8 @@ pub struct App {
     show_keybindings: bool,
     matcher: Matcher,
     episode_indicators: HashMap<String, EpisodeIndicators>,
+    trending_entries: Vec<TrendingEntry>,
+    trending_index: usize,
 }
 
 impl App {
@@ -254,6 +257,8 @@ impl App {
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
+            trending_entries: Vec::new(),
+            trending_index: 0,
         }
     }
 
@@ -307,6 +312,7 @@ impl App {
 
     pub fn filter_target_for_focus(&self) -> FilterTarget {
         match self.focus {
+            Focus::Trending => FilterTarget::Anime,
             Focus::Left => match self.left_pane_mode {
                 LeftPaneMode::Search => FilterTarget::Anime,
                 LeftPaneMode::Bookmarks => FilterTarget::Bookmarks,
@@ -448,6 +454,48 @@ impl App {
         &self.details_text
     }
 
+    pub fn set_trending_entries(&mut self, entries: Vec<TrendingEntry>) {
+        self.trending_entries = entries;
+        self.trending_index = 0;
+    }
+
+    pub fn trending_entry(&self) -> Option<&TrendingEntry> {
+        self.trending_entries.get(self.trending_index)
+    }
+
+    pub fn trending_index(&self) -> usize {
+        self.trending_index
+    }
+
+    pub fn trending_count(&self) -> usize {
+        self.trending_entries.len()
+    }
+
+    pub fn rotate_trending(&mut self, forward: bool) {
+        let len = self.trending_entries.len();
+        if len == 0 {
+            return;
+        }
+        if forward {
+            self.trending_index = (self.trending_index + 1) % len;
+        } else {
+            self.trending_index = (self.trending_index + len - 1) % len;
+        }
+        if let Some(entry) = self.trending_entry() {
+            self.set_details(format!(
+                "Trending: {} ({}/{})",
+                entry.title,
+                self.trending_index + 1,
+                len
+            ));
+        }
+    }
+
+    pub fn focus_trending(&mut self) {
+        self.focus = Focus::Trending;
+        self.set_details("Focus: Trending carousel");
+    }
+
     pub fn set_episode_indicators(&mut self, indicators: HashMap<String, EpisodeIndicators>) {
         self.episode_indicators = indicators;
     }
@@ -567,6 +615,7 @@ impl App {
                     self.right_index -= 1;
                 }
             }
+            Focus::Trending => {}
         }
     }
 
@@ -591,12 +640,14 @@ impl App {
                     self.right_index += 1;
                 }
             }
+            Focus::Trending => {}
         }
     }
 
     pub fn toggle_focus(&mut self) {
         self.focus = self.focus.toggle();
         self.set_details(match self.focus {
+            Focus::Trending => "Focus: Trending carousel",
             Focus::Left => "Focus: Anime list",
             Focus::Right => "Focus: Episode list",
         });
@@ -611,6 +662,10 @@ impl App {
         }
 
         match self.focus {
+            Focus::Trending => {
+                self.focus = Focus::Left;
+                self.set_details("Focus: Anime list");
+            }
             Focus::Left => {
                 self.focus = Focus::Right;
                 self.set_details("Focus: Episode list");
@@ -623,6 +678,11 @@ impl App {
 
     pub fn select_current(&mut self) {
         match self.focus {
+            Focus::Trending => {
+                if let Some(entry) = self.trending_entry() {
+                    self.set_details(entry.detail_summary());
+                }
+            }
             Focus::Left => {
                 if self.left_items_len() == 0 {
                     return;
@@ -699,6 +759,7 @@ impl App {
     pub fn enter_search_mode(&mut self) {
         let was_bookmarks = matches!(self.left_pane_mode, LeftPaneMode::Bookmarks);
         self.input_mode = InputMode::Search;
+        self.focus = Focus::Left;
         self.left_pane_mode = LeftPaneMode::Search;
         self.bookmarks_refresh_pending = false;
         if self.visible_anime_entries().is_empty() {
@@ -955,6 +1016,7 @@ impl App {
 
     fn active_list_len(&self) -> usize {
         match self.focus {
+            Focus::Trending => 0,
             Focus::Left => self.left_items_len(),
             Focus::Right => self.visible_episodes().len(),
         }
