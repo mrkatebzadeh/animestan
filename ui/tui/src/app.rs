@@ -186,6 +186,9 @@ pub struct App {
     playback_status: PlaybackStatus,
     playback_in_progress: bool,
     current_playing_episode_id: Option<String>,
+    current_playing_anime_title: Option<String>,
+    current_playing_episode_title: Option<String>,
+    playback_elapsed_seconds: Option<f64>,
     details_text: String,
     should_quit: bool,
     confirm_exit: bool,
@@ -236,6 +239,9 @@ impl App {
             playback_status: PlaybackStatus::None,
             playback_in_progress: false,
             current_playing_episode_id: None,
+            current_playing_anime_title: None,
+            current_playing_episode_title: None,
+            playback_elapsed_seconds: None,
             details_text: concat!(
                 "Press s to search, / to filter panels, b for bookmarks, f for filters, ",
                 "Space to select, ",
@@ -762,10 +768,40 @@ impl App {
 
     pub fn set_current_playing_episode(&mut self, id: Option<String>) {
         self.current_playing_episode_id = id;
+        if self.current_playing_episode_id.is_none() {
+            self.current_playing_anime_title = None;
+            self.current_playing_episode_title = None;
+            self.playback_elapsed_seconds = None;
+        }
     }
 
     pub fn current_playing_episode_id(&self) -> Option<&str> {
         self.current_playing_episode_id.as_deref()
+    }
+
+    pub fn set_current_playback_titles(&mut self, anime: Option<String>, episode: Option<String>) {
+        self.current_playing_anime_title = anime;
+        self.current_playing_episode_title = episode;
+    }
+
+    pub fn current_playback_label(&self) -> Option<String> {
+        match (
+            self.current_playing_anime_title.as_deref(),
+            self.current_playing_episode_title.as_deref(),
+        ) {
+            (Some(anime), Some(episode)) => Some(format!("{anime} — {episode}")),
+            (Some(anime), None) => Some(anime.to_string()),
+            (None, Some(episode)) => Some(episode.to_string()),
+            _ => None,
+        }
+    }
+
+    pub fn set_playback_elapsed(&mut self, elapsed: Option<f64>) {
+        self.playback_elapsed_seconds = elapsed;
+    }
+
+    pub fn playback_elapsed(&self) -> Option<f64> {
+        self.playback_elapsed_seconds
     }
 
     pub fn request_download(&mut self) {

@@ -33,6 +33,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Constraint::Length(3),
             Constraint::Min(5),
             Constraint::Length(4),
+            Constraint::Length(3),
         ])
         .split(frame.area());
 
@@ -94,6 +95,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     render_details(frame, chunks[3], app);
+    render_status_bar(frame, chunks[4], app);
     render_keybindings_modal(frame, app);
     render_exit_confirmation_modal(frame, app);
 }
@@ -263,6 +265,46 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     ));
     let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
     frame.render_widget(status, chunks[1]);
+}
+
+fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let now_playing_label = app
+        .current_playback_label()
+        .unwrap_or_else(|| "Idle".to_string());
+    let elapsed = format_elapsed(app.playback_elapsed());
+    let hint = "Space=Play/Pause q=Quit";
+
+    let spans = vec![
+        Span::styled(
+            now_playing_label,
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("Elapsed: {elapsed}"),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" | "),
+        Span::styled(hint, Style::default().fg(Color::DarkGray)),
+    ];
+
+    let block = Block::default()
+        .title("Now Playing")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(border_style(false));
+
+    let paragraph = Paragraph::new(Line::from(spans))
+        .block(block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+fn format_elapsed(seconds: Option<f64>) -> String {
+    let total_seconds = seconds.unwrap_or(0.0).max(0.0).floor() as u64;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes:02}:{seconds:02}")
 }
 
 fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {

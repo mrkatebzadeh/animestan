@@ -469,7 +469,7 @@ fn handle_playback_requests(
 
     let request = PlaybackRequest {
         episode_id: episode_id.clone(),
-        episode_title,
+        episode_title: episode_title.clone(),
     };
 
     if playback_request_tx.send(request).is_err() {
@@ -477,6 +477,8 @@ fn handle_playback_requests(
         app.set_current_playing_episode(None);
         return;
     }
+
+    app.set_current_playback_titles(app.current_anime_title(), episode_title.clone());
 
     app.set_current_playing_episode(Some(episode_id));
     app.set_playback_in_progress(true);
