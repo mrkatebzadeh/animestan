@@ -936,7 +936,9 @@ impl App {
             action: QuickLaunchAction::GoToSearch,
         });
 
-        if !matches!(self.focus, Focus::Left) || matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
+        if !matches!(self.focus, Focus::Left)
+            || matches!(self.left_pane_mode, LeftPaneMode::Bookmarks)
+        {
             candidates.push(QuickLaunchCandidate {
                 label: "Open anime".to_string(),
                 score: 30,
@@ -1606,9 +1608,7 @@ pub enum QuickLaunchAction {
     OpenBookmarksPanel,
     DownloadCurrentEpisode,
     OpenInfo,
-    PlayLastEpisode {
-        episode_id: String,
-    },
+    PlayLastEpisode { episode_id: String },
 }
 
 #[derive(Clone)]
