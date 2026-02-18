@@ -74,6 +74,31 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "gg",
+            description: "Jump to top of focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "G",
+            description: "Jump to bottom of focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "M",
+            description: "Jump to middle of focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Ctrl+D",
+            description: "Half-page down list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Ctrl+U",
+            description: "Half-page up list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "b",
             description: "Toggle bookmarks pane",
             mode: InputMode::Normal,
@@ -262,6 +287,10 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
 }
 
 fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
+    if handle_normal_navigation_shortcuts(app, key_event) {
+        return;
+    }
+
     match key_event.code {
         KeyCode::Char('s') => app.enter_search_mode(),
         KeyCode::Char('/') => {
@@ -322,6 +351,47 @@ fn handle_enter_in_normal_mode(app: &mut App) {
         app.toggle_focus();
     } else {
         app.request_play();
+    }
+}
+
+fn handle_normal_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
+    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
+        if app.consume_pending_double_g() {
+            app.move_to_top();
+        } else {
+            app.start_pending_double_g();
+        }
+        return true;
+    }
+
+    app.cancel_pending_double_g();
+
+    match key_event.code {
+        KeyCode::Char('G') => {
+            app.move_to_bottom();
+            true
+        }
+        KeyCode::Char('M') => {
+            app.move_to_middle();
+            true
+        }
+        KeyCode::Char('d' | 'D') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.half_page_down();
+                true
+            } else {
+                false
+            }
+        }
+        KeyCode::Char('u' | 'U') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.half_page_up();
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 

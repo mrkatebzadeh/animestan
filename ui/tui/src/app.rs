@@ -167,6 +167,7 @@ pub struct App {
     pending_download: bool,
     pending_delete: bool,
     pending_bookmark_toggle: bool,
+    pending_double_g: bool,
     anime_selection_changed: bool,
     bookmarks_refresh_pending: bool,
     filter_changed: bool,
@@ -234,6 +235,7 @@ impl App {
             pending_download: false,
             pending_delete: false,
             pending_bookmark_toggle: false,
+            pending_double_g: false,
             anime_selection_changed: false,
             bookmarks_refresh_pending: false,
             filter_changed: false,
@@ -333,6 +335,7 @@ impl App {
     }
 
     pub fn enter_panel_filter(&mut self, target: FilterTarget) {
+        self.pending_double_g = false;
         self.panel_filter_mode = true;
         self.panel_filter_target = Some(target);
         self.panel_filter_query.clear();
@@ -609,6 +612,74 @@ impl App {
         }
     }
 
+    pub fn move_to_top(&mut self) {
+        let len = self.active_list_len();
+        if len <= 1 {
+            return;
+        }
+
+        self.set_active_index(0);
+    }
+
+    pub fn move_to_bottom(&mut self) {
+        let len = self.active_list_len();
+        if len <= 1 {
+            return;
+        }
+
+        self.set_active_index(len - 1);
+    }
+
+    pub fn move_to_middle(&mut self) {
+        let len = self.active_list_len();
+        if len <= 1 {
+            return;
+        }
+
+        self.set_active_index(len / 2);
+    }
+
+    pub fn half_page_down(&mut self) {
+        let len = self.active_list_len();
+        if len <= 1 {
+            return;
+        }
+
+        let step = (len / 2).max(1);
+        let current = self.active_index();
+        let target = (current + step).min(len - 1);
+        self.set_active_index(target);
+    }
+
+    pub fn half_page_up(&mut self) {
+        let len = self.active_list_len();
+        if len <= 1 {
+            return;
+        }
+
+        let step = (len / 2).max(1);
+        let current = self.active_index();
+        let target = current.saturating_sub(step);
+        self.set_active_index(target);
+    }
+
+    pub(crate) fn start_pending_double_g(&mut self) {
+        self.pending_double_g = true;
+    }
+
+    pub(crate) fn consume_pending_double_g(&mut self) -> bool {
+        if self.pending_double_g {
+            self.pending_double_g = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn cancel_pending_double_g(&mut self) {
+        self.pending_double_g = false;
+    }
+
     pub fn toggle_focus(&mut self) {
         self.focus = self.focus.toggle();
         self.set_details(match self.focus {
@@ -774,6 +845,7 @@ impl App {
 
     pub fn enter_search_mode(&mut self) {
         let was_bookmarks = matches!(self.left_pane_mode, LeftPaneMode::Bookmarks);
+        self.pending_double_g = false;
         self.input_mode = InputMode::Search;
         self.left_pane_mode = LeftPaneMode::Search;
         self.bookmarks_refresh_pending = false;
@@ -1314,6 +1386,37 @@ impl App {
         self.left_index = 0;
         self.selected_anime = None;
         self.clear_episodes();
+        self.pending_double_g = false;
+    }
+
+    fn active_index(&self) -> usize {
+        match self.focus {
+            Focus::Left => self.left_index,
+            Focus::Right => self.right_index,
+        }
+    }
+
+    fn set_active_index(&mut self, target: usize) {
+        match self.focus {
+            Focus::Left => {
+                let len = self.left_items_len();
+                if len == 0 {
+                    return;
+                }
+                let clamped = target.min(len - 1);
+                if self.left_index != clamped {
+                    self.left_index = clamped;
+                    self.anime_selection_changed = true;
+                }
+            }
+            Focus::Right => {
+                let len = self.visible_episodes().len();
+                if len == 0 {
+                    return;
+                }
+                self.right_index = target.min(len - 1);
+            }
+        }
     }
 
     fn active_list_len(&self) -> usize {
