@@ -67,7 +67,6 @@ version = "0.1.4-rc.0"
 dependencies = [
  "animestan-core",
  "anyhow",
- "chrono",
  "clap",
  "crossterm",
  "futures",
