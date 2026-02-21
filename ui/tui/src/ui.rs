@@ -39,20 +39,25 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         total_episodes.div_ceil(columns.max(1))
     };
-    let total_height = frame_area.height;
+    let total_height = frame_area.height as usize;
     let top_height = 3 + 3;
-    let session_height = 7;
+    let session_default = 7;
+    let session_min = 3;
     let min_heatmap_height = 7;
-    let max_heatmap_height = total_height
-        .saturating_sub(top_height + session_height)
-        .max(1) as usize;
     let requested_heatmap_height = rows.max(min_heatmap_height);
+    let available_for_session =
+        total_height.saturating_sub(top_height + requested_heatmap_height + session_min);
+    let session_height_usize = available_for_session.min(session_default);
+    let max_heatmap_height = total_height
+        .saturating_sub(top_height + session_height_usize)
+        .max(1);
     let heatmap_height = requested_heatmap_height.min(max_heatmap_height);
-    let heatmap_height_u16 = u16::try_from(heatmap_height).unwrap_or(u16::MAX);
+    let heatmap_length = u16::try_from(heatmap_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
     let list_height =
-        total_height.saturating_sub(top_height + session_height + heatmap_height_u16) as usize;
-    let heatmap_length = heatmap_height_u16;
+        total_height.saturating_sub(top_height + session_height_usize + heatmap_height);
     let list_length = u16::try_from(list_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+    let session_length =
+        u16::try_from(session_height_usize.min(u16::MAX as usize)).unwrap_or(u16::MAX);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -61,7 +66,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
             Constraint::Length(3),
             Constraint::Length(list_length),
             Constraint::Length(heatmap_length),
-            Constraint::Length(session_height),
+            Constraint::Length(session_length),
         ])
         .split(frame_area);
 
