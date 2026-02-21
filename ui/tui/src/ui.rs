@@ -37,8 +37,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
             Constraint::Length(3),
             Constraint::Min(5),
             Constraint::Length(7),
-            Constraint::Length(4),
-            Constraint::Length(3),
+            Constraint::Length(7),
         ])
         .split(frame.area());
 
@@ -97,8 +96,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     );
 
     render_episode_heatmap(frame, chunks[3], app, theme);
-    render_details(frame, chunks[4], app, theme);
-    render_status_bar(frame, chunks[5], app, theme);
+    render_session_panel(frame, chunks[4], app, theme);
     render_search_results_modal(frame, app, theme);
     render_keybindings_modal(frame, app, theme);
     render_info_modal(frame, app, theme);
@@ -227,43 +225,53 @@ fn render_hint_panel(frame: &mut Frame, area: Rect, theme: &Theme) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_details(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let details_block = Block::default()
-        .title("Details")
+fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+
     let pane_label = "Anime";
     let filter_label = app.filter_label().unwrap_or("All");
     let mut lines = vec![Line::from(app.details())];
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
-    let left_status = format!(
-        "Mode: {} | {}",
-        app.mode_label(),
-        app.current_selection_label()
-    );
-    let inner_area = details_block.inner(area);
-    frame.render_widget(details_block, area);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner_area);
+        .split(inner);
 
     let details = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(details, chunks[0]);
 
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(chunks[1]);
+
+    let left_status = format!(
+        "Mode: {} | Selection: {}",
+        app.mode_label(),
+        app.current_selection_label()
+    );
     let status_line = Line::from(Span::styled(
         left_status,
         theme.item_style().bg(theme.non_interactive_color()),
     ));
     let status =
         Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(status, chunks[1]);
-}
+    frame.render_widget(status, bottom_chunks[0]);
 
-fn render_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let now_playing_label = app
         .current_playback_label()
         .unwrap_or_else(|| "Idle".to_string());
@@ -277,17 +285,8 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         Span::raw(" | "),
         Span::styled(hint, theme.non_interactive_style()),
     ];
-
-    let block = Block::default()
-        .title("Now Playing")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(border_style(theme, false));
-
-    let paragraph = Paragraph::new(Line::from(spans))
-        .block(block)
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, area);
+    let paragraph = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, bottom_chunks[1]);
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
