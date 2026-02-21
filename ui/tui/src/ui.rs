@@ -76,7 +76,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
 
     let lists = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[2]);
 
     let left_target = FilterTarget::Anime;
