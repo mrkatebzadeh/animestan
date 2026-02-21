@@ -30,6 +30,7 @@ pub struct KeyBinding {
     pub mode: InputMode,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn keybindings() -> &'static [KeyBinding] {
     static BINDINGS: &[KeyBinding] = &[
         KeyBinding {
@@ -40,6 +41,11 @@ pub fn keybindings() -> &'static [KeyBinding] {
         KeyBinding {
             keys: "s",
             description: "Search for anime",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Ctrl+K",
+            description: "Open quick launch palette",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -68,8 +74,38 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "gg",
+            description: "Jump to top of focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "G",
+            description: "Jump to bottom of focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "M",
+            description: "Jump to middle of focused list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Ctrl+D",
+            description: "Half-page down list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "Ctrl+U",
+            description: "Half-page up list",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "b",
             description: "Toggle bookmarks pane",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "i",
+            description: "Show anime info",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -220,8 +256,22 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.info_modal_visible() {
+        match key_event.code {
+            KeyCode::Esc => app.close_info_modal(),
+            KeyCode::Char('q') => app.request_exit(),
+            _ => {}
+        }
+        return;
+    }
+
     if app.show_keybindings() {
         app.toggle_keybindings();
+        return;
+    }
+
+    if app.quick_launch_active() {
+        handle_quick_launch_mode(app, key_event);
         return;
     }
 
@@ -237,6 +287,10 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
 }
 
 fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
+    if handle_normal_navigation_shortcuts(app, key_event) {
+        return;
+    }
+
     match key_event.code {
         KeyCode::Char('s') => app.enter_search_mode(),
         KeyCode::Char('/') => {
@@ -244,6 +298,9 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         }
         KeyCode::Char('q') => app.request_exit(),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+        KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.open_quick_launch();
+        }
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
         KeyCode::Left | KeyCode::Right => {
             app.toggle_focus();
@@ -252,6 +309,10 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),
+        KeyCode::Char('i') => {
+            app.open_info_modal();
+            app.set_details("Press Esc to close info modal.");
+        }
         KeyCode::Char('d') => app.request_download(),
         KeyCode::Char('D') => app.request_delete(),
         KeyCode::Char(' ') => app.select_current(),
@@ -261,11 +322,76 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
     }
 }
 
+fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
+    let candidates_len = app.quick_launch_items().len();
+    match key_event.code {
+        KeyCode::Esc => app.close_quick_launch(),
+        KeyCode::Enter => app.run_quick_launch_selection(),
+        KeyCode::Backspace => app.pop_quick_launch_char(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.move_quick_launch_selection_down(candidates_len);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.move_quick_launch_selection_up();
+        }
+        KeyCode::Char(ch) => {
+            if !key_event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                app.append_quick_launch_char(ch);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn handle_enter_in_normal_mode(app: &mut App) {
     if matches!(app.focus(), Focus::Left) {
         app.toggle_focus();
     } else {
         app.request_play();
+    }
+}
+
+fn handle_normal_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
+    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
+        if app.consume_pending_double_g() {
+            app.move_to_top();
+        } else {
+            app.start_pending_double_g();
+        }
+        return true;
+    }
+
+    app.cancel_pending_double_g();
+
+    match key_event.code {
+        KeyCode::Char('G') => {
+            app.move_to_bottom();
+            true
+        }
+        KeyCode::Char('M') => {
+            app.move_to_middle();
+            true
+        }
+        KeyCode::Char('d' | 'D') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.half_page_down();
+                true
+            } else {
+                false
+            }
+        }
+        KeyCode::Char('u' | 'U') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.half_page_up();
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 

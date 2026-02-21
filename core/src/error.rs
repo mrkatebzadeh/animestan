@@ -28,6 +28,8 @@ pub enum Error {
     ResponseFixture(#[source] serde_json::Error),
     #[error("no sources available in fixture catalog")]
     EmptyCatalog,
+    #[error("metadata cache lock poisoned")]
+    MetadataCacheLock,
     #[error("missing fixture response for url '{url}'")]
     MissingFixture { url: String },
     #[error("failed to render url from template '{template}': {source}")]
@@ -36,6 +38,8 @@ pub enum Error {
         #[source]
         source: url::ParseError,
     },
+    #[error("metadata not found for '{query}'")]
+    MetadataNotFound { query: String },
     #[error("failed to construct http client: {0}")]
     HttpClient(#[source] reqwest::Error),
     #[error("http request to '{url}' failed: {source}")]
@@ -72,6 +76,12 @@ pub enum Error {
     ConfigPathUnavailable,
     #[error("failed to read config file at '{path}': {source}")]
     ConfigRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write config file at '{path}': {source}")]
+    ConfigWrite {
         path: PathBuf,
         #[source]
         source: io::Error,
