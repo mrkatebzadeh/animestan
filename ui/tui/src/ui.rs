@@ -303,7 +303,7 @@ fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
             } else {
                 ' '
             };
-            ListItem::new(format!("{marker} ♥ {}", entry.anime.title))
+            ListItem::new(format!("{marker} {}", entry.anime.title))
         })
         .collect()
 }
