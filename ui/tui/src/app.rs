@@ -494,6 +494,7 @@ impl App {
     pub fn sync_bookmark_cache(&mut self, store: &FavoriteStore) {
         self.bookmark_entries = store.list();
         self.apply_saved_panel_filter(FilterTarget::Bookmarks);
+        self.anime_selection_changed = !self.bookmark_entries.is_empty();
         self.refresh_quick_launch_items();
     }
 
