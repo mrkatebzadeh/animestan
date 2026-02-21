@@ -16,6 +16,7 @@
 mod app;
 mod events;
 mod playback;
+mod theme;
 mod ui;
 
 use std::collections::HashMap;
@@ -44,8 +45,9 @@ use tokio::sync::mpsc::{
 };
 use tokio::time::sleep;
 
-use crate::app::{App, EpisodeIndicators, LeftPaneMode, PlaybackStatus};
+use crate::app::{App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
 use crate::events::{Event, EventHandler};
+use crate::theme::Theme;
 
 struct EpisodeFetchRequest {
     generation: u64,
@@ -57,13 +59,21 @@ struct EpisodeFetchResult {
     result: CoreResult<Vec<Episode>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MetadataTarget {
+    InfoModal,
+    SearchResults,
+}
+
 struct MetadataFetchRequest {
     generation: u64,
     query: String,
+    target: MetadataTarget,
 }
 
 struct MetadataFetchResult {
     generation: u64,
+    target: MetadataTarget,
     result: Result<AnimeMetadata, anyhow::Error>,
 }
 
@@ -81,6 +91,7 @@ struct PlaybackResult {
 fn main() -> Result<()> {
     let args = Args::parse();
     let config = Arc::new(AppConfig::load_default().context("failed to load configuration")?);
+    let theme = Arc::new(Theme::load(&config).context("failed to load theme configuration")?);
     init_logging("animestan-tui", args.verbosity, &config, false)
         .context("failed to initialize logging")?;
     info!("launching animestan-tui");
@@ -90,7 +101,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    run_app(&mut terminal, &config)?;
+    run_app(&mut terminal, &config, &theme)?;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -103,12 +114,12 @@ fn main() -> Result<()> {
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     config: &Arc<AppConfig>,
+    theme: &Arc<Theme>,
 ) -> Result<()> {
     let tracker = Arc::new(Mutex::new(
         EpisodeTracker::load_default(config).context("failed to load episode tracker")?,
     ));
     let mut favorites = FavoriteStore::load_default(config).context("failed to load favorites")?;
-    let mut refresh_favorites = false;
     let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
@@ -133,7 +144,7 @@ fn run_app(
 
     loop {
         update_playback_elapsed(&mut app, &tracker);
-        terminal.draw(|frame| ui::render(frame, &app))?;
+        terminal.draw(|frame| ui::render(frame, &mut app, theme))?;
 
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),
@@ -143,11 +154,9 @@ fn run_app(
         if app.take_pending_bookmark_toggle() {
             match app.toggle_bookmark(&mut favorites) {
                 Ok(()) => {
-                    if matches!(app.left_pane_mode(), LeftPaneMode::Bookmarks) {
-                        let details = app.details().to_string();
-                        app.load_bookmarks(&favorites);
-                        app.set_details(details);
-                    }
+                    let details = app.details().to_string();
+                    app.load_bookmarks(&favorites);
+                    app.set_details(details);
                 }
                 Err(err) => {
                     app.set_details(format!("Bookmark toggle failed: {err}"));
@@ -155,7 +164,11 @@ fn run_app(
             }
         }
 
-        handle_bookmarks_refresh(&mut app, config, &mut favorites, &mut refresh_favorites);
+        if app.take_pending_search_results_add() {
+            if let Err(err) = app.add_current_search_result_to_bookmarks(&mut favorites) {
+                app.set_details(format!("Failed to add anime to panel: {err}"));
+            }
+        }
 
         handle_search(&mut app, client.as_ref());
         handle_filters(&mut app, &tracker, &request_tx);
@@ -229,25 +242,45 @@ fn run_app(
 
         loop {
             match metadata_result_rx.try_recv() {
-                Ok(fetch_result) => {
-                    if fetch_result.generation != app.current_info_fetch_generation() {
-                        continue;
-                    }
-
-                    app.set_info_modal_loading(false);
-                    match fetch_result.result {
-                        Ok(metadata) => {
-                            let title = metadata.title.clone();
-                            app.set_info_modal_metadata(metadata);
-                            app.set_details(format!("Loaded metadata for {title}"));
+                Ok(fetch_result) => match fetch_result.target {
+                    MetadataTarget::InfoModal => {
+                        if fetch_result.generation != app.current_info_fetch_generation() {
+                            continue;
                         }
-                        Err(err) => {
-                            let message = format!("Metadata load failed: {err}");
-                            app.set_info_modal_error(message.clone());
-                            app.set_details(message);
+                        app.set_info_modal_loading(false);
+                        match fetch_result.result {
+                            Ok(metadata) => {
+                                let title = metadata.title.clone();
+                                app.set_info_modal_metadata(metadata);
+                                app.set_details(format!("Loaded metadata for {title}"));
+                            }
+                            Err(err) => {
+                                let message = format!("Metadata load failed: {err}");
+                                app.set_info_modal_error(message.clone());
+                                app.set_details(message);
+                            }
                         }
                     }
-                }
+                    MetadataTarget::SearchResults => {
+                        if fetch_result.generation
+                            != app.current_search_results_metadata_generation()
+                        {
+                            continue;
+                        }
+                        match fetch_result.result {
+                            Ok(metadata) => {
+                                let title = metadata.title.clone();
+                                app.set_search_results_metadata(metadata);
+                                app.set_details(format!("Loaded metadata for {title}"));
+                            }
+                            Err(err) => {
+                                let message = format!("Metadata load failed: {err}");
+                                app.set_search_results_metadata_error(message.clone());
+                                app.set_details(message);
+                            }
+                        }
+                    }
+                },
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     app.set_info_modal_loading(false);
@@ -264,6 +297,8 @@ fn run_app(
         if handle_delete(&mut app, config, &tracker) {
             continue;
         }
+
+        handle_episode_mark_actions(&mut app, &tracker, config);
 
         handle_playback_requests(&mut app, config, &playback_request_tx);
         drain_playback_request_queue(
@@ -305,32 +340,6 @@ fn initialize_app(app: &mut App, client: &AnimeClient<FetchBackend>) {
     } else if let Err(err) = app.search(client) {
         app.set_details(format!("Search failed: {err}"));
     }
-}
-
-fn handle_bookmarks_refresh(
-    app: &mut App,
-    config: &AppConfig,
-    favorites: &mut FavoriteStore,
-    refresh_favorites: &mut bool,
-) {
-    if !app.take_bookmark_refresh() {
-        return;
-    }
-
-    if *refresh_favorites {
-        match FavoriteStore::load_default(config) {
-            Ok(store) => {
-                *favorites = store;
-            }
-            Err(err) => {
-                app.set_details(format!("Failed to load bookmarks: {err}"));
-            }
-        }
-    } else {
-        *refresh_favorites = true;
-    }
-
-    app.load_bookmarks(favorites);
 }
 
 fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
@@ -390,25 +399,51 @@ fn handle_metadata_fetch(
     result_tx: &UnboundedSender<MetadataFetchResult>,
     active_fetch: &mut Option<AbortHandle>,
 ) {
-    if !app.take_pending_info_fetch() {
-        return;
-    }
-
-    let Some(query) = app.current_anime_title() else {
-        app.set_info_modal_error("Highlight an anime to view metadata.");
-        app.set_info_modal_loading(false);
+    let target = if app.take_pending_info_fetch() {
+        MetadataTarget::InfoModal
+    } else if app.take_pending_search_results_metadata_fetch() {
+        MetadataTarget::SearchResults
+    } else {
         return;
     };
 
-    let generation = app.next_info_fetch_generation();
-    app.set_info_modal_loading(true);
-    app.set_details(format!("Fetching metadata for {query}..."));
+    let query = match target {
+        MetadataTarget::InfoModal => {
+            let Some(query) = app.current_anime_title() else {
+                app.set_info_modal_error("Highlight an anime to view metadata.");
+                app.set_info_modal_loading(false);
+                return;
+            };
+            app.set_info_modal_loading(true);
+            app.set_details(format!("Fetching metadata for {query}..."));
+            query
+        }
+        MetadataTarget::SearchResults => {
+            let Some(title) = app.search_results_selected_title() else {
+                app.set_search_results_metadata_error("Highlight an anime to view metadata.");
+                app.set_details("Highlight an anime to view metadata.");
+                return;
+            };
+            let query_string = title.to_string();
+            app.set_details(format!("Fetching metadata for {query_string}..."));
+            query_string
+        }
+    };
+
+    let generation = match target {
+        MetadataTarget::InfoModal => app.next_info_fetch_generation(),
+        MetadataTarget::SearchResults => app.next_search_results_metadata_generation(),
+    };
 
     if let Some(handle) = active_fetch.take() {
         handle.abort();
     }
 
-    let request = MetadataFetchRequest { generation, query };
+    let request = MetadataFetchRequest {
+        generation,
+        query,
+        target,
+    };
     let abort_handle =
         spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone());
     *active_fetch = Some(abort_handle);
@@ -515,6 +550,104 @@ fn handle_delete(app: &mut App, config: &AppConfig, tracker: &Arc<Mutex<EpisodeT
     }
 
     false
+}
+
+fn handle_episode_mark_actions(
+    app: &mut App,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
+) {
+    let Some(action) = app.take_pending_episode_mark_action() else {
+        return;
+    };
+
+    let mark_result = {
+        let Ok(mut guard) = tracker.lock() else {
+            app.set_details("Episode tracker lock poisoned.");
+            return;
+        };
+        perform_episode_mark_action(app, &mut guard, action)
+    };
+
+    let message = match mark_result {
+        Ok(message) => message,
+        Err(err) => {
+            app.set_details(err);
+            return;
+        }
+    };
+
+    if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+        app.set_details(format!("Failed to refresh indicators: {err}"));
+    } else {
+        app.set_details(message);
+    }
+}
+
+fn perform_episode_mark_action(
+    app: &App,
+    tracker: &mut EpisodeTracker,
+    action: EpisodeMarkAction,
+) -> Result<String, String> {
+    match action {
+        EpisodeMarkAction::Current { watched } => {
+            let episode_id = app
+                .current_episode_id()
+                .ok_or_else(|| "Highlight an episode to mark it.".to_string())?;
+            let result = if watched {
+                tracker.mark_watched(&episode_id)
+            } else {
+                tracker.mark_unwatched(&episode_id)
+            };
+            result.map_err(|err| err.to_string())?;
+            let message = if watched {
+                "Marked current episode as watched."
+            } else {
+                "Marked current episode as unwatched."
+            };
+            Ok(message.to_string())
+        }
+        EpisodeMarkAction::All { watched } => {
+            let episodes = app.unfiltered_episodes();
+            if episodes.is_empty() {
+                return Err("No episodes loaded to mark.".to_string());
+            }
+            let ids: Vec<String> = episodes.iter().map(|episode| episode.id.clone()).collect();
+            tracker
+                .mark_many(&ids, watched)
+                .map_err(|err| err.to_string())?;
+            let message = if watched {
+                "Marked all loaded episodes as watched."
+            } else {
+                "Marked all loaded episodes as unwatched."
+            };
+            Ok(message.to_string())
+        }
+        EpisodeMarkAction::UpToCurrent => {
+            let current_id = app
+                .current_episode_id()
+                .ok_or_else(|| "Highlight an episode to set the range.".to_string())?;
+            let mut episodes: Vec<Episode> = app.unfiltered_episodes().to_vec();
+            if episodes.is_empty() {
+                return Err("No episodes loaded to mark.".to_string());
+            }
+            episodes.sort_by(|a, b| a.number.cmp(&b.number));
+            let mut ids = Vec::new();
+            for episode in episodes {
+                ids.push(episode.id.clone());
+                if episode.id == current_id {
+                    break;
+                }
+            }
+            if ids.is_empty() || ids.last() != Some(&current_id) {
+                return Err("Current episode is not present in the loaded list.".to_string());
+            }
+            tracker
+                .mark_many(&ids, true)
+                .map_err(|err| err.to_string())?;
+            Ok("Marked episodes up to current as watched.".to_string())
+        }
+    }
 }
 
 fn handle_playback_requests(
@@ -721,6 +854,7 @@ fn refresh_episode_indicators(
         indicators
     };
     app.set_episode_indicators(indicators);
+    app.record_selected_anime_progress();
     Ok(())
 }
 
@@ -781,7 +915,11 @@ fn spawn_metadata_fetch_task(
     result_tx: UnboundedSender<MetadataFetchResult>,
 ) -> AbortHandle {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let MetadataFetchRequest { generation, query } = request;
+    let MetadataFetchRequest {
+        generation,
+        query,
+        target,
+    } = request;
 
     runtime.spawn({
         let fut = Abortable::new(
@@ -792,7 +930,11 @@ fn spawn_metadata_fetch_task(
                     Ok(inner) => inner.map_err(|err| anyhow!("metadata fetch failed: {err}")),
                     Err(err) => Err(anyhow!("metadata fetch join failed: {err}")),
                 };
-                let _ = result_tx.send(MetadataFetchResult { generation, result });
+                let _ = result_tx.send(MetadataFetchResult {
+                    generation,
+                    target,
+                    result,
+                });
             },
             abort_registration,
         );
