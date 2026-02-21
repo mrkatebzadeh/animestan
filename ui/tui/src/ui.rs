@@ -30,13 +30,27 @@ use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
+    let total_episodes = app.episodes().len();
+    let heatmap_width = frame.area().width.saturating_sub(2).max(1);
+    let columns = heatmap_columns(heatmap_width as usize);
+    let rows = if total_episodes == 0 {
+        1
+    } else {
+        total_episodes.div_ceil(columns.max(1))
+    };
+    let heatmap_height = rows
+        .max(7)
+        .min(u16::MAX as usize)
+        .try_into()
+        .unwrap_or(u16::MAX);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(7),
+            Constraint::Length(heatmap_height),
             Constraint::Length(7),
         ])
         .split(frame.area());
