@@ -31,13 +31,15 @@ use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
 const KEYBINDINGS_HEADER: [&str; 6] = [
-    " █████╗ ███╗   ██╗██╗███╗   ███╗███████╗███████╗████████╗ █████╗ ███╗   ██╗",
+    "█████╗ ███╗   ██╗██╗███╗   ███╗███████╗███████╗████████╗ █████╗ ███╗   ██╗",
     "██╔══██╗████╗  ██║██║████╗ ████║██╔════╝██╔════╝╚══██╔══╝██╔══██╗████╗  ██║",
     "███████║██╔██╗ ██║██║██╔████╔██║█████╗  ███████╗   ██║   ███████║██╔██╗ ██║",
     "██╔══██║██║╚██╗██║██║██║╚██╔╝██║██╔══╝  ╚════██║   ██║   ██╔══██║██║╚██╗██║",
     "██║  ██║██║ ╚████║██║██║ ╚═╝ ██║███████╗███████║   ██║   ██║  ██║██║ ╚████║",
     "╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝",
 ];
+const HEADER_MARGIN: &str = "  ";
+const KEY_HINT_MARGIN: &str = "        ";
 
 pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let frame_area = frame.area();
@@ -586,7 +588,9 @@ fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: &Theme) {
 
     let mut lines = Vec::new();
     for header in KEYBINDINGS_HEADER {
-        lines.push(Line::from(header));
+        lines.push(Line::from(format!(
+            "{HEADER_MARGIN}{header}{HEADER_MARGIN}"
+        )));
     }
     lines.push(Line::default());
     let mut current_mode: Option<InputMode> = None;
@@ -605,20 +609,16 @@ fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: &Theme) {
         let key_label = format!("{:<width$}", binding.keys, width = key_width);
         lines.push(Line::from(vec![
             Span::styled(key_label, Style::default().fg(theme.title_color())),
-            Span::raw("  "),
+            Span::raw(KEY_HINT_MARGIN),
             Span::raw(binding.description),
         ]));
     }
 
     app.set_keybindings_content_lines(lines.len());
     let frame_area = frame.area();
-    let computed_width = u32::from(frame_area.width).saturating_mul(80) / 100;
-    let mut width = u16::try_from(computed_width).unwrap_or(u16::MAX);
+    let mut width = frame_area.width.min(80);
     let min_width = 40u16;
-    if width < min_width {
-        width = min_width;
-    }
-    width = width.min(frame_area.width);
+    width = width.max(min_width).min(frame_area.width);
     let computed_height = u32::from(frame_area.height).saturating_mul(70) / 100;
     let mut height = u16::try_from(computed_height).unwrap_or(u16::MAX);
     let min_height = 10u16;
