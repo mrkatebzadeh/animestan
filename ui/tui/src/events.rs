@@ -353,6 +353,7 @@ fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
 fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) {
     match key_event.code {
         KeyCode::Esc => app.close_search_results_modal(),
+        KeyCode::Enter => app.request_search_results_add(),
         KeyCode::Down | KeyCode::Char('j') => app.move_search_results_selection_down(),
         KeyCode::Up | KeyCode::Char('k') => app.move_search_results_selection_up(),
         KeyCode::Char('m') => {
