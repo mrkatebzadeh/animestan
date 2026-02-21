@@ -54,6 +54,31 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "w",
+            description: "Mark current episode as watched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "u",
+            description: "Mark current episode as unwatched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "W",
+            description: "Mark all episodes as watched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "U",
+            description: "Mark all episodes as unwatched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "K",
+            description: "Mark episodes up to current as watched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "/",
             description: "Filter the focused list",
             mode: InputMode::Normal,
@@ -310,7 +335,12 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
             app.toggle_focus();
         }
         KeyCode::Tab => app.cycle_focus(),
+        KeyCode::Char('w') => app.request_mark_current_episode(true),
+        KeyCode::Char('u') => app.request_mark_current_episode(false),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
+        KeyCode::Char('W') => app.request_mark_all_episodes(true),
+        KeyCode::Char('U') => app.request_mark_all_episodes(false),
+        KeyCode::Char('K') => app.request_mark_up_to_current(),
         KeyCode::Char('f') => app.cycle_filter(),
         KeyCode::Char('i') => {
             app.open_info_modal();

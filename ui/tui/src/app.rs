@@ -68,6 +68,13 @@ pub enum InputMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EpisodeMarkAction {
+    Current { watched: bool },
+    All { watched: bool },
+    UpToCurrent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlaybackStatus {
     None,
     Playing,
@@ -158,6 +165,7 @@ pub struct App {
     pending_download: bool,
     pending_delete: bool,
     pending_bookmark_toggle: bool,
+    pending_episode_mark_action: Option<EpisodeMarkAction>,
     pending_double_g: bool,
     anime_selection_changed: bool,
     filter_changed: bool,
@@ -230,6 +238,7 @@ impl App {
             pending_download: false,
             pending_delete: false,
             pending_bookmark_toggle: false,
+            pending_episode_mark_action: None,
             pending_double_g: false,
             anime_selection_changed: false,
             filter_changed: false,
@@ -241,9 +250,9 @@ impl App {
             current_playing_episode_title: None,
             playback_elapsed_seconds: None,
             details_text: concat!(
-                "Press s to search, / to filter panels, f for filters, ",
-                "Space to select, ",
-                "d to download, D to delete, q to quit, Ctrl+M to mark search results."
+                "Press s to search, / to filter panels, w/u to mark current episodes, ",
+                "W/U to mark all, K to mark through current, f for filters, ",
+                "Space to select, d to download, D to delete, q to quit, Ctrl+M to mark search results."
             )
             .to_string(),
             should_quit: false,
@@ -1250,6 +1259,43 @@ impl App {
         } else {
             false
         }
+    }
+
+    pub fn request_mark_current_episode(&mut self, watched: bool) {
+        if self.current_episode_id().is_none() {
+            self.set_details("Highlight an episode to mark.");
+            return;
+        }
+        self.pending_episode_mark_action = Some(EpisodeMarkAction::Current { watched });
+        let verb = if watched { "watched" } else { "unwatched" };
+        self.set_details(format!("Marking current episode as {verb}."));
+    }
+
+    pub fn request_mark_all_episodes(&mut self, watched: bool) {
+        if self.unfiltered_episodes().is_empty() {
+            self.set_details("Load episodes to mark them.");
+            return;
+        }
+        self.pending_episode_mark_action = Some(EpisodeMarkAction::All { watched });
+        let verb = if watched { "watched" } else { "unwatched" };
+        self.set_details(format!("Marking all episodes as {verb}."));
+    }
+
+    pub fn request_mark_up_to_current(&mut self) {
+        if self.current_episode_id().is_none() {
+            self.set_details("Highlight an episode to anchor the range.");
+            return;
+        }
+        if self.unfiltered_episodes().is_empty() {
+            self.set_details("Load episodes to mark them.");
+            return;
+        }
+        self.pending_episode_mark_action = Some(EpisodeMarkAction::UpToCurrent);
+        self.set_details("Marking episodes up to current as watched.");
+    }
+
+    pub fn take_pending_episode_mark_action(&mut self) -> Option<EpisodeMarkAction> {
+        self.pending_episode_mark_action.take()
     }
 
     pub fn request_search_results_add(&mut self) {
