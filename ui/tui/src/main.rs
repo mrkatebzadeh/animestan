@@ -144,7 +144,7 @@ fn run_app(
 
     loop {
         update_playback_elapsed(&mut app, &tracker);
-        terminal.draw(|frame| ui::render(frame, &app, theme))?;
+        terminal.draw(|frame| ui::render(frame, &mut app, theme))?;
 
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),

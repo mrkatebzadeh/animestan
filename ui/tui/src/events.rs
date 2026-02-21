@@ -294,8 +294,7 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
-    if app.show_keybindings() {
-        app.toggle_keybindings();
+    if app.show_keybindings() && handle_keybindings_modal(app, key_event) {
         return;
     }
 
@@ -393,6 +392,43 @@ fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) -> bool {
             if key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 app.request_bookmark_toggle();
             }
+        }
+        _ => {}
+    }
+
+    true
+}
+
+fn handle_keybindings_modal(app: &mut App, key_event: KeyEvent) -> bool {
+    if !app.show_keybindings() {
+        return false;
+    }
+
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.toggle_keybindings();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.scroll_keybindings(1);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.scroll_keybindings(-1);
+        }
+        KeyCode::PageDown => {
+            let viewport = app.keybindings_viewport_lines();
+            let step = i64::try_from(viewport.max(1)).unwrap_or(i64::MAX);
+            app.scroll_keybindings(step);
+        }
+        KeyCode::PageUp => {
+            let viewport = app.keybindings_viewport_lines();
+            let step = i64::try_from(viewport.max(1)).unwrap_or(i64::MAX);
+            app.scroll_keybindings(-step);
+        }
+        KeyCode::Home => {
+            app.set_keybindings_scroll(0);
+        }
+        KeyCode::End => {
+            app.set_keybindings_scroll(app.keybindings_max_scroll());
         }
         _ => {}
     }

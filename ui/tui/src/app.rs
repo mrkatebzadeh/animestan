@@ -213,6 +213,9 @@ pub struct App {
     search_results_metadata_generation: u64,
     search_results_metadata_pending: bool,
     search_results_add_pending: bool,
+    keybindings_scroll: usize,
+    keybindings_content_lines: usize,
+    keybindings_viewport_lines: usize,
 }
 
 impl App {
@@ -292,6 +295,9 @@ impl App {
             search_results_metadata_generation: 0,
             search_results_metadata_pending: false,
             search_results_add_pending: false,
+            keybindings_scroll: 0,
+            keybindings_content_lines: 0,
+            keybindings_viewport_lines: 0,
         }
     }
 
@@ -799,10 +805,68 @@ impl App {
 
     pub fn toggle_keybindings(&mut self) {
         self.show_keybindings = !self.show_keybindings;
+        if self.show_keybindings {
+            self.keybindings_scroll = 0;
+            self.keybindings_content_lines = 0;
+            self.keybindings_viewport_lines = 0;
+        }
     }
 
     pub fn show_keybindings(&self) -> bool {
         self.show_keybindings
+    }
+
+    pub fn keybindings_scroll(&self) -> usize {
+        self.keybindings_scroll
+    }
+
+    pub fn keybindings_viewport_lines(&self) -> usize {
+        self.keybindings_viewport_lines
+    }
+
+    pub fn set_keybindings_content_lines(&mut self, lines: usize) {
+        self.keybindings_content_lines = lines;
+        self.clamp_keybindings_scroll();
+    }
+
+    pub fn set_keybindings_viewport_lines(&mut self, lines: usize) {
+        self.keybindings_viewport_lines = lines;
+        self.clamp_keybindings_scroll();
+    }
+
+    pub fn scroll_keybindings(&mut self, delta: i64) {
+        if self.keybindings_viewport_lines == 0
+            || self.keybindings_content_lines <= self.keybindings_viewport_lines
+        {
+            self.keybindings_scroll = 0;
+            return;
+        }
+
+        let max = self.max_keybindings_scroll();
+        let current = i64::try_from(self.keybindings_scroll).unwrap_or(0);
+        let max_scroll = i64::try_from(max).unwrap_or(i64::MAX);
+        let target = (current + delta).clamp(0, max_scroll);
+        self.keybindings_scroll = usize::try_from(target).unwrap_or(max);
+    }
+
+    pub fn set_keybindings_scroll(&mut self, offset: usize) {
+        self.keybindings_scroll = offset.min(self.max_keybindings_scroll());
+    }
+
+    fn clamp_keybindings_scroll(&mut self) {
+        let max_scroll = self.max_keybindings_scroll();
+        if self.keybindings_scroll > max_scroll {
+            self.keybindings_scroll = max_scroll;
+        }
+    }
+
+    fn max_keybindings_scroll(&self) -> usize {
+        self.keybindings_content_lines
+            .saturating_sub(self.keybindings_viewport_lines)
+    }
+
+    pub fn keybindings_max_scroll(&self) -> usize {
+        self.max_keybindings_scroll()
     }
 
     pub fn info_modal_visible(&self) -> bool {
