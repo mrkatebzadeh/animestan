@@ -13,6 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::convert::TryFrom;
+
+use animestan_core::{Episode, MetadataSource};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
@@ -22,7 +25,9 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 
-use crate::app::{App, ConfirmExitChoice, FilterTarget, Focus, InputMode, LeftPaneMode};
+use crate::app::{
+    App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode, LeftPaneMode,
+};
 use crate::events::keybindings;
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -32,7 +37,9 @@ pub fn render(frame: &mut Frame, app: &App) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(5),
+            Constraint::Length(7),
             Constraint::Length(4),
+            Constraint::Length(3),
         ])
         .split(frame.area());
 
@@ -93,9 +100,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         app.focus() == Focus::Right,
     );
 
-    render_details(frame, chunks[3], app);
+    render_episode_heatmap(frame, chunks[3], app);
+    render_details(frame, chunks[4], app);
+    render_status_bar(frame, chunks[5], app);
     render_keybindings_modal(frame, app);
+    render_info_modal(frame, app);
     render_exit_confirmation_modal(frame, app);
+    render_quick_launch_palette(frame, app);
 }
 
 fn render_list(
@@ -230,21 +241,10 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
-    if let Some(playing_id) = app.current_playing_episode_id() {
-        let mut now_playing = String::from("Now playing: ▶");
-        if app.current_episode_id().is_some_and(|id| id == playing_id) {
-            if let Some(title) = app.current_episode_title() {
-                now_playing.push(' ');
-                now_playing.push_str(&title);
-            }
-        }
-        lines.push(Line::from(now_playing));
-    }
     let left_status = format!(
-        "Mode: {} | {} | {}",
+        "Mode: {} | {}",
         app.mode_label(),
-        app.current_selection_label(),
-        app.playback_status().label()
+        app.current_selection_label()
     );
     let inner_area = details_block.inner(area);
     frame.render_widget(details_block, area);
@@ -263,6 +263,48 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     ));
     let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
     frame.render_widget(status, chunks[1]);
+}
+
+fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let now_playing_label = app
+        .current_playback_label()
+        .unwrap_or_else(|| "Idle".to_string());
+    let elapsed = format_elapsed(app.playback_elapsed());
+    let hint = "Space=Play/Pause q=Quit";
+
+    let spans = vec![
+        Span::styled(
+            now_playing_label,
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("Elapsed: {elapsed}"),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" | "),
+        Span::styled(hint, Style::default().fg(Color::DarkGray)),
+    ];
+
+    let block = Block::default()
+        .title("Now Playing")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(border_style(false));
+
+    let paragraph = Paragraph::new(Line::from(spans))
+        .block(block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+fn format_elapsed(seconds: Option<f64>) -> String {
+    let secs = seconds.unwrap_or(0.0).max(0.0);
+    let duration = std::time::Duration::from_secs_f64(secs);
+    let total_seconds = duration.as_secs();
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes:02}:{seconds:02}")
 }
 
 fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
@@ -329,6 +371,217 @@ fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
             ))
         })
         .collect()
+}
+
+fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let block = Block::default()
+        .title("Episode Heatmap")
+        .borders(Borders::ALL)
+        .border_style(border_style(false));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(inner);
+
+    render_heatmap_grid(frame, chunks[0], app);
+    render_heatmap_info(frame, chunks[1], app);
+}
+
+fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let episodes = app.episodes();
+    if episodes.is_empty() {
+        let placeholder =
+            Paragraph::new("Load episodes to view heatmap").alignment(Alignment::Center);
+        frame.render_widget(placeholder, area);
+        return;
+    }
+
+    let normalized = heatmap_scalars(episodes);
+    let columns = heatmap_columns(area.width as usize);
+    if columns == 0 {
+        return;
+    }
+
+    let selected = app.current_episode_index();
+    let rows = episodes.len().div_ceil(columns);
+    let mut lines = Vec::new();
+
+    for row in 0..rows {
+        let start = row * columns;
+        let mut spans = Vec::new();
+        for col in 0..columns {
+            let idx = start + col;
+            if idx >= episodes.len() {
+                break;
+            }
+
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+
+            let indicators = app.episode_indicators(&episodes[idx].id);
+            let mut style = heatmap_cell_style(indicators, normalized[idx]);
+            if selected == Some(idx) {
+                style = style.add_modifier(Modifier::REVERSED);
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            spans.push(Span::styled("▉", style));
+        }
+
+        if spans.is_empty() {
+            continue;
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    if lines.is_empty() {
+        let placeholder = Paragraph::new("No episodes available").alignment(Alignment::Center);
+        frame.render_widget(placeholder, area);
+        return;
+    }
+
+    let grid = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    frame.render_widget(grid, area);
+}
+
+fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let lines = if let Some(episode) = app.current_episode() {
+        let mut info = vec![Line::from(format!(
+            "#{:03} — {}",
+            episode.number, episode.title
+        ))];
+
+        if let Some(duration) = episode.duration_secs {
+            info.push(Line::from(format!(
+                "Duration: {}",
+                format_duration(duration)
+            )));
+        }
+
+        if let Some(synopsis) = episode.synopsis.as_deref() {
+            let trimmed = synopsis.trim();
+            if !trimmed.is_empty() {
+                info.push(Line::from(trimmed));
+            }
+        }
+
+        info
+    } else {
+        vec![Line::from("Select an episode to show title and synopsis.")]
+    };
+
+    let info = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    frame.render_widget(info, area);
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
+    if episodes.is_empty() {
+        return Vec::new();
+    }
+
+    let has_air_dates = episodes.iter().any(|episode| episode.air_date.is_some());
+    let offset = if has_air_dates {
+        episodes
+            .iter()
+            .filter_map(|episode| episode.air_date)
+            .min()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let values: Vec<f64> = episodes
+        .iter()
+        .map(|episode| {
+            let raw = if has_air_dates {
+                episode
+                    .air_date
+                    .unwrap_or(offset + i64::from(episode.number))
+            } else {
+                i64::from(episode.number)
+            };
+            raw as f64
+        })
+        .collect();
+
+    let min_value = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_value = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let range = max_value - min_value;
+
+    if range.abs() < f64::EPSILON {
+        return vec![0.5; values.len()];
+    }
+
+    values
+        .into_iter()
+        .map(|value| ((value - min_value) / range).clamp(0.0, 1.0))
+        .collect()
+}
+
+fn heatmap_columns(width: usize) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    ((width + 1).saturating_div(2)).max(1)
+}
+
+fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64) -> Style {
+    let base = if indicators.watched {
+        (32, 180, 90)
+    } else if indicators.in_progress {
+        (225, 200, 70)
+    } else {
+        (110, 115, 140)
+    };
+
+    let color = tinted_color(base, intensity);
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
+    let factor = 0.5 + intensity.clamp(0.0, 1.0) * 0.5;
+    let red = (f64::from(r) * factor).clamp(0.0, 255.0) as u8;
+    let green = (f64::from(g) * factor).clamp(0.0, 255.0) as u8;
+    let blue = (f64::from(b) * factor).clamp(0.0, 255.0) as u8;
+    Color::Rgb(red, green, blue)
+}
+
+fn format_duration(seconds: u32) -> String {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 fn border_style(focused: bool) -> Style {
@@ -400,6 +653,157 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
+fn render_info_modal(frame: &mut Frame, app: &App) {
+    if !app.info_modal_visible() {
+        return;
+    }
+
+    let frame_area = frame.area();
+    if frame_area.width < 20 || frame_area.height < 10 {
+        return;
+    }
+
+    let width = frame_area.width.saturating_sub(6).min(110);
+    let height = frame_area.height.saturating_sub(6);
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let area = centered_rect(frame_area, width, height);
+    let title = app
+        .info_modal_metadata()
+        .map(|metadata| metadata.title.clone())
+        .or_else(|| app.current_anime_title())
+        .unwrap_or_else(|| "Anime Info".to_string());
+
+    let block = Block::default()
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let paragraph = Paragraph::new(build_info_modal_lines(app))
+        .wrap(Wrap { trim: true })
+        .block(block);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph, area);
+}
+
+fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
+    if app.info_modal_loading() {
+        return vec![
+            Line::from(Span::styled(
+                "Loading anime metadata...",
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::default(),
+            Line::from("This may take a moment. Press Esc to cancel."),
+        ];
+    }
+
+    if let Some(error) = app.info_modal_error() {
+        return vec![
+            Line::from(Span::styled(
+                "Failed to load metadata:",
+                Style::default().fg(Color::Red),
+            )),
+            Line::from(error),
+            Line::default(),
+            Line::from(Span::styled(
+                "Press Esc to close.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+    }
+
+    if let Some(metadata) = app.info_modal_metadata() {
+        let mut lines = Vec::new();
+        let status_score = format_status_score(metadata.status.as_deref(), metadata.score);
+        let season_year = format_season_year(metadata.season.as_deref(), metadata.year);
+        let genres = format_list(&metadata.genres);
+        let studios = format_list(&metadata.studios);
+        let synopsis = metadata
+            .synopsis
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or("Synopsis not available.");
+        lines.push(Line::from(Span::styled(
+            format!("Status / Score: {status_score}"),
+            Style::default().fg(Color::Cyan),
+        )));
+        lines.push(Line::from(format!("Season / Year: {season_year}")));
+        lines.push(Line::from(format!("Genres: {genres}")));
+        lines.push(Line::from(format!("Studios: {studios}")));
+        lines.push(Line::default());
+        lines.push(Line::from("Synopsis:"));
+        lines.push(Line::from(synopsis));
+        lines.push(Line::default());
+        lines.push(Line::from(format!(
+            "Trailer: {}",
+            metadata.trailer_url.as_deref().unwrap_or("N/A")
+        )));
+        lines.push(Line::from(format!(
+            "Source: {} ({})",
+            &metadata.source_url,
+            metadata_source_label(metadata.source)
+        )));
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Press Esc to close.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        return lines;
+    }
+
+    vec![
+        Line::from("No metadata available for selection."),
+        Line::default(),
+        Line::from(Span::styled(
+            "Press Esc to close.",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]
+}
+
+fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
+    match (status, score) {
+        (Some(status), Some(score)) => format!("{status} / {score:.1}"),
+        (Some(status), None) => status.to_string(),
+        (None, Some(score)) => format!("Score {score:.1}"),
+        _ => "N/A".to_string(),
+    }
+}
+
+fn format_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "N/A".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
+fn format_season_year(season: Option<&str>, year: Option<u16>) -> String {
+    match (season, year) {
+        (Some(season), Some(year)) => format!("{season} {year}"),
+        (Some(season), None) => season.to_string(),
+        (None, Some(year)) => year.to_string(),
+        _ => "N/A".to_string(),
+    }
+}
+
+fn metadata_source_label(source: MetadataSource) -> &'static str {
+    match source {
+        MetadataSource::AniList => "AniList",
+        MetadataSource::Kitsu => "Kitsu",
+    }
+}
+
 fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
     const QUESTION_TEXT: &str = "Exit Animestan?";
     const BUTTON_ROW_TEXT: &str = "[ Yes ]   [ No ]";
@@ -467,6 +871,89 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);
+}
+
+fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
+    if !app.quick_launch_active() {
+        return;
+    }
+
+    let candidates = app.quick_launch_items();
+    let list_height = u16::try_from(candidates.len()).unwrap_or(u16::MAX);
+    let height = (list_height + 6).max(8);
+    let frame_area = frame.area();
+    if frame_area.width < 30 || frame_area.height < height {
+        return;
+    }
+
+    let width = frame_area.width.saturating_sub(8).min(80);
+    let area = centered_rect(frame_area, width, height);
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title("Quick Launch")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(border_style(true));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let prompt = Line::from(vec![
+        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::raw(app.quick_launch_query()),
+    ]);
+    let paragraph = Paragraph::new(prompt);
+    frame.render_widget(paragraph, chunks[0]);
+    let typed_chars = app.quick_launch_query().chars().count();
+    let typed_offset = u16::try_from(typed_chars).unwrap_or(u16::MAX);
+    let cursor_base = chunks[0].x.saturating_add(2);
+    let max_cursor = chunks[0]
+        .x
+        .saturating_add(chunks[0].width.saturating_sub(1));
+    let cursor_x = cursor_base.saturating_add(typed_offset).min(max_cursor);
+    frame.set_cursor_position((cursor_x, chunks[0].y));
+
+    let items = if candidates.is_empty() {
+        vec![ListItem::new("No quick launch items")]
+    } else {
+        candidates
+            .iter()
+            .map(|candidate| ListItem::new(candidate.label.clone()))
+            .collect()
+    };
+
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        let idx = app.quick_launch_selection().min(items.len() - 1);
+        state.select(Some(idx));
+    }
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::NONE))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+    frame.render_stateful_widget(list, chunks[1], &mut state);
+
+    let hint = Paragraph::new(Line::from(vec![
+        Span::raw("Enter to run · Esc to close"),
+        Span::styled(
+            " · Ctrl+K opens this palette",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]))
+    .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(hint, chunks[2]);
 }
 
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {

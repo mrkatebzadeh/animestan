@@ -18,11 +18,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use directories_next::{BaseDirs, ProjectDirs};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{CoreResult, error::Error};
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub source_id: Option<String>,
@@ -42,6 +42,63 @@ impl AppConfig {
     #[must_use]
     pub fn default_path() -> PathBuf {
         Self::resolve_default_path().unwrap_or_else(|_| PathBuf::from("animestan/config.toml"))
+    }
+
+    /// Returns the default configuration as a TOML string.
+    #[must_use]
+    pub fn default_toml() -> String {
+        r#"# Animestan configuration file
+# Uncomment and modify any settings below as needed
+
+# Anime source to use (default: Allanime)
+# source_id = "allanime"
+
+# Media player command (default: mpv)
+# player = "mpv"
+
+# Streaming quality preference: best, worst, or specific quality (default: best)
+# quality = "best"
+
+# Path to episode tracking file (relative to config dir or absolute)
+# tracking_path = "progress.json"
+
+# Path to favorites file (relative to config dir or absolute)
+# favorites_path = "favorites.json"
+"#
+        .to_string()
+    }
+
+    /// Loads configuration from the default config path, falling back to an empty
+    /// [`AppConfig`] when the file is absent.
+    ///
+    /// If the config file does not exist, it will be created with default settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config directory cannot be determined, the file
+    /// cannot be read from disk, or its contents cannot be parsed.
+    pub fn load_default() -> CoreResult<Self> {
+        let path = Self::resolve_default_path()?;
+        match fs::read_to_string(&path) {
+            Ok(contents) => Self::parse(&contents, path),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                // Create the config directory if it doesn't exist
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(|source| Error::ConfigWrite {
+                        path: parent.to_path_buf(),
+                        source,
+                    })?;
+                }
+                // Write default config to file
+                let default_toml = Self::default_toml();
+                fs::write(&path, &default_toml).map_err(|source| Error::ConfigWrite {
+                    path: path.clone(),
+                    source,
+                })?;
+                Ok(Self::default())
+            }
+            Err(source) => Err(Error::ConfigRead { path, source }.into()),
+        }
     }
 
     #[must_use]
@@ -121,22 +178,6 @@ impl AppConfig {
         Self::data_dir().join("logs")
     }
 
-    /// Loads configuration from the default config path, falling back to an empty
-    /// [`AppConfig`] when the file is absent.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the config directory cannot be determined, the file
-    /// cannot be read from disk, or its contents cannot be parsed.
-    pub fn load_default() -> CoreResult<Self> {
-        let path = Self::resolve_default_path()?;
-        match fs::read_to_string(&path) {
-            Ok(contents) => Self::parse(&contents, path),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(source) => Err(Error::ConfigRead { path, source }.into()),
-        }
-    }
-
     /// Loads configuration from the provided `path`.
     ///
     /// # Errors
@@ -153,7 +194,7 @@ impl AppConfig {
     }
 
     fn resolve_default_path() -> CoreResult<PathBuf> {
-        if let Some(project_dirs) = ProjectDirs::from("xyz", "Animestan", "animestan") {
+        if let Some(project_dirs) = ProjectDirs::from("", "", "animestan") {
             return Ok(project_dirs.config_dir().join("config.toml"));
         }
 
