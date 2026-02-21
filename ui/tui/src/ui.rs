@@ -465,10 +465,7 @@ fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
 }
 
 fn heatmap_columns(width: usize) -> usize {
-    if width == 0 {
-        return 0;
-    }
-    ((width + 1).saturating_div(2)).max(1)
+    width.max(1)
 }
 
 fn heatmap_cell_style(
