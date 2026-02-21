@@ -389,12 +389,10 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
                 break;
             }
 
-            if !spans.is_empty() {
-                spans.push(Span::raw(" "));
-            }
+            let alternate = (row + col) % 2 == 0;
 
             let indicators = app.episode_indicators(&episodes[idx].id);
-            let mut style = heatmap_cell_style(indicators, normalized[idx], theme);
+            let mut style = heatmap_cell_style(indicators, normalized[idx], theme, alternate);
             if selected == Some(idx) {
                 style = style.add_modifier(Modifier::REVERSED);
                 style = style.add_modifier(Modifier::UNDERLINED);
@@ -473,12 +471,20 @@ fn heatmap_columns(width: usize) -> usize {
     ((width + 1).saturating_div(2)).max(1)
 }
 
-fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64, theme: &Theme) -> Style {
+fn heatmap_cell_style(
+    indicators: EpisodeIndicators,
+    intensity: f64,
+    theme: &Theme,
+    alternate: bool,
+) -> Style {
     let color = if indicators.watched {
         let base = theme.heatmap_color(HeatmapVariant::Watched);
-        tinted_color(base, intensity)
+        let adjusted = (intensity + if alternate { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
+        tinted_color(base, adjusted)
+    } else if alternate {
+        Color::Rgb(80, 80, 80)
     } else {
-        Color::DarkGray
+        Color::Rgb(48, 48, 48)
     };
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
