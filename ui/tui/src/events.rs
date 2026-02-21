@@ -49,6 +49,36 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "Ctrl+M",
+            description: "Mark highlighted search result",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "w",
+            description: "Mark current episode as watched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "u",
+            description: "Mark current episode as unwatched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "W",
+            description: "Mark all episodes as watched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "U",
+            description: "Mark all episodes as unwatched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
+            keys: "K",
+            description: "Mark episodes up to current as watched",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "/",
             description: "Filter the focused list",
             mode: InputMode::Normal,
@@ -96,11 +126,6 @@ pub fn keybindings() -> &'static [KeyBinding] {
         KeyBinding {
             keys: "Ctrl+U",
             description: "Half-page up list",
-            mode: InputMode::Normal,
-        },
-        KeyBinding {
-            keys: "b",
-            description: "Toggle bookmarks pane",
             mode: InputMode::Normal,
         },
         KeyBinding {
@@ -265,8 +290,11 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
-    if app.show_keybindings() {
-        app.toggle_keybindings();
+    if app.search_results_modal_visible() && handle_search_results_modal(app, key_event) {
+        return;
+    }
+
+    if app.show_keybindings() && handle_keybindings_modal(app, key_event) {
         return;
     }
 
@@ -306,8 +334,12 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
             app.toggle_focus();
         }
         KeyCode::Tab => app.cycle_focus(),
-        KeyCode::Char('b') => app.toggle_bookmarks_mode(),
+        KeyCode::Char('w') => app.request_mark_current_episode(true),
+        KeyCode::Char('u') => app.request_mark_current_episode(false),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
+        KeyCode::Char('W') => app.request_mark_all_episodes(true),
+        KeyCode::Char('U') => app.request_mark_all_episodes(false),
+        KeyCode::Char('K') => app.request_mark_up_to_current(),
         KeyCode::Char('f') => app.cycle_filter(),
         KeyCode::Char('i') => {
             app.open_info_modal();
@@ -344,6 +376,64 @@ fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
         }
         _ => {}
     }
+}
+
+fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) -> bool {
+    if handle_search_results_navigation_shortcuts(app, key_event) {
+        return true;
+    }
+
+    match key_event.code {
+        KeyCode::Esc => app.close_search_results_modal(),
+        KeyCode::Enter => app.request_search_results_add(),
+        KeyCode::Down | KeyCode::Char('j') => app.move_search_results_selection_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.move_search_results_selection_up(),
+        KeyCode::Char('m') => {
+            if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                app.request_bookmark_toggle();
+            }
+        }
+        _ => {}
+    }
+
+    true
+}
+
+fn handle_keybindings_modal(app: &mut App, key_event: KeyEvent) -> bool {
+    if !app.show_keybindings() {
+        return false;
+    }
+
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.toggle_keybindings();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.scroll_keybindings(1);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.scroll_keybindings(-1);
+        }
+        KeyCode::PageDown => {
+            let viewport = app.keybindings_viewport_lines();
+            let step = i64::try_from(viewport.max(1)).unwrap_or(i64::MAX);
+            app.scroll_keybindings(step);
+        }
+        KeyCode::PageUp => {
+            let viewport = app.keybindings_viewport_lines();
+            let step = i64::try_from(viewport.max(1)).unwrap_or(i64::MAX);
+            app.scroll_keybindings(-step);
+        }
+        KeyCode::Home => {
+            app.set_keybindings_scroll(0);
+        }
+        KeyCode::End => {
+            app.set_keybindings_scroll(app.keybindings_max_scroll());
+        }
+        _ => {}
+    }
+
+    true
 }
 
 fn handle_enter_in_normal_mode(app: &mut App) {
@@ -386,6 +476,47 @@ fn handle_normal_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> boo
         KeyCode::Char('u' | 'U') => {
             if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
                 app.half_page_up();
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn handle_search_results_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
+    if app.search_results().is_empty() {
+        return false;
+    }
+
+    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
+        if app.consume_pending_double_g() {
+            app.search_results_move_to_top();
+        } else {
+            app.start_pending_double_g();
+        }
+        return true;
+    }
+
+    app.cancel_pending_double_g();
+
+    match key_event.code {
+        KeyCode::Char('G') => {
+            app.search_results_move_to_bottom();
+            true
+        }
+        KeyCode::Char('d' | 'D') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.search_results_half_page_down();
+                true
+            } else {
+                false
+            }
+        }
+        KeyCode::Char('u' | 'U') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.search_results_half_page_up();
                 true
             } else {
                 false

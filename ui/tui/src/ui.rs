@@ -15,67 +15,86 @@
 
 use std::convert::TryFrom;
 
-use animestan_core::{Episode, MetadataSource};
+use animestan_core::{AnimeMetadata, Episode, MetadataSource};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::Title;
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
+    TableState, Wrap,
 };
 
-use crate::app::{
-    App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode, LeftPaneMode,
-};
+use crate::app::{App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode};
 use crate::events::keybindings;
+use crate::theme::{HeatmapVariant, Theme};
 
-pub fn render(frame: &mut Frame, app: &App) {
+const KEYBINDINGS_HEADER: [&str; 6] = [
+    ".█████╗ ███╗   ██╗██╗███╗   ███╗███████╗███████╗████████╗ █████╗ ███╗   ██╗",
+    "██╔══██╗████╗  ██║██║████╗ ████║██╔════╝██╔════╝╚══██╔══╝██╔══██╗████╗  ██║",
+    "███████║██╔██╗ ██║██║██╔████╔██║█████╗  ███████╗   ██║   ███████║██╔██╗ ██║",
+    "██╔══██║██║╚██╗██║██║██║╚██╔╝██║██╔══╝  ╚════██║   ██║   ██╔══██║██║╚██╗██║",
+    "██║  ██║██║ ╚████║██║██║ ╚═╝ ██║███████╗███████║   ██║   ██║  ██║██║ ╚████║",
+    "╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝",
+];
+const HEADER_MARGIN: &str = "  ";
+const KEY_HINT_MARGIN: &str = "        ";
+
+pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
+    let frame_area = frame.area();
+    let heatmap_width = frame_area.width.saturating_sub(2).max(1);
+    let columns = heatmap_columns(heatmap_width as usize);
+    let total_episodes = app.episodes().len();
+    let rows = if total_episodes == 0 {
+        1
+    } else {
+        total_episodes.div_ceil(columns.max(1))
+    };
+    let total_height = frame_area.height as usize;
+    let top_height = 3 + 3;
+    let session_default = 7;
+    let session_min = 3;
+    let min_heatmap_height = 7;
+    let requested_heatmap_height = rows.max(min_heatmap_height);
+    let available_for_session =
+        total_height.saturating_sub(top_height + requested_heatmap_height + session_min);
+    let session_height_usize = available_for_session.min(session_default);
+    let max_heatmap_height = total_height
+        .saturating_sub(top_height + session_height_usize)
+        .max(1);
+    let heatmap_height = requested_heatmap_height.min(max_heatmap_height);
+    let heatmap_length = u16::try_from(heatmap_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+    let list_height =
+        total_height.saturating_sub(top_height + session_height_usize + heatmap_height);
+    let list_length = u16::try_from(list_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+    let session_length =
+        u16::try_from(session_height_usize.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(7),
-            Constraint::Length(4),
-            Constraint::Length(3),
+            Constraint::Length(list_length),
+            Constraint::Length(heatmap_length),
+            Constraint::Length(session_length),
         ])
-        .split(frame.area());
+        .split(frame_area);
 
-    render_hint_panel(frame, chunks[0]);
-    render_search_bar(frame, chunks[1], app);
+    render_search_bar(frame, chunks[0], app, theme);
 
     let lists = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
+        .split(chunks[1]);
 
-    let (left_base_title, anime_items) = match app.left_pane_mode() {
-        LeftPaneMode::Search => ("Anime", build_anime_items(app)),
-        LeftPaneMode::Bookmarks => ("Bookmarks", build_bookmark_items(app)),
-    };
-    let left_target = match app.left_pane_mode() {
-        LeftPaneMode::Search => FilterTarget::Anime,
-        LeftPaneMode::Bookmarks => FilterTarget::Bookmarks,
-    };
-    let mut left_title = left_base_title.to_string();
-    if app.panel_filter_active_for(left_target) {
-        left_title.push_str(" [Filtered]");
-    }
+    let left_target = FilterTarget::Anime;
     let left_filter_visible = should_show_panel_filter(app, left_target);
     let (left_filter_area, left_list_area) = split_filter_area(lists[0], left_filter_visible);
     if let Some(area) = left_filter_area {
-        render_panel_filter_input(frame, area, app, left_filter_visible);
+        render_panel_filter_input(frame, area, app, left_filter_visible, theme);
     }
-    render_list(
-        frame,
-        left_list_area,
-        &left_title,
-        anime_items,
-        app.left_index(),
-        app.focus() == Focus::Left,
-    );
+    render_anime_table(frame, left_list_area, app, theme);
 
     let episode_items = build_episode_items(app);
     let mut episodes_title = if let Some(label) = app.filter_label() {
@@ -89,7 +108,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let right_filter_visible = should_show_panel_filter(app, FilterTarget::Episodes);
     let (right_filter_area, right_list_area) = split_filter_area(lists[1], right_filter_visible);
     if let Some(area) = right_filter_area {
-        render_panel_filter_input(frame, area, app, right_filter_visible);
+        render_panel_filter_input(frame, area, app, right_filter_visible, theme);
     }
     render_list(
         frame,
@@ -98,15 +117,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         episode_items,
         app.right_index(),
         app.focus() == Focus::Right,
+        theme,
     );
 
-    render_episode_heatmap(frame, chunks[3], app);
-    render_details(frame, chunks[4], app);
-    render_status_bar(frame, chunks[5], app);
-    render_keybindings_modal(frame, app);
-    render_info_modal(frame, app);
-    render_exit_confirmation_modal(frame, app);
-    render_quick_launch_palette(frame, app);
+    render_episode_heatmap(frame, chunks[2], app, theme);
+    render_session_panel(frame, chunks[3], app, theme);
+    render_search_results_modal(frame, app, theme);
+    render_keybindings_modal(frame, app, theme);
+    render_info_modal(frame, app, theme);
+    render_exit_confirmation_modal(frame, app, theme);
+    render_quick_launch_palette(frame, app, theme);
 }
 
 fn render_list(
@@ -116,6 +136,7 @@ fn render_list(
     items: Vec<ListItem>,
     active_index: usize,
     focused: bool,
+    theme: &Theme,
 ) {
     let title = if focused {
         Title::from(Span::styled(
@@ -134,7 +155,7 @@ fn render_list(
         } else {
             BorderType::Plain
         })
-        .border_style(border_style(focused));
+        .border_style(border_style(theme, focused));
 
     let mut state = ListState::default();
     if !items.is_empty() {
@@ -143,14 +164,68 @@ fn render_list(
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(theme.selected_item_style())
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let favorites = app.bookmark_entries();
+    if favorites.is_empty() {
+        let block = Block::default()
+            .title("Anime")
+            .borders(Borders::ALL)
+            .border_style(border_style(theme, app.focus() == Focus::Left));
+        let paragraph = Paragraph::new("No favorites yet. Use the CLI to add some.")
+            .alignment(Alignment::Center)
+            .block(block);
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    let rows: Vec<Row> = favorites
+        .iter()
+        .map(|entry| {
+            let stats = app.anime_progress_for(&entry.anime.id);
+            let progress = stats.map_or_else(
+                || "--/--".to_string(),
+                |stats| format!("{}/{}", stats.watched, stats.total),
+            );
+            Row::new(vec![
+                Cell::from(entry.anime.title.clone()),
+                Cell::from(progress),
+            ])
+        })
+        .collect();
+
+    let mut state = TableState::default();
+    if !rows.is_empty() {
+        state.select(Some(app.left_index().min(rows.len() - 1)));
+    }
+
+    let block = Block::default()
+        .title("Anime")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, app.focus() == Focus::Left));
+
+    let table = Table::new(
+        rows,
+        [Constraint::Percentage(60), Constraint::Percentage(40)],
+    )
+    .header(Row::new(vec![
+        Cell::from(Span::styled("Title", theme.title_style())),
+        Cell::from(Span::styled("Progress", theme.title_style())),
+    ]))
+    .block(block)
+    .column_spacing(1)
+    .highlight_style(theme.selected_item_style())
+    .highlight_symbol("▶ ");
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
 fn split_filter_area(area: Rect, show_filter: bool) -> (Option<Rect>, Rect) {
@@ -165,13 +240,19 @@ fn split_filter_area(area: Rect, show_filter: bool) -> (Option<Rect>, Rect) {
     (Some(chunks[0]), chunks[1])
 }
 
-fn render_panel_filter_input(frame: &mut Frame, area: Rect, app: &App, active: bool) {
+fn render_panel_filter_input(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    active: bool,
+    theme: &Theme,
+) {
     let block = Block::default()
         .title("Filter")
         .borders(Borders::ALL)
-        .border_style(border_style(active));
+        .border_style(border_style(theme, active));
     let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.panel_filter_query()),
     ]);
     let inner = block.inner(area);
@@ -192,14 +273,14 @@ fn should_show_panel_filter(app: &App, target: FilterTarget) -> bool {
     app.panel_filter_mode() && app.panel_filter_target() == Some(target)
 }
 
-fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
+fn render_search_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let block = Block::default()
         .title("Search Anime")
         .borders(Borders::ALL)
-        .border_style(border_style(app.input_mode() == InputMode::Search));
+        .border_style(border_style(theme, app.input_mode() == InputMode::Search));
 
     let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.search_query()),
     ]);
 
@@ -217,85 +298,79 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn render_hint_panel(frame: &mut Frame, area: Rect) {
+fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(border_style(false));
-    let paragraph = Paragraph::new("Press ? to list keybinding")
-        .alignment(Alignment::Center)
-        .block(block);
-    frame.render_widget(paragraph, area);
-}
+        .border_style(border_style(theme, false));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
 
-fn render_details(frame: &mut Frame, area: Rect, app: &App) {
-    let details_block = Block::default()
-        .title("Details")
-        .borders(Borders::ALL)
-        .border_style(border_style(false));
-    let pane_label = match app.left_pane_mode() {
-        LeftPaneMode::Search => "Search",
-        LeftPaneMode::Bookmarks => "Bookmarks",
-    };
+    let pane_label = "Anime";
     let filter_label = app.filter_label().unwrap_or("All");
     let mut lines = vec![Line::from(app.details())];
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
-    let left_status = format!(
-        "Mode: {} | {}",
-        app.mode_label(),
-        app.current_selection_label()
-    );
-    let inner_area = details_block.inner(area);
-    frame.render_widget(details_block, area);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner_area);
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
 
     let details = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(details, chunks[0]);
 
-    let status_line = Line::from(Span::styled(
-        left_status,
-        Style::default().fg(Color::White).bg(Color::DarkGray),
-    ));
-    let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
-    frame.render_widget(status, chunks[1]);
-}
-
-fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let now_playing_label = app
         .current_playback_label()
         .unwrap_or_else(|| "Idle".to_string());
     let elapsed = format_elapsed(app.playback_elapsed());
-    let hint = "Space=Play/Pause q=Quit";
-
     let spans = vec![
-        Span::styled(
-            now_playing_label,
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(now_playing_label, theme.title_style()),
         Span::raw(" | "),
-        Span::styled(
-            format!("Elapsed: {elapsed}"),
-            Style::default().fg(Color::Cyan),
-        ),
-        Span::raw(" | "),
-        Span::styled(hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("Elapsed: {elapsed}"), theme.item_style()),
     ];
+    let now_playing = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
+    frame.render_widget(now_playing, chunks[1]);
 
-    let block = Block::default()
-        .title("Now Playing")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(border_style(false));
+    let left_status = format!(
+        "Mode: {} | Selection: {}",
+        app.mode_label(),
+        app.current_selection_label()
+    );
+    let hint_text = "Press ? for keybindings";
+    let total_width = chunks[2].width as usize;
+    let status_len = left_status.chars().count();
+    let hint_len = hint_text.chars().count();
+    let spacing = total_width.saturating_sub(status_len + hint_len);
+    let spacer = " ".repeat(spacing);
 
-    let paragraph = Paragraph::new(Line::from(spans))
-        .block(block)
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, area);
+    let status_line = Line::from(vec![
+        Span::styled(
+            left_status,
+            theme.item_style().bg(theme.non_interactive_color()),
+        ),
+        Span::raw(spacer),
+        Span::styled(
+            hint_text,
+            Style::default()
+                .bg(theme.non_interactive_color())
+                .add_modifier(Modifier::REVERSED),
+        ),
+    ]);
+    let status =
+        Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
+    frame.render_widget(status, chunks[2]);
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
@@ -305,41 +380,6 @@ fn format_elapsed(seconds: Option<f64>) -> String {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{minutes:02}:{seconds:02}")
-}
-
-fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
-    app.anime_entries()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let marker = if Some(idx) == app.selected_anime() {
-                '★'
-            } else {
-                ' '
-            };
-            let bookmark_icon = if app.is_bookmarked(entry.id.as_str()) {
-                '♥'
-            } else {
-                ' '
-            };
-            ListItem::new(format!("{marker} {bookmark_icon} {}", entry.title))
-        })
-        .collect()
-}
-
-fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
-    app.bookmark_entries()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let marker = if Some(idx) == app.selected_anime() {
-                '★'
-            } else {
-                ' '
-            };
-            ListItem::new(format!("{marker} ♥ {}", entry.anime.title))
-        })
-        .collect()
 }
 
 fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
@@ -373,31 +413,25 @@ fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
         .collect()
 }
 
-fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App) {
+fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
         return;
     }
 
     let block = Block::default()
-        .title("Episode Heatmap")
+        .title("Progress")
         .borders(Borders::ALL)
-        .border_style(border_style(false));
+        .border_style(border_style(theme, false));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)])
-        .split(inner);
-
-    render_heatmap_grid(frame, chunks[0], app);
-    render_heatmap_info(frame, chunks[1], app);
+    render_heatmap_grid(frame, inner, app, theme);
 }
 
-fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
+fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -429,12 +463,10 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
                 break;
             }
 
-            if !spans.is_empty() {
-                spans.push(Span::raw(" "));
-            }
+            let alternate = (row + col) % 2 == 0;
 
             let indicators = app.episode_indicators(&episodes[idx].id);
-            let mut style = heatmap_cell_style(indicators, normalized[idx]);
+            let mut style = heatmap_cell_style(indicators, normalized[idx], theme, alternate);
             if selected == Some(idx) {
                 style = style.add_modifier(Modifier::REVERSED);
                 style = style.add_modifier(Modifier::UNDERLINED);
@@ -459,42 +491,6 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App) {
         .wrap(Wrap { trim: true })
         .alignment(Alignment::Left);
     frame.render_widget(grid, area);
-}
-
-fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
-    if area.height == 0 || area.width == 0 {
-        return;
-    }
-
-    let lines = if let Some(episode) = app.current_episode() {
-        let mut info = vec![Line::from(format!(
-            "#{:03} — {}",
-            episode.number, episode.title
-        ))];
-
-        if let Some(duration) = episode.duration_secs {
-            info.push(Line::from(format!(
-                "Duration: {}",
-                format_duration(duration)
-            )));
-        }
-
-        if let Some(synopsis) = episode.synopsis.as_deref() {
-            let trimmed = synopsis.trim();
-            if !trimmed.is_empty() {
-                info.push(Line::from(trimmed));
-            }
-        }
-
-        info
-    } else {
-        vec![Line::from("Select an episode to show title and synopsis.")]
-    };
-
-    let info = Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .alignment(Alignment::Left);
-    frame.render_widget(info, area);
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -543,22 +539,24 @@ fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
 }
 
 fn heatmap_columns(width: usize) -> usize {
-    if width == 0 {
-        return 0;
-    }
-    ((width + 1).saturating_div(2)).max(1)
+    width.max(1)
 }
 
-fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64) -> Style {
-    let base = if indicators.watched {
-        (32, 180, 90)
-    } else if indicators.in_progress {
-        (225, 200, 70)
+fn heatmap_cell_style(
+    indicators: EpisodeIndicators,
+    intensity: f64,
+    theme: &Theme,
+    alternate: bool,
+) -> Style {
+    let color = if indicators.watched {
+        let base = theme.heatmap_color(HeatmapVariant::Watched);
+        let adjusted = (intensity + if alternate { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
+        tinted_color(base, adjusted)
+    } else if alternate {
+        Color::Rgb(80, 80, 80)
     } else {
-        (110, 115, 140)
+        Color::Rgb(48, 48, 48)
     };
-
-    let color = tinted_color(base, intensity);
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
@@ -571,28 +569,11 @@ fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
     Color::Rgb(red, green, blue)
 }
 
-fn format_duration(seconds: u32) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-    if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
+fn border_style(theme: &Theme, focused: bool) -> Style {
+    theme.panel_border_style(focused)
 }
 
-fn border_style(focused: bool) -> Style {
-    if focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default()
-    }
-}
-
-fn render_keybindings_modal(frame: &mut Frame, app: &App) {
+fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: &Theme) {
     if !app.show_keybindings() {
         return;
     }
@@ -610,6 +591,12 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App) {
         .max(1);
 
     let mut lines = Vec::new();
+    for header in KEYBINDINGS_HEADER {
+        lines.push(Line::from(format!(
+            "{HEADER_MARGIN}{header}{HEADER_MARGIN}"
+        )));
+    }
+    lines.push(Line::default());
     let mut current_mode: Option<InputMode> = None;
     for binding in bindings {
         if current_mode != Some(binding.mode) {
@@ -619,41 +606,50 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App) {
             current_mode = Some(binding.mode);
             lines.push(Line::from(Span::styled(
                 format!("{} mode", input_mode_label(binding.mode)),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                theme.title_style(),
             )));
         }
 
         let key_label = format!("{:<width$}", binding.keys, width = key_width);
         lines.push(Line::from(vec![
-            Span::styled(key_label, Style::default().fg(Color::Cyan)),
-            Span::raw("  "),
+            Span::styled(key_label, Style::default().fg(theme.title_color())),
+            Span::raw(KEY_HINT_MARGIN),
             Span::raw(binding.description),
         ]));
     }
 
+    app.set_keybindings_content_lines(lines.len());
     let frame_area = frame.area();
-    let width = frame_area.width.saturating_sub(4).min(80);
-    let max_height = frame_area.height.saturating_sub(4);
-    if width == 0 || max_height == 0 {
-        return;
+    let mut width = frame_area.width.min(80);
+    let min_width = 40u16;
+    width = width.max(min_width).min(frame_area.width);
+    let computed_height = u32::from(frame_area.height).saturating_mul(70) / 100;
+    let mut height = u16::try_from(computed_height).unwrap_or(u16::MAX);
+    let min_height = 10u16;
+    if height < min_height {
+        height = min_height;
     }
-    let content_height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    let mut height = content_height.saturating_add(4);
-    if height > max_height {
-        height = max_height;
+    height = height.min(frame_area.height);
+    if width == 0 || height == 0 {
+        return;
     }
 
     let area = centered_rect(frame_area, width, height);
-    let block = Block::default().title("Keybindings").borders(Borders::ALL);
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, false));
+    let inner = block.inner(area);
+    app.set_keybindings_viewport_lines(inner.height as usize);
+    let scroll_offset = u16::try_from(app.keybindings_scroll()).unwrap_or(u16::MAX);
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .scroll((scroll_offset, 0));
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);
 }
 
-fn render_info_modal(frame: &mut Frame, app: &App) {
+fn render_info_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     if !app.info_modal_visible() {
         return;
     }
@@ -677,16 +673,11 @@ fn render_info_modal(frame: &mut Frame, app: &App) {
         .unwrap_or_else(|| "Anime Info".to_string());
 
     let block = Block::default()
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ))
+        .title(Span::styled(title, theme.title_style()))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_style(border_style(theme, false));
 
-    let paragraph = Paragraph::new(build_info_modal_lines(app))
+    let paragraph = Paragraph::new(build_info_modal_lines(app, theme))
         .wrap(Wrap { trim: true })
         .block(block);
 
@@ -694,34 +685,121 @@ fn render_info_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
-    if app.info_modal_loading() {
+fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &Theme) {
+    if !app.search_results_modal_visible() {
+        return;
+    }
+
+    let frame_area = frame.area();
+    if frame_area.width < 40 || frame_area.height < 10 {
+        return;
+    }
+
+    let width = frame_area.width.saturating_sub(6).min(120);
+    let height = frame_area.height.saturating_sub(6);
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let title = format!("Search: {}", app.search_results_query());
+    let block = Block::default()
+        .title(Span::styled(title, theme.title_style()))
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
+    let area = centered_rect(frame_area, width, height);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(inner);
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(chunks[0]);
+
+    let results = app.search_results();
+    let items: Vec<ListItem> = if results.is_empty() {
+        vec![ListItem::new("No results")]
+    } else {
+        results
+            .iter()
+            .map(|entry| ListItem::new(entry.title.clone()))
+            .collect()
+    };
+
+    let mut state = ListState::default();
+    if !results.is_empty() {
+        state.select(Some(app.search_results_selection()));
+    }
+
+    let list_block = Block::default()
+        .title("Matches")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
+    let list = List::new(items)
+        .block(list_block)
+        .highlight_style(theme.selected_item_style())
+        .highlight_symbol("▶ ");
+    frame.render_stateful_widget(list, columns[0], &mut state);
+
+    let metadata_lines = metadata_section_lines(
+        app.search_results_metadata(),
+        app.search_results_metadata_error(),
+        app.search_results_metadata_loading(),
+        theme,
+    );
+    let metadata_block = Block::default()
+        .title("Info")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
+    let metadata = Paragraph::new(metadata_lines)
+        .block(metadata_block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(metadata, columns[1]);
+
+    let hint = Paragraph::new(Line::from(vec![
+        Span::styled("Esc", theme.title_style()),
+        Span::raw(" to close · "),
+        Span::styled("Ctrl+M", theme.title_style()),
+        Span::raw(" to mark selection"),
+    ]))
+    .style(theme.non_interactive_style());
+    frame.render_widget(hint, chunks[1]);
+}
+
+fn metadata_section_lines<'a>(
+    metadata: Option<&'a AnimeMetadata>,
+    error: Option<&'a str>,
+    loading: bool,
+    theme: &Theme,
+) -> Vec<Line<'a>> {
+    if loading {
         return vec![
             Line::from(Span::styled(
                 "Loading anime metadata...",
-                Style::default().fg(Color::Yellow),
+                theme.title_style(),
             )),
             Line::default(),
             Line::from("This may take a moment. Press Esc to cancel."),
         ];
     }
 
-    if let Some(error) = app.info_modal_error() {
+    if let Some(error) = error {
         return vec![
             Line::from(Span::styled(
                 "Failed to load metadata:",
-                Style::default().fg(Color::Red),
+                theme.selected_item_style(),
             )),
             Line::from(error),
             Line::default(),
-            Line::from(Span::styled(
-                "Press Esc to close.",
-                Style::default().fg(Color::DarkGray),
-            )),
         ];
     }
 
-    if let Some(metadata) = app.info_modal_metadata() {
+    if let Some(metadata) = metadata {
         let mut lines = Vec::new();
         let status_score = format_status_score(metadata.status.as_deref(), metadata.score);
         let season_year = format_season_year(metadata.season.as_deref(), metadata.year);
@@ -731,11 +809,11 @@ fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
             .synopsis
             .as_deref()
             .map(str::trim)
-            .filter(|text| !text.is_empty())
+            .filter(|text: &&str| !text.is_empty())
             .unwrap_or("Synopsis not available.");
         lines.push(Line::from(Span::styled(
             format!("Status / Score: {status_score}"),
-            Style::default().fg(Color::Cyan),
+            theme.title_style(),
         )));
         lines.push(Line::from(format!("Season / Year: {season_year}")));
         lines.push(Line::from(format!("Genres: {genres}")));
@@ -754,21 +832,27 @@ fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
             metadata_source_label(metadata.source)
         )));
         lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "Press Esc to close.",
-            Style::default().fg(Color::DarkGray),
-        )));
         return lines;
     }
 
-    vec![
-        Line::from("No metadata available for selection."),
-        Line::default(),
-        Line::from(Span::styled(
+    vec![Line::from("No metadata available for selection.")]
+}
+
+fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
+    let mut lines = metadata_section_lines(
+        app.info_modal_metadata(),
+        app.info_modal_error(),
+        app.info_modal_loading(),
+        theme,
+    );
+    if !app.info_modal_loading() {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
             "Press Esc to close.",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ]
+            theme.non_interactive_style(),
+        )));
+    }
+    lines
 }
 
 fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
@@ -804,7 +888,7 @@ fn metadata_source_label(source: MetadataSource) -> &'static str {
     }
 }
 
-fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
+fn render_exit_confirmation_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     const QUESTION_TEXT: &str = "Exit Animestan?";
     const BUTTON_ROW_TEXT: &str = "[ Yes ]   [ No ]";
     const HINT_TEXT: &str = "Use ←/→/Tab to switch, Enter to confirm.";
@@ -828,12 +912,9 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
     let yes_selected = matches!(app.confirm_exit_choice(), ConfirmExitChoice::Yes);
     let button_style = |selected| {
         if selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            theme.selected_item_style()
         } else {
-            Style::default().fg(Color::White)
+            theme.item_style()
         }
     };
 
@@ -846,24 +927,21 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
     ]);
 
     let lines = vec![
-        Line::from(Span::styled(
-            QUESTION_TEXT,
-            Style::default().fg(Color::White),
-        )),
+        Line::from(Span::styled(QUESTION_TEXT, theme.title_style())),
         Line::default(),
         button_line,
         Line::default(),
-        Line::from(Span::styled(
-            HINT_TEXT,
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(Span::styled(HINT_TEXT, theme.non_interactive_style())),
     ];
 
     let content_height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
     let height = content_height.saturating_add(2).min(frame_area.height);
 
     let area = centered_rect(frame_area, width, height);
-    let block = Block::default().title("Confirm Exit").borders(Borders::ALL);
+    let block = Block::default()
+        .title("Confirm Exit")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Center)
         .block(block)
@@ -873,7 +951,7 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
+fn render_quick_launch_palette(frame: &mut Frame, app: &App, theme: &Theme) {
     if !app.quick_launch_active() {
         return;
     }
@@ -893,7 +971,7 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
         .title("Quick Launch")
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
-        .border_style(border_style(true));
+        .border_style(border_style(theme, true));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let chunks = Layout::default()
@@ -906,7 +984,7 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
         .split(inner);
 
     let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.quick_launch_query()),
     ]);
     let paragraph = Paragraph::new(prompt);
@@ -937,11 +1015,7 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(theme.selected_item_style())
         .highlight_symbol("▶ ");
     frame.render_stateful_widget(list, chunks[1], &mut state);
 
@@ -949,10 +1023,10 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App) {
         Span::raw("Enter to run · Esc to close"),
         Span::styled(
             " · Ctrl+K opens this palette",
-            Style::default().fg(Color::DarkGray),
+            theme.non_interactive_style(),
         ),
     ]))
-    .style(Style::default().fg(Color::DarkGray));
+    .style(theme.non_interactive_style());
     frame.render_widget(hint, chunks[2]);
 }
 

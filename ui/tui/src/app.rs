@@ -27,7 +27,7 @@ use nucleo::{
 
 use crate::events;
 
-const DEFAULT_SEARCH_QUERY: &str = "Naruto";
+const DEFAULT_SEARCH_QUERY: &str = "";
 const QUICK_LAUNCH_HISTORY_SIZE: usize = 12;
 const QUICK_LAUNCH_RECENT_PLAY_SIZE: usize = 8;
 
@@ -68,6 +68,13 @@ pub enum InputMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EpisodeMarkAction {
+    Current { watched: bool },
+    All { watched: bool },
+    UpToCurrent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlaybackStatus {
     None,
     Playing,
@@ -78,12 +85,6 @@ pub enum PlaybackStatus {
 pub enum FilterTarget {
     Anime,
     Episodes,
-    Bookmarks,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LeftPaneMode {
-    Search,
     Bookmarks,
 }
 
@@ -135,6 +136,12 @@ pub struct EpisodeIndicators {
     pub downloaded: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AnimeProgress {
+    pub watched: usize,
+    pub total: usize,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     focus: Focus,
@@ -143,20 +150,17 @@ pub struct App {
     right_index: usize,
     selected_anime: Option<usize>,
     selected_episode: Option<usize>,
-    anime_entries: Vec<AnimeEntry>,
+    search_results: Vec<AnimeEntry>,
     bookmark_entries: Vec<FavoriteEntry>,
     episodes: Vec<Episode>,
     filtered_episodes: Vec<Episode>,
-    filtered_anime_entries: Vec<AnimeEntry>,
     filtered_bookmark_entries: Vec<FavoriteEntry>,
     filtered_episode_entries: Vec<Episode>,
     panel_filter_mode: bool,
     panel_filter_target: Option<FilterTarget>,
     panel_filter_query: String,
-    anime_filter_active: bool,
     bookmark_filter_active: bool,
     episode_filter_active: bool,
-    anime_filter_query: String,
     bookmark_filter_query: String,
     episode_filter_query: String,
     episodes_loading: bool,
@@ -167,11 +171,10 @@ pub struct App {
     pending_download: bool,
     pending_delete: bool,
     pending_bookmark_toggle: bool,
+    pending_episode_mark_action: Option<EpisodeMarkAction>,
     pending_double_g: bool,
     anime_selection_changed: bool,
-    bookmarks_refresh_pending: bool,
     filter_changed: bool,
-    left_pane_mode: LeftPaneMode,
     filter_mode: FilterMode,
     playback_status: PlaybackStatus,
     playback_in_progress: bool,
@@ -188,6 +191,7 @@ pub struct App {
     episode_indicators: HashMap<String, EpisodeIndicators>,
     quick_launch_active: bool,
     quick_launch_query: String,
+    anime_progress: HashMap<String, AnimeProgress>,
     quick_launch_selection: usize,
     quick_launch_items: Vec<QuickLaunchCandidate>,
     quick_launch_history: VecDeque<String>,
@@ -200,6 +204,18 @@ pub struct App {
     info_modal_error: Option<String>,
     pending_info_fetch: bool,
     info_fetch_generation: u64,
+    search_results_query: String,
+    search_results_modal_visible: bool,
+    search_results_selection: usize,
+    search_results_metadata: Option<AnimeMetadata>,
+    search_results_metadata_error: Option<String>,
+    search_results_metadata_loading: bool,
+    search_results_metadata_generation: u64,
+    search_results_metadata_pending: bool,
+    search_results_add_pending: bool,
+    keybindings_scroll: usize,
+    keybindings_content_lines: usize,
+    keybindings_viewport_lines: usize,
 }
 
 impl App {
@@ -211,20 +227,17 @@ impl App {
             right_index: 0,
             selected_anime: None,
             selected_episode: None,
-            anime_entries: Vec::new(),
+            search_results: Vec::new(),
             bookmark_entries: Vec::new(),
             episodes: Vec::new(),
             filtered_episodes: Vec::new(),
-            filtered_anime_entries: Vec::new(),
             filtered_bookmark_entries: Vec::new(),
             filtered_episode_entries: Vec::new(),
             panel_filter_mode: false,
             panel_filter_target: None,
             panel_filter_query: String::new(),
-            anime_filter_active: false,
             bookmark_filter_active: false,
             episode_filter_active: false,
-            anime_filter_query: String::new(),
             bookmark_filter_query: String::new(),
             episode_filter_query: String::new(),
             episodes_loading: false,
@@ -235,11 +248,10 @@ impl App {
             pending_download: false,
             pending_delete: false,
             pending_bookmark_toggle: false,
+            pending_episode_mark_action: None,
             pending_double_g: false,
             anime_selection_changed: false,
-            bookmarks_refresh_pending: false,
             filter_changed: false,
-            left_pane_mode: LeftPaneMode::Search,
             filter_mode: FilterMode::None,
             playback_status: PlaybackStatus::None,
             playback_in_progress: false,
@@ -248,9 +260,9 @@ impl App {
             current_playing_episode_title: None,
             playback_elapsed_seconds: None,
             details_text: concat!(
-                "Press s to search, / to filter panels, b for bookmarks, f for filters, ",
-                "Space to select, ",
-                "d to download, D to delete, q to quit."
+                "Press s to search, / to filter panels, w/u to mark current episodes, ",
+                "W/U to mark all, K to mark through current, f for filters, ",
+                "Space to select, d to download, D to delete, q to quit, Ctrl+M to mark search results."
             )
             .to_string(),
             should_quit: false,
@@ -259,6 +271,7 @@ impl App {
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
+            anime_progress: HashMap::new(),
             quick_launch_active: false,
             quick_launch_query: String::new(),
             quick_launch_selection: 0,
@@ -273,6 +286,18 @@ impl App {
             info_modal_error: None,
             pending_info_fetch: false,
             info_fetch_generation: 0,
+            search_results_query: String::new(),
+            search_results_modal_visible: false,
+            search_results_selection: 0,
+            search_results_metadata: None,
+            search_results_metadata_error: None,
+            search_results_metadata_loading: false,
+            search_results_metadata_generation: 0,
+            search_results_metadata_pending: false,
+            search_results_add_pending: false,
+            keybindings_scroll: 0,
+            keybindings_content_lines: 0,
+            keybindings_viewport_lines: 0,
         }
     }
 
@@ -314,18 +339,14 @@ impl App {
 
     pub fn panel_filter_active_for(&self, target: FilterTarget) -> bool {
         match target {
-            FilterTarget::Anime => self.anime_filter_active,
-            FilterTarget::Bookmarks => self.bookmark_filter_active,
+            FilterTarget::Anime | FilterTarget::Bookmarks => self.bookmark_filter_active,
             FilterTarget::Episodes => self.episode_filter_active,
         }
     }
 
     pub fn filter_target_for_focus(&self) -> FilterTarget {
         match self.focus {
-            Focus::Left => match self.left_pane_mode {
-                LeftPaneMode::Search => FilterTarget::Anime,
-                LeftPaneMode::Bookmarks => FilterTarget::Bookmarks,
-            },
+            Focus::Left => FilterTarget::Anime,
             Focus::Right => FilterTarget::Episodes,
         }
     }
@@ -354,16 +375,8 @@ impl App {
         }
     }
 
-    pub fn anime_entries(&self) -> &[AnimeEntry] {
-        self.visible_anime_entries()
-    }
-
     pub fn bookmark_entries(&self) -> &[FavoriteEntry] {
         self.visible_bookmark_entries()
-    }
-
-    pub fn left_pane_mode(&self) -> LeftPaneMode {
-        self.left_pane_mode
     }
 
     pub fn episodes(&self) -> &[Episode] {
@@ -408,25 +421,12 @@ impl App {
         }
     }
 
-    pub fn take_bookmark_refresh(&mut self) -> bool {
-        if self.bookmarks_refresh_pending {
-            self.bookmarks_refresh_pending = false;
-            true
-        } else {
-            false
-        }
-    }
-
     pub fn left_index(&self) -> usize {
         self.left_index
     }
 
     pub fn right_index(&self) -> usize {
         self.right_index
-    }
-
-    pub fn selected_anime(&self) -> Option<usize> {
-        self.selected_anime
     }
 
     pub fn selected_episode(&self) -> Option<usize> {
@@ -460,6 +460,27 @@ impl App {
         &self.search_query
     }
 
+    pub fn search_results_modal_visible(&self) -> bool {
+        self.search_results_modal_visible
+    }
+
+    pub fn search_results(&self) -> &[AnimeEntry] {
+        &self.search_results
+    }
+
+    pub fn search_results_query(&self) -> &str {
+        &self.search_results_query
+    }
+
+    pub fn search_results_selection(&self) -> usize {
+        self.search_results_selection
+            .min(self.search_results.len().saturating_sub(1))
+    }
+
+    pub fn current_search_result(&self) -> Option<&AnimeEntry> {
+        self.search_results.get(self.search_results_selection)
+    }
+
     pub fn details(&self) -> &str {
         &self.details_text
     }
@@ -475,27 +496,7 @@ impl App {
             .unwrap_or_default()
     }
 
-    pub fn toggle_bookmarks_mode(&mut self) {
-        match self.left_pane_mode {
-            LeftPaneMode::Search => {
-                self.left_pane_mode = LeftPaneMode::Bookmarks;
-                self.bookmarks_refresh_pending = true;
-                self.reset_navigation_state();
-                self.anime_selection_changed = false;
-                self.set_details("Bookmarks mode: loading favorites...");
-            }
-            LeftPaneMode::Bookmarks => {
-                self.left_pane_mode = LeftPaneMode::Search;
-                self.bookmarks_refresh_pending = false;
-                self.reset_navigation_state();
-                self.anime_selection_changed = !self.visible_anime_entries().is_empty();
-                self.set_details("Search mode: showing results.");
-            }
-        }
-    }
-
     pub fn load_bookmarks(&mut self, store: &FavoriteStore) {
-        self.left_pane_mode = LeftPaneMode::Bookmarks;
         self.bookmark_entries = store.list();
         self.apply_saved_panel_filter(FilterTarget::Bookmarks);
         self.reset_navigation_state();
@@ -512,6 +513,7 @@ impl App {
     pub fn sync_bookmark_cache(&mut self, store: &FavoriteStore) {
         self.bookmark_entries = store.list();
         self.apply_saved_panel_filter(FilterTarget::Bookmarks);
+        self.anime_selection_changed = !self.bookmark_entries.is_empty();
         self.refresh_quick_launch_items();
     }
 
@@ -538,6 +540,37 @@ impl App {
         self.right_index = 0;
         self.selected_episode = None;
         self.episodes_loading = false;
+    }
+
+    pub fn anime_progress_for(&self, anime_id: &str) -> Option<AnimeProgress> {
+        self.anime_progress.get(anime_id).copied()
+    }
+
+    pub fn record_selected_anime_progress(&mut self) {
+        let Some(anime) = self.current_anime() else {
+            return;
+        };
+
+        if let Some(progress) = self.compute_anime_progress() {
+            self.anime_progress.insert(anime.id.clone(), progress);
+        }
+    }
+
+    fn compute_anime_progress(&self) -> Option<AnimeProgress> {
+        let episodes = self.unfiltered_episodes();
+        if episodes.is_empty() {
+            return None;
+        }
+
+        let watched = episodes
+            .iter()
+            .filter(|episode| self.episode_indicators(&episode.id).watched)
+            .count();
+
+        Some(AnimeProgress {
+            watched,
+            total: episodes.len(),
+        })
     }
 
     pub fn clear_episodes(&mut self) {
@@ -772,10 +805,68 @@ impl App {
 
     pub fn toggle_keybindings(&mut self) {
         self.show_keybindings = !self.show_keybindings;
+        if self.show_keybindings {
+            self.keybindings_scroll = 0;
+            self.keybindings_content_lines = 0;
+            self.keybindings_viewport_lines = 0;
+        }
     }
 
     pub fn show_keybindings(&self) -> bool {
         self.show_keybindings
+    }
+
+    pub fn keybindings_scroll(&self) -> usize {
+        self.keybindings_scroll
+    }
+
+    pub fn keybindings_viewport_lines(&self) -> usize {
+        self.keybindings_viewport_lines
+    }
+
+    pub fn set_keybindings_content_lines(&mut self, lines: usize) {
+        self.keybindings_content_lines = lines;
+        self.clamp_keybindings_scroll();
+    }
+
+    pub fn set_keybindings_viewport_lines(&mut self, lines: usize) {
+        self.keybindings_viewport_lines = lines;
+        self.clamp_keybindings_scroll();
+    }
+
+    pub fn scroll_keybindings(&mut self, delta: i64) {
+        if self.keybindings_viewport_lines == 0
+            || self.keybindings_content_lines <= self.keybindings_viewport_lines
+        {
+            self.keybindings_scroll = 0;
+            return;
+        }
+
+        let max = self.max_keybindings_scroll();
+        let current = i64::try_from(self.keybindings_scroll).unwrap_or(0);
+        let max_scroll = i64::try_from(max).unwrap_or(i64::MAX);
+        let target = (current + delta).clamp(0, max_scroll);
+        self.keybindings_scroll = usize::try_from(target).unwrap_or(max);
+    }
+
+    pub fn set_keybindings_scroll(&mut self, offset: usize) {
+        self.keybindings_scroll = offset.min(self.max_keybindings_scroll());
+    }
+
+    fn clamp_keybindings_scroll(&mut self) {
+        let max_scroll = self.max_keybindings_scroll();
+        if self.keybindings_scroll > max_scroll {
+            self.keybindings_scroll = max_scroll;
+        }
+    }
+
+    fn max_keybindings_scroll(&self) -> usize {
+        self.keybindings_content_lines
+            .saturating_sub(self.keybindings_viewport_lines)
+    }
+
+    pub fn keybindings_max_scroll(&self) -> usize {
+        self.max_keybindings_scroll()
     }
 
     pub fn info_modal_visible(&self) -> bool {
@@ -844,22 +935,16 @@ impl App {
     }
 
     pub fn enter_search_mode(&mut self) {
-        let was_bookmarks = matches!(self.left_pane_mode, LeftPaneMode::Bookmarks);
         self.pending_double_g = false;
         self.input_mode = InputMode::Search;
-        self.left_pane_mode = LeftPaneMode::Search;
-        self.bookmarks_refresh_pending = false;
-        if self.visible_anime_entries().is_empty() {
+        if self.visible_bookmark_entries().is_empty() {
             self.left_index = 0;
         } else {
             self.left_index = self
                 .left_index
-                .min(self.visible_anime_entries().len().saturating_sub(1));
+                .min(self.visible_bookmark_entries().len().saturating_sub(1));
         }
         self.selected_anime = None;
-        if was_bookmarks && !self.visible_anime_entries().is_empty() {
-            self.anime_selection_changed = true;
-        }
         self.set_search_query(String::new());
         self.set_details("Search mode: type a query and press Enter.");
     }
@@ -928,22 +1013,12 @@ impl App {
                     self.set_details("Focus: search input");
                 }
                 QuickLaunchAction::OpenAnimePanel => {
-                    if matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
-                        self.toggle_bookmarks_mode();
-                    }
                     self.focus = Focus::Left;
                     self.set_details("Open: anime panel");
                 }
                 QuickLaunchAction::OpenEpisodePanel => {
                     self.focus = Focus::Right;
                     self.set_details("Open: episode panel");
-                }
-                QuickLaunchAction::OpenBookmarksPanel => {
-                    if matches!(self.left_pane_mode, LeftPaneMode::Search) {
-                        self.toggle_bookmarks_mode();
-                    }
-                    self.focus = Focus::Left;
-                    self.set_details("Open: bookmarks panel");
                 }
                 QuickLaunchAction::DownloadCurrentEpisode => {
                     self.request_download();
@@ -991,21 +1066,11 @@ impl App {
             action: QuickLaunchAction::GoToSearch,
         });
 
-        if !matches!(self.focus, Focus::Left)
-            || matches!(self.left_pane_mode, LeftPaneMode::Bookmarks)
-        {
+        if !matches!(self.focus, Focus::Left) {
             candidates.push(QuickLaunchCandidate {
                 label: "Open anime".to_string(),
                 score: 30,
                 action: QuickLaunchAction::OpenAnimePanel,
-            });
-        }
-
-        if !matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
-            candidates.push(QuickLaunchCandidate {
-                label: "Open bookmarks".to_string(),
-                score: 30,
-                action: QuickLaunchAction::OpenBookmarksPanel,
             });
         }
 
@@ -1295,6 +1360,56 @@ impl App {
         }
     }
 
+    pub fn request_mark_current_episode(&mut self, watched: bool) {
+        if self.current_episode_id().is_none() {
+            self.set_details("Highlight an episode to mark.");
+            return;
+        }
+        self.pending_episode_mark_action = Some(EpisodeMarkAction::Current { watched });
+        let verb = if watched { "watched" } else { "unwatched" };
+        self.set_details(format!("Marking current episode as {verb}."));
+    }
+
+    pub fn request_mark_all_episodes(&mut self, watched: bool) {
+        if self.unfiltered_episodes().is_empty() {
+            self.set_details("Load episodes to mark them.");
+            return;
+        }
+        self.pending_episode_mark_action = Some(EpisodeMarkAction::All { watched });
+        let verb = if watched { "watched" } else { "unwatched" };
+        self.set_details(format!("Marking all episodes as {verb}."));
+    }
+
+    pub fn request_mark_up_to_current(&mut self) {
+        if self.current_episode_id().is_none() {
+            self.set_details("Highlight an episode to anchor the range.");
+            return;
+        }
+        if self.unfiltered_episodes().is_empty() {
+            self.set_details("Load episodes to mark them.");
+            return;
+        }
+        self.pending_episode_mark_action = Some(EpisodeMarkAction::UpToCurrent);
+        self.set_details("Marking episodes up to current as watched.");
+    }
+
+    pub fn take_pending_episode_mark_action(&mut self) -> Option<EpisodeMarkAction> {
+        self.pending_episode_mark_action.take()
+    }
+
+    pub fn request_search_results_add(&mut self) {
+        self.search_results_add_pending = true;
+    }
+
+    pub fn take_pending_search_results_add(&mut self) -> bool {
+        if self.search_results_add_pending {
+            self.search_results_add_pending = false;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn toggle_bookmark(&mut self, store: &mut FavoriteStore) -> CoreResult<()> {
         let Some(anime) = self.current_anime().cloned() else {
             self.set_details("Highlight an anime to toggle bookmarks.");
@@ -1315,6 +1430,31 @@ impl App {
 
         self.sync_bookmark_cache(store);
         self.set_details(details);
+        if self.search_results_modal_visible {
+            self.close_search_results_modal();
+        }
+        Ok(())
+    }
+
+    pub fn add_current_search_result_to_bookmarks(
+        &mut self,
+        store: &mut FavoriteStore,
+    ) -> CoreResult<()> {
+        let Some(anime) = self.current_search_result().cloned() else {
+            self.set_details("Highlight an anime to add to the anime panel.");
+            return Ok(());
+        };
+
+        if self.is_bookmarked(&anime.id) {
+            self.set_details(format!("{} is already in the anime panel.", anime.title));
+            self.close_search_results_modal();
+            return Ok(());
+        }
+
+        store.add(anime.clone())?;
+        self.sync_bookmark_cache(store);
+        self.set_details(format!("Added {} to the anime panel.", anime.title));
+        self.close_search_results_modal();
         Ok(())
     }
 
@@ -1330,10 +1470,8 @@ impl App {
     pub fn search(&mut self, client: &AnimeClient<FetchBackend>) -> CoreResult<()> {
         let query = self.search_query.trim().to_owned();
         if query.is_empty() {
-            self.left_pane_mode = LeftPaneMode::Search;
-            self.bookmarks_refresh_pending = false;
-            self.anime_entries.clear();
-            self.filtered_anime_entries.clear();
+            self.search_results.clear();
+            self.search_results_modal_visible = false;
             self.clear_episodes();
             self.left_index = 0;
             self.selected_anime = None;
@@ -1344,27 +1482,159 @@ impl App {
         }
 
         let entries = client.search(&query)?;
-        self.anime_entries = entries;
-        self.left_pane_mode = LeftPaneMode::Search;
-        self.left_index = 0;
-        self.selected_anime = None;
+        self.search_results = entries;
+        self.search_results_query.clone_from(&query);
+        self.search_results_selection = 0;
+        self.search_results_modal_visible = !self.search_results.is_empty();
+        self.search_results_metadata = None;
+        self.search_results_metadata_error = None;
+        self.search_results_metadata_loading = false;
+        self.search_results_metadata_pending = false;
+        self.clear_episodes();
         self.right_index = 0;
         self.selected_episode = None;
-        self.apply_saved_panel_filter(FilterTarget::Anime);
 
-        if self.anime_entries.is_empty() {
-            self.clear_episodes();
-            self.anime_selection_changed = false;
+        if self.search_results.is_empty() {
             self.set_details(format!("No results for '{query}'"));
             self.refresh_quick_launch_items();
             return Ok(());
         }
 
-        self.clear_episodes();
-        self.anime_selection_changed = !self.visible_anime_entries().is_empty();
-        self.set_details(format!("Loaded {} results", self.anime_entries.len()));
+        self.set_details(format!(
+            "Loaded {} search results",
+            self.search_results.len()
+        ));
         self.refresh_quick_launch_items();
+        self.request_search_results_metadata();
         Ok(())
+    }
+
+    fn request_search_results_metadata(&mut self) {
+        if self.search_results.is_empty() {
+            self.search_results_metadata = None;
+            self.search_results_metadata_error = None;
+            self.search_results_metadata_loading = false;
+            self.search_results_metadata_pending = false;
+            return;
+        }
+
+        self.search_results_metadata_pending = true;
+        self.search_results_metadata_loading = true;
+        self.search_results_metadata_error = None;
+    }
+
+    pub fn take_pending_search_results_metadata_fetch(&mut self) -> bool {
+        if self.search_results_metadata_pending {
+            self.search_results_metadata_pending = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn next_search_results_metadata_generation(&mut self) -> u64 {
+        self.search_results_metadata_generation =
+            self.search_results_metadata_generation.wrapping_add(1);
+        self.search_results_metadata_generation
+    }
+
+    pub fn current_search_results_metadata_generation(&self) -> u64 {
+        self.search_results_metadata_generation
+    }
+
+    pub fn search_results_metadata_loading(&self) -> bool {
+        self.search_results_metadata_loading
+    }
+
+    pub fn search_results_metadata(&self) -> Option<&AnimeMetadata> {
+        self.search_results_metadata.as_ref()
+    }
+
+    pub fn search_results_metadata_error(&self) -> Option<&str> {
+        self.search_results_metadata_error.as_deref()
+    }
+
+    pub fn set_search_results_metadata(&mut self, metadata: AnimeMetadata) {
+        self.search_results_metadata = Some(metadata);
+        self.search_results_metadata_loading = false;
+        self.search_results_metadata_error = None;
+    }
+
+    pub fn set_search_results_metadata_error(&mut self, error: impl Into<String>) {
+        self.search_results_metadata = None;
+        self.search_results_metadata_error = Some(error.into());
+        self.search_results_metadata_loading = false;
+    }
+
+    pub fn close_search_results_modal(&mut self) {
+        self.search_results_modal_visible = false;
+        self.search_results_metadata = None;
+        self.search_results_metadata_error = None;
+        self.search_results_metadata_loading = false;
+        self.search_results_metadata_pending = false;
+    }
+
+    pub fn move_search_results_selection_up(&mut self) {
+        if self.search_results.is_empty() {
+            return;
+        }
+        let delta = self.search_results_selection.saturating_sub(1);
+        self.set_search_results_selection(delta);
+    }
+
+    pub fn move_search_results_selection_down(&mut self) {
+        if self.search_results.is_empty() {
+            return;
+        }
+        let next = (self.search_results_selection + 1).min(self.search_results.len() - 1);
+        self.set_search_results_selection(next);
+    }
+
+    fn set_search_results_selection(&mut self, index: usize) {
+        if self.search_results.is_empty() {
+            return;
+        }
+        let clamped = index.min(self.search_results.len().saturating_sub(1));
+        if self.search_results_selection != clamped {
+            self.search_results_selection = clamped;
+        }
+        self.request_search_results_metadata();
+    }
+
+    pub(crate) fn search_results_move_to_top(&mut self) {
+        self.set_search_results_selection(0);
+    }
+
+    pub(crate) fn search_results_move_to_bottom(&mut self) {
+        if self.search_results.is_empty() {
+            return;
+        }
+        self.set_search_results_selection(self.search_results.len() - 1);
+    }
+
+    pub(crate) fn search_results_half_page_down(&mut self) {
+        let len = self.search_results.len();
+        if len <= 1 {
+            return;
+        }
+        let step = (len / 2).max(1);
+        let target = (self.search_results_selection + step).min(len - 1);
+        self.set_search_results_selection(target);
+    }
+
+    pub(crate) fn search_results_half_page_up(&mut self) {
+        let len = self.search_results.len();
+        if len <= 1 {
+            return;
+        }
+        let step = (len / 2).max(1);
+        let target = self.search_results_selection.saturating_sub(step);
+        self.set_search_results_selection(target);
+    }
+
+    pub fn search_results_selected_title(&self) -> Option<&str> {
+        self.current_search_result()
+            .map(|entry| entry.title.as_str())
     }
 
     #[allow(dead_code)]
@@ -1427,13 +1697,12 @@ impl App {
     }
 
     fn current_anime(&self) -> Option<&AnimeEntry> {
-        match self.left_pane_mode {
-            LeftPaneMode::Search => self.visible_anime_entries().get(self.left_index),
-            LeftPaneMode::Bookmarks => self
-                .visible_bookmark_entries()
-                .get(self.left_index)
-                .map(|entry| &entry.anime),
+        if self.search_results_modal_visible {
+            return self.current_search_result();
         }
+        self.visible_bookmark_entries()
+            .get(self.left_index)
+            .map(|entry| &entry.anime)
     }
 
     fn current_anime_title_ref(&self) -> Option<&str> {
@@ -1469,16 +1738,8 @@ impl App {
         self.current_episode_title_ref().map(ToString::to_string)
     }
 
-    pub fn current_episode(&self) -> Option<&Episode> {
-        self.current_episode_index()
-            .and_then(|index| self.visible_episodes().get(index))
-    }
-
     fn left_items_len(&self) -> usize {
-        match self.left_pane_mode {
-            LeftPaneMode::Search => self.visible_anime_entries().len(),
-            LeftPaneMode::Bookmarks => self.visible_bookmark_entries().len(),
-        }
+        self.visible_bookmark_entries().len()
     }
 
     fn visible_episodes(&self) -> &[Episode] {
@@ -1494,14 +1755,6 @@ impl App {
             &self.filtered_episodes
         } else {
             &self.episodes
-        }
-    }
-
-    fn visible_anime_entries(&self) -> &[AnimeEntry] {
-        if self.anime_filter_active {
-            &self.filtered_anime_entries
-        } else {
-            &self.anime_entries
         }
     }
 
@@ -1522,10 +1775,7 @@ impl App {
     fn apply_panel_filter_with_query(&mut self, target: FilterTarget, query: &str) {
         let trimmed = query.trim();
         match target {
-            FilterTarget::Anime => {
-                self.apply_anime_filter(trimmed);
-            }
-            FilterTarget::Bookmarks => {
+            FilterTarget::Anime | FilterTarget::Bookmarks => {
                 self.apply_bookmark_filter(trimmed);
             }
             FilterTarget::Episodes => {
@@ -1534,45 +1784,15 @@ impl App {
         }
     }
 
-    fn apply_anime_filter(&mut self, query: &str) {
-        if query.is_empty() {
-            self.anime_filter_active = false;
-            self.filtered_anime_entries.clear();
-            if matches!(self.left_pane_mode, LeftPaneMode::Search) {
-                self.left_index = self
-                    .left_index
-                    .min(self.visible_anime_entries().len().saturating_sub(1));
-                self.selected_anime = None;
-                self.anime_selection_changed = true;
-            }
-            return;
-        }
-
-        let filtered = fuzzy_filter(&mut self.matcher, &self.anime_entries, query, |entry| {
-            entry.title.as_str()
-        });
-        self.filtered_anime_entries = filtered;
-        self.anime_filter_active = true;
-        if matches!(self.left_pane_mode, LeftPaneMode::Search) {
-            if self.left_index >= self.visible_anime_entries().len() {
-                self.left_index = 0;
-                self.selected_anime = None;
-            }
-            self.anime_selection_changed = true;
-        }
-    }
-
     fn apply_bookmark_filter(&mut self, query: &str) {
         if query.is_empty() {
             self.bookmark_filter_active = false;
             self.filtered_bookmark_entries.clear();
-            if matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
-                self.left_index = self
-                    .left_index
-                    .min(self.visible_bookmark_entries().len().saturating_sub(1));
-                self.selected_anime = None;
-                self.anime_selection_changed = true;
-            }
+            self.left_index = self
+                .left_index
+                .min(self.visible_bookmark_entries().len().saturating_sub(1));
+            self.selected_anime = None;
+            self.anime_selection_changed = true;
             return;
         }
 
@@ -1581,13 +1801,11 @@ impl App {
         });
         self.filtered_bookmark_entries = filtered;
         self.bookmark_filter_active = true;
-        if matches!(self.left_pane_mode, LeftPaneMode::Bookmarks) {
-            if self.left_index >= self.visible_bookmark_entries().len() {
-                self.left_index = 0;
-                self.selected_anime = None;
-            }
-            self.anime_selection_changed = true;
+        if self.left_index >= self.visible_bookmark_entries().len() {
+            self.left_index = 0;
+            self.selected_anime = None;
         }
+        self.anime_selection_changed = true;
     }
 
     fn apply_episode_filter(&mut self, query: &str) {
@@ -1615,16 +1833,14 @@ impl App {
 
     fn saved_query_mut(&mut self, target: FilterTarget) -> &mut String {
         match target {
-            FilterTarget::Anime => &mut self.anime_filter_query,
-            FilterTarget::Bookmarks => &mut self.bookmark_filter_query,
+            FilterTarget::Anime | FilterTarget::Bookmarks => &mut self.bookmark_filter_query,
             FilterTarget::Episodes => &mut self.episode_filter_query,
         }
     }
 
     fn saved_query(&self, target: FilterTarget) -> &str {
         match target {
-            FilterTarget::Anime => &self.anime_filter_query,
-            FilterTarget::Bookmarks => &self.bookmark_filter_query,
+            FilterTarget::Anime | FilterTarget::Bookmarks => &self.bookmark_filter_query,
             FilterTarget::Episodes => &self.episode_filter_query,
         }
     }
@@ -1691,7 +1907,6 @@ pub enum QuickLaunchAction {
     GoToSearch,
     OpenAnimePanel,
     OpenEpisodePanel,
-    OpenBookmarksPanel,
     DownloadCurrentEpisode,
     OpenInfo,
     PlayLastEpisode { episode_id: String },
