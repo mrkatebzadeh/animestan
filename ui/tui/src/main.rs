@@ -16,6 +16,7 @@
 mod app;
 mod events;
 mod playback;
+mod theme;
 mod ui;
 
 use std::collections::HashMap;
@@ -46,6 +47,7 @@ use tokio::time::sleep;
 
 use crate::app::{App, EpisodeIndicators, LeftPaneMode, PlaybackStatus};
 use crate::events::{Event, EventHandler};
+use crate::theme::Theme;
 
 struct EpisodeFetchRequest {
     generation: u64,
@@ -81,6 +83,7 @@ struct PlaybackResult {
 fn main() -> Result<()> {
     let args = Args::parse();
     let config = Arc::new(AppConfig::load_default().context("failed to load configuration")?);
+    let theme = Arc::new(Theme::default());
     init_logging("animestan-tui", args.verbosity, &config, false)
         .context("failed to initialize logging")?;
     info!("launching animestan-tui");
@@ -90,7 +93,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    run_app(&mut terminal, &config)?;
+    run_app(&mut terminal, &config, &theme)?;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -103,6 +106,7 @@ fn main() -> Result<()> {
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     config: &Arc<AppConfig>,
+    theme: &Arc<Theme>,
 ) -> Result<()> {
     let tracker = Arc::new(Mutex::new(
         EpisodeTracker::load_default(config).context("failed to load episode tracker")?,
@@ -133,7 +137,7 @@ fn run_app(
 
     loop {
         update_playback_elapsed(&mut app, &tracker);
-        terminal.draw(|frame| ui::render(frame, &app))?;
+        terminal.draw(|frame| ui::render(frame, &app, theme))?;
 
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),
