@@ -187,13 +187,9 @@ fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                 || "--/--".to_string(),
                 |stats| format!("{}/{}", stats.watched, stats.total),
             );
-            let year = stats
-                .and_then(|stats| stats.start_year)
-                .map_or_else(|| "—".to_string(), |value| value.to_string());
             Row::new(vec![
                 Cell::from(entry.anime.title.clone()),
                 Cell::from(progress),
-                Cell::from(year),
             ])
         })
         .collect();
@@ -210,16 +206,11 @@ fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Percentage(55),
-            Constraint::Percentage(25),
-            Constraint::Percentage(20),
-        ],
+        [Constraint::Percentage(60), Constraint::Percentage(40)],
     )
     .header(Row::new(vec![
         Cell::from(Span::styled("Title", theme.title_style())),
         Cell::from(Span::styled("Progress", theme.title_style())),
-        Cell::from(Span::styled("Year", theme.title_style())),
     ]))
     .block(block)
     .column_spacing(1)

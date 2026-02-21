@@ -19,7 +19,6 @@ use animestan_core::{
     AnimeClient, AnimeEntry, AnimeMetadata, CoreResult, Episode, FavoriteEntry, FavoriteStore,
     FetchBackend, PlaybackFilter,
 };
-use chrono::{Datelike, TimeZone, Utc};
 use crossterm::event::KeyEvent;
 use nucleo::{
     Config, Matcher,
@@ -141,7 +140,6 @@ pub struct EpisodeIndicators {
 pub struct AnimeProgress {
     pub watched: usize,
     pub total: usize,
-    pub start_year: Option<u16>,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -562,15 +560,10 @@ impl App {
             .iter()
             .filter(|episode| self.episode_indicators(&episode.id).watched)
             .count();
-        let start_year = episodes
-            .iter()
-            .filter_map(|episode| episode.air_date.and_then(year_from_air_date))
-            .min();
 
         Some(AnimeProgress {
             watched,
             total: episodes.len(),
-            start_year,
         })
     }
 
@@ -1843,20 +1836,6 @@ where
         .into_iter()
         .map(|(candidate, _)| source[candidate.index].clone())
         .collect()
-}
-
-fn year_from_air_date(value: i64) -> Option<u16> {
-    if value <= 0 {
-        return None;
-    }
-
-    let year = if value >= 1_000_000_000 {
-        Utc.timestamp_opt(value, 0).single().map(|dt| dt.year())
-    } else {
-        i32::try_from(value / 10_000).ok()
-    };
-
-    year.and_then(|value| u16::try_from(value).ok())
 }
 
 #[derive(Clone)]
