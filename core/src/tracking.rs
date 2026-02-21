@@ -146,6 +146,48 @@ impl EpisodeTracker {
         self.save()
     }
 
+    /// Unmarks an episode as watched and persists the tracker state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TrackingWrite`] if the progress file cannot be written.
+    pub fn mark_unwatched(&mut self, episode_id: &str) -> CoreResult<()> {
+        let entry = self
+            .store
+            .episodes
+            .entry(episode_id.to_string())
+            .or_default();
+        entry.watched = false;
+        entry.updated_at = now_epoch();
+        info!("marked '{episode_id}' as unwatched");
+        self.save()
+    }
+
+    /// Marks a collection of episodes as watched or unwatched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TrackingWrite`] if the progress file cannot be written.
+    pub fn mark_many(&mut self, episode_ids: &[String], watched: bool) -> CoreResult<()> {
+        if episode_ids.is_empty() {
+            return Ok(());
+        }
+
+        let timestamp = now_epoch();
+        for episode_id in episode_ids {
+            let entry = self.store.episodes.entry(episode_id.clone()).or_default();
+            entry.watched = watched;
+            entry.updated_at = timestamp;
+        }
+
+        let result = self.save();
+        if result.is_ok() {
+            let action = if watched { "watched" } else { "unwatched" };
+            info!("marked {} episodes as {action}", episode_ids.len());
+        }
+        result
+    }
+
     /// Returns the persisted playback state for an episode, when available.
     #[must_use]
     pub fn state_for(&self, episode_id: &str) -> Option<EpisodePlaybackState> {
