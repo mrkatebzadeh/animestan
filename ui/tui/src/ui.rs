@@ -361,7 +361,12 @@ fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
             theme.item_style().bg(theme.non_interactive_color()),
         ),
         Span::raw(spacer),
-        Span::styled(hint_text, theme.non_interactive_style()),
+        Span::styled(
+            hint_text,
+            Style::default()
+                .bg(theme.non_interactive_color())
+                .add_modifier(Modifier::REVERSED),
+        ),
     ]);
     let status =
         Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
