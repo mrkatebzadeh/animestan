@@ -1,4 +1,7 @@
-use std::{fs, io, path::PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use animestan_core::{AppConfig, CoreResult};
 use anyhow::{Context, anyhow};
@@ -184,20 +187,32 @@ impl Theme {
         let path = Self::config_path(config);
         match fs::read_to_string(&path) {
             Ok(contents) => Self::from_toml(&contents),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                Self::create_default_file(&path)?;
+                Self::from_toml(DEFAULT_THEME_TOML)
+            }
             Err(err) => {
                 Err(err).context(format!("failed to read theme file at {}", path.display()))?
             }
         }
     }
 
-    #[must_use]
-    pub fn default_toml() -> &'static str {
-        DEFAULT_THEME_TOML
-    }
-
     fn config_path(_config: &AppConfig) -> PathBuf {
         AppConfig::config_dir().join("theme.toml")
+    }
+
+    fn create_default_file(path: &Path) -> CoreResult<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).context(format!(
+                "failed to create theme directory at {}",
+                parent.display()
+            ))?;
+        }
+        fs::write(path, DEFAULT_THEME_TOML).context(format!(
+            "failed to write default theme file at {}",
+            path.display()
+        ))?;
+        Ok(())
     }
 
     fn from_toml(contents: &str) -> CoreResult<Self> {
