@@ -248,29 +248,15 @@ fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
     let details = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(details, chunks[0]);
-
-    let bottom_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(chunks[1]);
-
-    let left_status = format!(
-        "Mode: {} | Selection: {}",
-        app.mode_label(),
-        app.current_selection_label()
-    );
-    let status_line = Line::from(Span::styled(
-        left_status,
-        theme.item_style().bg(theme.non_interactive_color()),
-    ));
-    let status =
-        Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(status, bottom_chunks[0]);
 
     let now_playing_label = app
         .current_playback_label()
@@ -285,8 +271,21 @@ fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
         Span::raw(" | "),
         Span::styled(hint, theme.non_interactive_style()),
     ];
-    let paragraph = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, bottom_chunks[1]);
+    let now_playing = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
+    frame.render_widget(now_playing, chunks[1]);
+
+    let left_status = format!(
+        "Mode: {} | Selection: {}",
+        app.mode_label(),
+        app.current_selection_label()
+    );
+    let status_line = Line::from(Span::styled(
+        left_status,
+        theme.item_style().bg(theme.non_interactive_color()),
+    ));
+    let status =
+        Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
+    frame.render_widget(status, chunks[2]);
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
