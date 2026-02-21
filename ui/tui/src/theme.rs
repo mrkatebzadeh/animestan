@@ -5,6 +5,33 @@ use anyhow::{Context, anyhow};
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
+const DEFAULT_THEME_TOML: &str = r##"# Animestan TUI theme configuration
+# Every panel, title, item, selected item, and non-interactive text uses
+# the colors defined below. Modify any value to change the look of the UI.
+
+[panels]
+border = "#5ad9ff"
+focused_border = "#22b8ff"
+
+[titles]
+fg = "#8cd7ff"
+
+[items]
+fg = "#f1f3ff"
+
+[selected_item]
+fg = "#ffe066"
+bg = "#1a1d26"
+
+[non_interactive]
+fg = "#8c94a6"
+
+[heatmap]
+watched = "#20b45a"
+in_progress = "#e1c846"
+upcoming = "#6f748b"
+"##;
+
 #[derive(Clone, Debug)]
 pub struct Theme {
     panels: PanelStyle,
@@ -162,6 +189,11 @@ impl Theme {
                 Err(err).context(format!("failed to read theme file at {}", path.display()))?
             }
         }
+    }
+
+    #[must_use]
+    pub fn default_toml() -> &'static str {
+        DEFAULT_THEME_TOML
     }
 
     fn config_path(_config: &AppConfig) -> PathBuf {
