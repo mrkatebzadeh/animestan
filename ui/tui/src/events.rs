@@ -265,8 +265,7 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
-    if app.search_results_modal_visible() {
-        handle_search_results_modal(app, key_event);
+    if app.search_results_modal_visible() && handle_search_results_modal(app, key_event) {
         return;
     }
 
@@ -350,7 +349,11 @@ fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
     }
 }
 
-fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) {
+fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) -> bool {
+    if handle_search_results_navigation_shortcuts(app, key_event) {
+        return true;
+    }
+
     match key_event.code {
         KeyCode::Esc => app.close_search_results_modal(),
         KeyCode::Enter => app.request_search_results_add(),
@@ -363,6 +366,8 @@ fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) {
         }
         _ => {}
     }
+
+    true
 }
 
 fn handle_enter_in_normal_mode(app: &mut App) {
@@ -405,6 +410,47 @@ fn handle_normal_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> boo
         KeyCode::Char('u' | 'U') => {
             if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
                 app.half_page_up();
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn handle_search_results_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
+    if app.search_results().is_empty() {
+        return false;
+    }
+
+    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
+        if app.consume_pending_double_g() {
+            app.search_results_move_to_top();
+        } else {
+            app.start_pending_double_g();
+        }
+        return true;
+    }
+
+    app.cancel_pending_double_g();
+
+    match key_event.code {
+        KeyCode::Char('G') => {
+            app.search_results_move_to_bottom();
+            true
+        }
+        KeyCode::Char('d' | 'D') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.search_results_half_page_down();
+                true
+            } else {
+                false
+            }
+        }
+        KeyCode::Char('u' | 'U') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.search_results_half_page_up();
                 true
             } else {
                 false

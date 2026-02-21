@@ -1433,20 +1433,58 @@ impl App {
         if self.search_results.is_empty() {
             return;
         }
-        if self.search_results_selection > 0 {
-            self.search_results_selection -= 1;
-        }
-        self.request_search_results_metadata();
+        let delta = self.search_results_selection.saturating_sub(1);
+        self.set_search_results_selection(delta);
     }
 
     pub fn move_search_results_selection_down(&mut self) {
         if self.search_results.is_empty() {
             return;
         }
-        if self.search_results_selection + 1 < self.search_results.len() {
-            self.search_results_selection += 1;
+        let next = (self.search_results_selection + 1).min(self.search_results.len() - 1);
+        self.set_search_results_selection(next);
+    }
+
+    fn set_search_results_selection(&mut self, index: usize) {
+        if self.search_results.is_empty() {
+            return;
+        }
+        let clamped = index.min(self.search_results.len().saturating_sub(1));
+        if self.search_results_selection != clamped {
+            self.search_results_selection = clamped;
         }
         self.request_search_results_metadata();
+    }
+
+    pub(crate) fn search_results_move_to_top(&mut self) {
+        self.set_search_results_selection(0);
+    }
+
+    pub(crate) fn search_results_move_to_bottom(&mut self) {
+        if self.search_results.is_empty() {
+            return;
+        }
+        self.set_search_results_selection(self.search_results.len() - 1);
+    }
+
+    pub(crate) fn search_results_half_page_down(&mut self) {
+        let len = self.search_results.len();
+        if len <= 1 {
+            return;
+        }
+        let step = (len / 2).max(1);
+        let target = (self.search_results_selection + step).min(len - 1);
+        self.set_search_results_selection(target);
+    }
+
+    pub(crate) fn search_results_half_page_up(&mut self) {
+        let len = self.search_results.len();
+        if len <= 1 {
+            return;
+        }
+        let step = (len / 2).max(1);
+        let target = self.search_results_selection.saturating_sub(step);
+        self.set_search_results_selection(target);
     }
 
     pub fn search_results_selected_title(&self) -> Option<&str> {
