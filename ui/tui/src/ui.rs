@@ -29,7 +29,7 @@ use crate::app::{
     App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode, LeftPaneMode,
 };
 use crate::events::keybindings;
-use crate::theme::Theme;
+use crate::theme::{HeatmapVariant, Theme};
 
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     let chunks = Layout::default()
@@ -398,7 +398,7 @@ fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Them
     render_heatmap_info(frame, chunks[1], app);
 }
 
-fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, _theme: &Theme) {
+fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -435,7 +435,7 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, _theme: &Theme)
             }
 
             let indicators = app.episode_indicators(&episodes[idx].id);
-            let mut style = heatmap_cell_style(indicators, normalized[idx]);
+            let mut style = heatmap_cell_style(indicators, normalized[idx], theme);
             if selected == Some(idx) {
                 style = style.add_modifier(Modifier::REVERSED);
                 style = style.add_modifier(Modifier::UNDERLINED);
@@ -550,15 +550,16 @@ fn heatmap_columns(width: usize) -> usize {
     ((width + 1).saturating_div(2)).max(1)
 }
 
-fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64) -> Style {
-    let base = if indicators.watched {
-        (32, 180, 90)
+fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64, theme: &Theme) -> Style {
+    let variant = if indicators.watched {
+        HeatmapVariant::Watched
     } else if indicators.in_progress {
-        (225, 200, 70)
+        HeatmapVariant::InProgress
     } else {
-        (110, 115, 140)
+        HeatmapVariant::Upcoming
     };
 
+    let base = theme.heatmap_color(variant);
     let color = tinted_color(base, intensity);
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }

@@ -6,6 +6,7 @@ pub struct Theme {
     titles: TextStyle,
     items: TextStyle,
     selected_item: TextStyle,
+    heatmap: HeatmapPalette,
     non_interactive: TextStyle,
 }
 
@@ -13,6 +14,20 @@ pub struct Theme {
 struct PanelStyle {
     border: Color,
     focused_border: Color,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum HeatmapVariant {
+    Watched,
+    InProgress,
+    Upcoming,
+}
+
+#[derive(Clone, Debug)]
+struct HeatmapPalette {
+    watched: (u8, u8, u8),
+    in_progress: (u8, u8, u8),
+    upcoming: (u8, u8, u8),
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +54,11 @@ impl Default for Theme {
             selected_item: TextStyle {
                 fg: Color::Yellow,
                 bg: None,
+            },
+            heatmap: HeatmapPalette {
+                watched: (32, 180, 90),
+                in_progress: (225, 200, 70),
+                upcoming: (110, 115, 140),
             },
             non_interactive: TextStyle {
                 fg: Color::DarkGray,
@@ -87,6 +107,15 @@ impl Theme {
     #[must_use]
     pub fn title_color(&self) -> Color {
         self.titles.fg
+    }
+
+    #[must_use]
+    pub fn heatmap_color(&self, variant: HeatmapVariant) -> (u8, u8, u8) {
+        match variant {
+            HeatmapVariant::Watched => self.heatmap.watched,
+            HeatmapVariant::InProgress => self.heatmap.in_progress,
+            HeatmapVariant::Upcoming => self.heatmap.upcoming,
+        }
     }
 }
 
