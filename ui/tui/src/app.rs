@@ -27,7 +27,7 @@ use nucleo::{
 
 use crate::events;
 
-const DEFAULT_SEARCH_QUERY: &str = "Naruto";
+const DEFAULT_SEARCH_QUERY: &str = "";
 const QUICK_LAUNCH_HISTORY_SIZE: usize = 12;
 const QUICK_LAUNCH_RECENT_PLAY_SIZE: usize = 8;
 
@@ -197,6 +197,7 @@ pub struct App {
     search_results_metadata_loading: bool,
     search_results_metadata_generation: u64,
     search_results_metadata_pending: bool,
+    search_results_add_pending: bool,
 }
 
 impl App {
@@ -273,6 +274,7 @@ impl App {
             search_results_metadata_loading: false,
             search_results_metadata_generation: 0,
             search_results_metadata_pending: false,
+            search_results_add_pending: false,
         }
     }
 
@@ -1249,6 +1251,19 @@ impl App {
         }
     }
 
+    pub fn request_search_results_add(&mut self) {
+        self.search_results_add_pending = true;
+    }
+
+    pub fn take_pending_search_results_add(&mut self) -> bool {
+        if self.search_results_add_pending {
+            self.search_results_add_pending = false;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn toggle_bookmark(&mut self, store: &mut FavoriteStore) -> CoreResult<()> {
         let Some(anime) = self.current_anime().cloned() else {
             self.set_details("Highlight an anime to toggle bookmarks.");
@@ -1272,6 +1287,28 @@ impl App {
         if self.search_results_modal_visible {
             self.close_search_results_modal();
         }
+        Ok(())
+    }
+
+    pub fn add_current_search_result_to_bookmarks(
+        &mut self,
+        store: &mut FavoriteStore,
+    ) -> CoreResult<()> {
+        let Some(anime) = self.current_search_result().cloned() else {
+            self.set_details("Highlight an anime to add to the anime panel.");
+            return Ok(());
+        };
+
+        if self.is_bookmarked(&anime.id) {
+            self.set_details(format!("{} is already in the anime panel.", anime.title));
+            self.close_search_results_modal();
+            return Ok(());
+        }
+
+        store.add(anime.clone())?;
+        self.sync_bookmark_cache(store);
+        self.set_details(format!("Added {} to the anime panel.", anime.title));
+        self.close_search_results_modal();
         Ok(())
     }
 

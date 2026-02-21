@@ -164,6 +164,12 @@ fn run_app(
             }
         }
 
+        if app.take_pending_search_results_add() {
+            if let Err(err) = app.add_current_search_result_to_bookmarks(&mut favorites) {
+                app.set_details(format!("Failed to add anime to panel: {err}"));
+            }
+        }
+
         handle_search(&mut app, client.as_ref());
         handle_filters(&mut app, &tracker, &request_tx);
         handle_metadata_fetch(
