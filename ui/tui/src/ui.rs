@@ -75,20 +75,18 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(3),
             Constraint::Length(list_length),
             Constraint::Length(heatmap_length),
             Constraint::Length(session_length),
         ])
         .split(frame_area);
 
-    render_hint_panel(frame, chunks[0], theme);
-    render_search_bar(frame, chunks[1], app, theme);
+    render_search_bar(frame, chunks[0], app, theme);
 
     let lists = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
+        .split(chunks[1]);
 
     let left_target = FilterTarget::Anime;
     let left_filter_visible = should_show_panel_filter(app, left_target);
@@ -122,8 +120,8 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         theme,
     );
 
-    render_episode_heatmap(frame, chunks[3], app, theme);
-    render_session_panel(frame, chunks[4], app, theme);
+    render_episode_heatmap(frame, chunks[2], app, theme);
+    render_session_panel(frame, chunks[3], app, theme);
     render_search_results_modal(frame, app, theme);
     render_keybindings_modal(frame, app, theme);
     render_info_modal(frame, app, theme);
@@ -300,16 +298,6 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     }
 }
 
-fn render_hint_panel(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style(theme, false));
-    let paragraph = Paragraph::new("Press ? to list keybinding")
-        .alignment(Alignment::Center)
-        .block(block);
-    frame.render_widget(paragraph, area);
-}
-
 fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -360,13 +348,27 @@ fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
         app.mode_label(),
         app.current_selection_label()
     );
+    let hint_text = "Press ? for keybindings";
+    let hint_width = u16::try_from(hint_text.chars().count())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2);
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(1), Constraint::Length(hint_width)])
+        .split(chunks[2]);
+
     let status_line = Line::from(Span::styled(
         left_status,
         theme.item_style().bg(theme.non_interactive_color()),
     ));
     let status =
         Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(status, chunks[2]);
+    frame.render_widget(status, columns[0]);
+
+    let hint = Paragraph::new(Span::styled(hint_text, theme.non_interactive_style()))
+        .alignment(Alignment::Right)
+        .style(Style::default().bg(theme.non_interactive_color()));
+    frame.render_widget(hint, columns[1]);
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
