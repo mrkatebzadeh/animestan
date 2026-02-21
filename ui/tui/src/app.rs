@@ -1639,11 +1639,6 @@ impl App {
         self.current_episode_title_ref().map(ToString::to_string)
     }
 
-    pub fn current_episode(&self) -> Option<&Episode> {
-        self.current_episode_index()
-            .and_then(|index| self.visible_episodes().get(index))
-    }
-
     fn left_items_len(&self) -> usize {
         self.visible_bookmark_entries().len()
     }

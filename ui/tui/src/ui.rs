@@ -354,13 +354,7 @@ fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Them
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)])
-        .split(inner);
-
-    render_heatmap_grid(frame, chunks[0], app, theme);
-    render_heatmap_info(frame, chunks[1], app);
+    render_heatmap_grid(frame, inner, app, theme);
 }
 
 fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
@@ -427,43 +421,6 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
     frame.render_widget(grid, area);
 }
 
-fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
-    if area.height == 0 || area.width == 0 {
-        return;
-    }
-
-    let lines = if let Some(episode) = app.current_episode() {
-        let mut info = Vec::new();
-
-        if let Some(duration) = episode.duration_secs {
-            info.push(Line::from(format!(
-                "Duration: {}",
-                format_duration(duration)
-            )));
-        }
-
-        if let Some(synopsis) = episode.synopsis.as_deref() {
-            let trimmed = synopsis.trim();
-            if !trimmed.is_empty() {
-                info.push(Line::from(trimmed));
-            }
-        }
-
-        if info.is_empty() {
-            info.push(Line::from("Episode metadata is unavailable."));
-        }
-
-        info
-    } else {
-        vec![Line::from("Select an episode to show overview.")]
-    };
-
-    let info = Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .alignment(Alignment::Left);
-    frame.render_widget(info, area);
-}
-
 #[allow(clippy::cast_precision_loss)]
 fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
     if episodes.is_empty() {
@@ -517,16 +474,12 @@ fn heatmap_columns(width: usize) -> usize {
 }
 
 fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64, theme: &Theme) -> Style {
-    let variant = if indicators.watched {
-        HeatmapVariant::Watched
-    } else if indicators.in_progress {
-        HeatmapVariant::InProgress
+    let color = if indicators.watched {
+        let base = theme.heatmap_color(HeatmapVariant::Watched);
+        tinted_color(base, intensity)
     } else {
-        HeatmapVariant::Upcoming
+        Color::DarkGray
     };
-
-    let base = theme.heatmap_color(variant);
-    let color = tinted_color(base, intensity);
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
@@ -537,19 +490,6 @@ fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
     let green = (f64::from(g) * factor).clamp(0.0, 255.0) as u8;
     let blue = (f64::from(b) * factor).clamp(0.0, 255.0) as u8;
     Color::Rgb(red, green, blue)
-}
-
-fn format_duration(seconds: u32) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-    if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
 }
 
 fn border_style(theme: &Theme, focused: bool) -> Style {
