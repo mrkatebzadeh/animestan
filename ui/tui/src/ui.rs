@@ -30,7 +30,16 @@ use crate::app::{App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus,
 use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
-pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
+const KEYBINDINGS_HEADER: [&str; 6] = [
+    " █████╗ ███╗   ██╗██╗███╗   ███╗███████╗███████╗████████╗ █████╗ ███╗   ██╗",
+    "██╔══██╗████╗  ██║██║████╗ ████║██╔════╝██╔════╝╚══██╔══╝██╔══██╗████╗  ██║",
+    "███████║██╔██╗ ██║██║██╔████╔██║█████╗  ███████╗   ██║   ███████║██╔██╗ ██║",
+    "██╔══██║██║╚██╗██║██║██║╚██╔╝██║██╔══╝  ╚════██║   ██║   ██╔══██║██║╚██╗██║",
+    "██║  ██║██║ ╚████║██║██║ ╚═╝ ██║███████╗███████║   ██║   ██║  ██║██║ ╚████║",
+    "╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝",
+];
+
+pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let frame_area = frame.area();
     let heatmap_width = frame_area.width.saturating_sub(2).max(1);
     let columns = heatmap_columns(heatmap_width as usize);
@@ -558,7 +567,7 @@ fn border_style(theme: &Theme, focused: bool) -> Style {
     theme.panel_border_style(focused)
 }
 
-fn render_keybindings_modal(frame: &mut Frame, app: &App, theme: &Theme) {
+fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: &Theme) {
     if !app.show_keybindings() {
         return;
     }
@@ -576,6 +585,10 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App, theme: &Theme) {
         .max(1);
 
     let mut lines = Vec::new();
+    for header in KEYBINDINGS_HEADER {
+        lines.push(Line::from(header));
+    }
+    lines.push(Line::default());
     let mut current_mode: Option<InputMode> = None;
     for binding in bindings {
         if current_mode != Some(binding.mode) {
@@ -597,16 +610,24 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App, theme: &Theme) {
         ]));
     }
 
+    app.set_keybindings_content_lines(lines.len());
     let frame_area = frame.area();
-    let width = frame_area.width.saturating_sub(4).min(80);
-    let max_height = frame_area.height.saturating_sub(4);
-    if width == 0 || max_height == 0 {
-        return;
+    let computed_width = u32::from(frame_area.width).saturating_mul(80) / 100;
+    let mut width = u16::try_from(computed_width).unwrap_or(u16::MAX);
+    let min_width = 40u16;
+    if width < min_width {
+        width = min_width;
     }
-    let content_height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    let mut height = content_height.saturating_add(4);
-    if height > max_height {
-        height = max_height;
+    width = width.min(frame_area.width);
+    let computed_height = u32::from(frame_area.height).saturating_mul(70) / 100;
+    let mut height = u16::try_from(computed_height).unwrap_or(u16::MAX);
+    let min_height = 10u16;
+    if height < min_height {
+        height = min_height;
+    }
+    height = height.min(frame_area.height);
+    if width == 0 || height == 0 {
+        return;
     }
 
     let area = centered_rect(frame_area, width, height);
@@ -614,7 +635,13 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App, theme: &Theme) {
         .title("Keybindings")
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
+    let inner = block.inner(area);
+    app.set_keybindings_viewport_lines(inner.height as usize);
+    let scroll_offset = u16::try_from(app.keybindings_scroll()).unwrap_or(u16::MAX);
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: true })
+        .scroll((0, scroll_offset));
 
     frame.render_widget(Clear, area);
     frame.render_widget(paragraph, area);
