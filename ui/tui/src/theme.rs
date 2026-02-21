@@ -13,26 +13,26 @@ const DEFAULT_THEME_TOML: &str = r##"# Animestan TUI theme configuration
 # the colors defined below. Modify any value to change the look of the UI.
 
 [panels]
-border = "#5ad9ff"
-focused_border = "#22b8ff"
+border = "#737994"
+focused_border = "#8CAAEE"
 
 [titles]
-fg = "#8cd7ff"
+fg = "#A6D189"
 
 [items]
-fg = "#f1f3ff"
+fg = "#C6D0F5"
 
 [selected_item]
-fg = "#ffe066"
-bg = "#1a1d26"
+fg = "#232634"
+bg = "#F2D5CF"
 
 [non_interactive]
-fg = "#8c94a6"
+fg = "#838BA7"
 
 [heatmap]
-watched = "#20b45a"
-in_progress = "#e1c846"
-upcoming = "#6f748b"
+watched = "#A6D189"
+in_progress = "#E5C890"
+upcoming = "#838BA7"
 "##;
 
 #[derive(Clone, Debug)]
