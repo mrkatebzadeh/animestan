@@ -72,9 +72,11 @@ dependencies = [
  "futures",
  "nucleo",
  "ratatui",
+ "serde",
  "serde_json",
  "spdlog-rs",
  "tokio",
+ "toml",
 ]
 
 [[package]]
