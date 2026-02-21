@@ -636,7 +636,6 @@ fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: &Theme) {
 
     let area = centered_rect(frame_area, width, height);
     let block = Block::default()
-        .title("Keybindings")
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
     let inner = block.inner(area);
