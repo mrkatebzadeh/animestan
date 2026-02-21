@@ -45,7 +45,7 @@ use tokio::sync::mpsc::{
 };
 use tokio::time::sleep;
 
-use crate::app::{App, EpisodeIndicators, PlaybackStatus};
+use crate::app::{App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
 use crate::events::{Event, EventHandler};
 use crate::theme::Theme;
 
@@ -298,6 +298,8 @@ fn run_app(
             continue;
         }
 
+        handle_episode_mark_actions(&mut app, &tracker, config);
+
         handle_playback_requests(&mut app, config, &playback_request_tx);
         drain_playback_request_queue(
             &mut app,
@@ -548,6 +550,104 @@ fn handle_delete(app: &mut App, config: &AppConfig, tracker: &Arc<Mutex<EpisodeT
     }
 
     false
+}
+
+fn handle_episode_mark_actions(
+    app: &mut App,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
+) {
+    let Some(action) = app.take_pending_episode_mark_action() else {
+        return;
+    };
+
+    let mark_result = {
+        let Ok(mut guard) = tracker.lock() else {
+            app.set_details("Episode tracker lock poisoned.");
+            return;
+        };
+        perform_episode_mark_action(app, &mut guard, action)
+    };
+
+    let message = match mark_result {
+        Ok(message) => message,
+        Err(err) => {
+            app.set_details(err);
+            return;
+        }
+    };
+
+    if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+        app.set_details(format!("Failed to refresh indicators: {err}"));
+    } else {
+        app.set_details(message);
+    }
+}
+
+fn perform_episode_mark_action(
+    app: &App,
+    tracker: &mut EpisodeTracker,
+    action: EpisodeMarkAction,
+) -> Result<String, String> {
+    match action {
+        EpisodeMarkAction::Current { watched } => {
+            let episode_id = app
+                .current_episode_id()
+                .ok_or_else(|| "Highlight an episode to mark it.".to_string())?;
+            let result = if watched {
+                tracker.mark_watched(&episode_id)
+            } else {
+                tracker.mark_unwatched(&episode_id)
+            };
+            result.map_err(|err| err.to_string())?;
+            let message = if watched {
+                "Marked current episode as watched."
+            } else {
+                "Marked current episode as unwatched."
+            };
+            Ok(message.to_string())
+        }
+        EpisodeMarkAction::All { watched } => {
+            let episodes = app.unfiltered_episodes();
+            if episodes.is_empty() {
+                return Err("No episodes loaded to mark.".to_string());
+            }
+            let ids: Vec<String> = episodes.iter().map(|episode| episode.id.clone()).collect();
+            tracker
+                .mark_many(&ids, watched)
+                .map_err(|err| err.to_string())?;
+            let message = if watched {
+                "Marked all loaded episodes as watched."
+            } else {
+                "Marked all loaded episodes as unwatched."
+            };
+            Ok(message.to_string())
+        }
+        EpisodeMarkAction::UpToCurrent => {
+            let current_id = app
+                .current_episode_id()
+                .ok_or_else(|| "Highlight an episode to set the range.".to_string())?;
+            let mut episodes: Vec<Episode> = app.unfiltered_episodes().to_vec();
+            if episodes.is_empty() {
+                return Err("No episodes loaded to mark.".to_string());
+            }
+            episodes.sort_by(|a, b| a.number.cmp(&b.number));
+            let mut ids = Vec::new();
+            for episode in episodes {
+                ids.push(episode.id.clone());
+                if episode.id == current_id {
+                    break;
+                }
+            }
+            if ids.is_empty() || ids.last() != Some(&current_id) {
+                return Err("Current episode is not present in the loaded list.".to_string());
+            }
+            tracker
+                .mark_many(&ids, true)
+                .map_err(|err| err.to_string())?;
+            Ok("Marked episodes up to current as watched.".to_string())
+        }
+    }
 }
 
 fn handle_playback_requests(
