@@ -30,17 +30,45 @@ use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
+    let frame_area = frame.area();
+    let heatmap_width = frame_area.width.saturating_sub(2).max(1);
+    let columns = heatmap_columns(heatmap_width as usize);
+    let total_episodes = app.episodes().len();
+    let rows = if total_episodes == 0 {
+        1
+    } else {
+        total_episodes.div_ceil(columns.max(1))
+    };
+    let total_height = frame_area.height as usize;
+    let top_height = 3 + 3;
+    let session_default = 7;
+    let session_min = 3;
+    let min_heatmap_height = 7;
+    let requested_heatmap_height = rows.max(min_heatmap_height);
+    let available_for_session =
+        total_height.saturating_sub(top_height + requested_heatmap_height + session_min);
+    let session_height_usize = available_for_session.min(session_default);
+    let max_heatmap_height = total_height
+        .saturating_sub(top_height + session_height_usize)
+        .max(1);
+    let heatmap_height = requested_heatmap_height.min(max_heatmap_height);
+    let heatmap_length = u16::try_from(heatmap_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+    let list_height =
+        total_height.saturating_sub(top_height + session_height_usize + heatmap_height);
+    let list_length = u16::try_from(list_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+    let session_length =
+        u16::try_from(session_height_usize.min(u16::MAX as usize)).unwrap_or(u16::MAX);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(7),
-            Constraint::Length(4),
-            Constraint::Length(3),
+            Constraint::Length(list_length),
+            Constraint::Length(heatmap_length),
+            Constraint::Length(session_length),
         ])
-        .split(frame.area());
+        .split(frame_area);
 
     render_hint_panel(frame, chunks[0], theme);
     render_search_bar(frame, chunks[1], app, theme);
@@ -50,7 +78,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[2]);
 
-    let left_base_title = "Marked Anime";
+    let left_base_title = "Anime";
     let anime_items = build_bookmark_items(app);
     let left_target = FilterTarget::Anime;
     let mut left_title = left_base_title.to_string();
@@ -97,8 +125,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     );
 
     render_episode_heatmap(frame, chunks[3], app, theme);
-    render_details(frame, chunks[4], app, theme);
-    render_status_bar(frame, chunks[5], app, theme);
+    render_session_panel(frame, chunks[4], app, theme);
     render_search_results_modal(frame, app, theme);
     render_keybindings_modal(frame, app, theme);
     render_info_modal(frame, app, theme);
@@ -227,67 +254,63 @@ fn render_hint_panel(frame: &mut Frame, area: Rect, theme: &Theme) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_details(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let details_block = Block::default()
-        .title("Details")
+fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+
     let pane_label = "Anime";
     let filter_label = app.filter_label().unwrap_or("All");
     let mut lines = vec![Line::from(app.details())];
     lines.push(Line::from(format!(
         "Pane: {pane_label} | Filter: {filter_label}"
     )));
-    let left_status = format!(
-        "Mode: {} | {}",
-        app.mode_label(),
-        app.current_selection_label()
-    );
-    let inner_area = details_block.inner(area);
-    frame.render_widget(details_block, area);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner_area);
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
 
     let details = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(details, chunks[0]);
 
+    let now_playing_label = app
+        .current_playback_label()
+        .unwrap_or_else(|| "Idle".to_string());
+    let elapsed = format_elapsed(app.playback_elapsed());
+    let spans = vec![
+        Span::styled(now_playing_label, theme.title_style()),
+        Span::raw(" | "),
+        Span::styled(format!("Elapsed: {elapsed}"), theme.item_style()),
+    ];
+    let now_playing = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
+    frame.render_widget(now_playing, chunks[1]);
+
+    let left_status = format!(
+        "Mode: {} | Selection: {}",
+        app.mode_label(),
+        app.current_selection_label()
+    );
     let status_line = Line::from(Span::styled(
         left_status,
         theme.item_style().bg(theme.non_interactive_color()),
     ));
     let status =
         Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(status, chunks[1]);
-}
-
-fn render_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let now_playing_label = app
-        .current_playback_label()
-        .unwrap_or_else(|| "Idle".to_string());
-    let elapsed = format_elapsed(app.playback_elapsed());
-    let hint = "Space=Play/Pause q=Quit";
-
-    let spans = vec![
-        Span::styled(now_playing_label, theme.title_style()),
-        Span::raw(" | "),
-        Span::styled(format!("Elapsed: {elapsed}"), theme.item_style()),
-        Span::raw(" | "),
-        Span::styled(hint, theme.non_interactive_style()),
-    ];
-
-    let block = Block::default()
-        .title("Now Playing")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(border_style(theme, false));
-
-    let paragraph = Paragraph::new(Line::from(spans))
-        .block(block)
-        .wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, area);
+    frame.render_widget(status, chunks[2]);
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
@@ -309,7 +332,7 @@ fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
             } else {
                 ' '
             };
-            ListItem::new(format!("{marker} ♥ {}", entry.anime.title))
+            ListItem::new(format!("{marker} {}", entry.anime.title))
         })
         .collect()
 }
@@ -351,7 +374,7 @@ fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Them
     }
 
     let block = Block::default()
-        .title("Episode Heatmap")
+        .title("Progress")
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
     let inner = block.inner(area);
@@ -360,13 +383,7 @@ fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Them
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)])
-        .split(inner);
-
-    render_heatmap_grid(frame, chunks[0], app, theme);
-    render_heatmap_info(frame, chunks[1], app);
+    render_heatmap_grid(frame, inner, app, theme);
 }
 
 fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
@@ -401,12 +418,10 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
                 break;
             }
 
-            if !spans.is_empty() {
-                spans.push(Span::raw(" "));
-            }
+            let alternate = (row + col) % 2 == 0;
 
             let indicators = app.episode_indicators(&episodes[idx].id);
-            let mut style = heatmap_cell_style(indicators, normalized[idx], theme);
+            let mut style = heatmap_cell_style(indicators, normalized[idx], theme, alternate);
             if selected == Some(idx) {
                 style = style.add_modifier(Modifier::REVERSED);
                 style = style.add_modifier(Modifier::UNDERLINED);
@@ -431,42 +446,6 @@ fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
         .wrap(Wrap { trim: true })
         .alignment(Alignment::Left);
     frame.render_widget(grid, area);
-}
-
-fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
-    if area.height == 0 || area.width == 0 {
-        return;
-    }
-
-    let lines = if let Some(episode) = app.current_episode() {
-        let mut info = vec![Line::from(format!(
-            "#{:03} — {}",
-            episode.number, episode.title
-        ))];
-
-        if let Some(duration) = episode.duration_secs {
-            info.push(Line::from(format!(
-                "Duration: {}",
-                format_duration(duration)
-            )));
-        }
-
-        if let Some(synopsis) = episode.synopsis.as_deref() {
-            let trimmed = synopsis.trim();
-            if !trimmed.is_empty() {
-                info.push(Line::from(trimmed));
-            }
-        }
-
-        info
-    } else {
-        vec![Line::from("Select an episode to show title and synopsis.")]
-    };
-
-    let info = Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .alignment(Alignment::Left);
-    frame.render_widget(info, area);
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -515,23 +494,24 @@ fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
 }
 
 fn heatmap_columns(width: usize) -> usize {
-    if width == 0 {
-        return 0;
-    }
-    ((width + 1).saturating_div(2)).max(1)
+    width.max(1)
 }
 
-fn heatmap_cell_style(indicators: EpisodeIndicators, intensity: f64, theme: &Theme) -> Style {
-    let variant = if indicators.watched {
-        HeatmapVariant::Watched
-    } else if indicators.in_progress {
-        HeatmapVariant::InProgress
+fn heatmap_cell_style(
+    indicators: EpisodeIndicators,
+    intensity: f64,
+    theme: &Theme,
+    alternate: bool,
+) -> Style {
+    let color = if indicators.watched {
+        let base = theme.heatmap_color(HeatmapVariant::Watched);
+        let adjusted = (intensity + if alternate { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
+        tinted_color(base, adjusted)
+    } else if alternate {
+        Color::Rgb(80, 80, 80)
     } else {
-        HeatmapVariant::Upcoming
+        Color::Rgb(48, 48, 48)
     };
-
-    let base = theme.heatmap_color(variant);
-    let color = tinted_color(base, intensity);
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
@@ -542,19 +522,6 @@ fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
     let green = (f64::from(g) * factor).clamp(0.0, 255.0) as u8;
     let blue = (f64::from(b) * factor).clamp(0.0, 255.0) as u8;
     Color::Rgb(red, green, blue)
-}
-
-fn format_duration(seconds: u32) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-    if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
 }
 
 fn border_style(theme: &Theme, focused: bool) -> Style {
