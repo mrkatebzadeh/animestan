@@ -854,6 +854,7 @@ fn refresh_episode_indicators(
         indicators
     };
     app.set_episode_indicators(indicators);
+    app.record_selected_anime_progress();
     Ok(())
 }
 
