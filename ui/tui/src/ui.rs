@@ -49,7 +49,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[2]);
 
-    let left_base_title = "Marked Anime";
+    let left_base_title = "Anime";
     let anime_items = build_bookmark_items(app);
     let left_target = FilterTarget::Anime;
     let mut left_title = left_base_title.to_string();
@@ -345,7 +345,7 @@ fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Them
     }
 
     let block = Block::default()
-        .title("Episode Heatmap")
+        .title("Progress")
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
     let inner = block.inner(area);
@@ -433,10 +433,7 @@ fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let lines = if let Some(episode) = app.current_episode() {
-        let mut info = vec![Line::from(format!(
-            "#{:03} — {}",
-            episode.number, episode.title
-        ))];
+        let mut info = Vec::new();
 
         if let Some(duration) = episode.duration_secs {
             info.push(Line::from(format!(
@@ -452,9 +449,13 @@ fn render_heatmap_info(frame: &mut Frame, area: Rect, app: &App) {
             }
         }
 
+        if info.is_empty() {
+            info.push(Line::from("Episode metadata is unavailable."));
+        }
+
         info
     } else {
-        vec![Line::from("Select an episode to show title and synopsis.")]
+        vec![Line::from("Select an episode to show overview.")]
     };
 
     let info = Paragraph::new(lines)
