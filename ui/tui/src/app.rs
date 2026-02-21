@@ -19,6 +19,7 @@ use animestan_core::{
     AnimeClient, AnimeEntry, AnimeMetadata, CoreResult, Episode, FavoriteEntry, FavoriteStore,
     FetchBackend, PlaybackFilter,
 };
+use chrono::{Datelike, TimeZone, Utc};
 use crossterm::event::KeyEvent;
 use nucleo::{
     Config, Matcher,
@@ -136,6 +137,13 @@ pub struct EpisodeIndicators {
     pub downloaded: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AnimeProgress {
+    pub watched: usize,
+    pub total: usize,
+    pub start_year: Option<u16>,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     focus: Focus,
@@ -185,6 +193,7 @@ pub struct App {
     episode_indicators: HashMap<String, EpisodeIndicators>,
     quick_launch_active: bool,
     quick_launch_query: String,
+    anime_progress: HashMap<String, AnimeProgress>,
     quick_launch_selection: usize,
     quick_launch_items: Vec<QuickLaunchCandidate>,
     quick_launch_history: VecDeque<String>,
@@ -261,6 +270,7 @@ impl App {
             show_keybindings: false,
             matcher: Matcher::new(Config::DEFAULT),
             episode_indicators: HashMap::new(),
+            anime_progress: HashMap::new(),
             quick_launch_active: false,
             quick_launch_query: String::new(),
             quick_launch_selection: 0,
@@ -415,10 +425,6 @@ impl App {
         self.right_index
     }
 
-    pub fn selected_anime(&self) -> Option<usize> {
-        self.selected_anime
-    }
-
     pub fn selected_episode(&self) -> Option<usize> {
         self.selected_episode
     }
@@ -530,6 +536,42 @@ impl App {
         self.right_index = 0;
         self.selected_episode = None;
         self.episodes_loading = false;
+    }
+
+    pub fn anime_progress_for(&self, anime_id: &str) -> Option<AnimeProgress> {
+        self.anime_progress.get(anime_id).copied()
+    }
+
+    pub fn record_selected_anime_progress(&mut self) {
+        let Some(anime) = self.current_anime() else {
+            return;
+        };
+
+        if let Some(progress) = self.compute_anime_progress() {
+            self.anime_progress.insert(anime.id.clone(), progress);
+        }
+    }
+
+    fn compute_anime_progress(&self) -> Option<AnimeProgress> {
+        let episodes = self.unfiltered_episodes();
+        if episodes.is_empty() {
+            return None;
+        }
+
+        let watched = episodes
+            .iter()
+            .filter(|episode| self.episode_indicators(&episode.id).watched)
+            .count();
+        let start_year = episodes
+            .iter()
+            .filter_map(|episode| episode.air_date.and_then(year_from_air_date))
+            .min();
+
+        Some(AnimeProgress {
+            watched,
+            total: episodes.len(),
+            start_year,
+        })
     }
 
     pub fn clear_episodes(&mut self) {
@@ -1801,6 +1843,20 @@ where
         .into_iter()
         .map(|(candidate, _)| source[candidate.index].clone())
         .collect()
+}
+
+fn year_from_air_date(value: i64) -> Option<u16> {
+    if value <= 0 {
+        return None;
+    }
+
+    let year = if value >= 1_000_000_000 {
+        Utc.timestamp_opt(value, 0).single().map(|dt| dt.year())
+    } else {
+        i32::try_from(value / 10_000).ok()
+    };
+
+    year.and_then(|value| u16::try_from(value).ok())
 }
 
 #[derive(Clone)]

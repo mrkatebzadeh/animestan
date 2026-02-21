@@ -22,7 +22,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::Title;
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
+    TableState, Wrap,
 };
 
 use crate::app::{App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode};
@@ -75,30 +76,16 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
 
     let lists = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
         .split(chunks[2]);
 
-    let left_base_title = "Anime";
-    let anime_items = build_bookmark_items(app);
     let left_target = FilterTarget::Anime;
-    let mut left_title = left_base_title.to_string();
-    if app.panel_filter_active_for(left_target) {
-        left_title.push_str(" [Filtered]");
-    }
     let left_filter_visible = should_show_panel_filter(app, left_target);
     let (left_filter_area, left_list_area) = split_filter_area(lists[0], left_filter_visible);
     if let Some(area) = left_filter_area {
         render_panel_filter_input(frame, area, app, left_filter_visible, theme);
     }
-    render_list(
-        frame,
-        left_list_area,
-        &left_title,
-        anime_items,
-        app.left_index(),
-        app.focus() == Focus::Left,
-        theme,
-    );
+    render_anime_table(frame, left_list_area, app, theme);
 
     let episode_items = build_episode_items(app);
     let mut episodes_title = if let Some(label) = app.filter_label() {
@@ -172,6 +159,73 @@ fn render_list(
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let favorites = app.bookmark_entries();
+    if favorites.is_empty() {
+        let block = Block::default()
+            .title("Anime")
+            .borders(Borders::ALL)
+            .border_style(border_style(theme, app.focus() == Focus::Left));
+        let paragraph = Paragraph::new("No favorites yet. Use the CLI to add some.")
+            .alignment(Alignment::Center)
+            .block(block);
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    let rows: Vec<Row> = favorites
+        .iter()
+        .map(|entry| {
+            let stats = app.anime_progress_for(&entry.anime.id);
+            let progress = stats.map_or_else(
+                || "--/--".to_string(),
+                |stats| format!("{}/{}", stats.watched, stats.total),
+            );
+            let year = stats
+                .and_then(|stats| stats.start_year)
+                .map_or_else(|| "—".to_string(), |value| value.to_string());
+            Row::new(vec![
+                Cell::from(entry.anime.title.clone()),
+                Cell::from(progress),
+                Cell::from(year),
+            ])
+        })
+        .collect();
+
+    let mut state = TableState::default();
+    if !rows.is_empty() {
+        state.select(Some(app.left_index().min(rows.len() - 1)));
+    }
+
+    let block = Block::default()
+        .title("Anime")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, app.focus() == Focus::Left));
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(55),
+            Constraint::Percentage(25),
+            Constraint::Percentage(20),
+        ],
+    )
+    .header(Row::new(vec![
+        Cell::from(Span::styled("Title", theme.title_style())),
+        Cell::from(Span::styled("Progress", theme.title_style())),
+        Cell::from(Span::styled("Year", theme.title_style())),
+    ]))
+    .block(block)
+    .column_spacing(1)
+    .highlight_style(theme.selected_item_style())
+    .highlight_symbol("▶ ");
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
 fn split_filter_area(area: Rect, show_filter: bool) -> (Option<Rect>, Rect) {
@@ -320,21 +374,6 @@ fn format_elapsed(seconds: Option<f64>) -> String {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{minutes:02}:{seconds:02}")
-}
-
-fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
-    app.bookmark_entries()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let marker = if Some(idx) == app.selected_anime() {
-                '★'
-            } else {
-                ' '
-            };
-            ListItem::new(format!("{marker} {}", entry.anime.title))
-        })
-        .collect()
 }
 
 fn build_episode_items(app: &App) -> Vec<ListItem<'_>> {
