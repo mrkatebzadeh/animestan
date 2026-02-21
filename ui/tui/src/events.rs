@@ -99,11 +99,6 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
-            keys: "b",
-            description: "Toggle bookmarks pane",
-            mode: InputMode::Normal,
-        },
-        KeyBinding {
             keys: "i",
             description: "Show anime info",
             mode: InputMode::Normal,
@@ -306,7 +301,6 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
             app.toggle_focus();
         }
         KeyCode::Tab => app.cycle_focus(),
-        KeyCode::Char('b') => app.toggle_bookmarks_mode(),
         KeyCode::Char('m') => app.request_bookmark_toggle(),
         KeyCode::Char('f') => app.cycle_filter(),
         KeyCode::Char('i') => {
