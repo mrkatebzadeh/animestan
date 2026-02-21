@@ -1,6 +1,6 @@
 [package]
 name = "animestan-core"
-version = "0.1.4-rc.0"
+version = "0.1.4-rc.1"
 edition = "2024"
 rust-version = "1.85"
 
