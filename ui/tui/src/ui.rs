@@ -30,30 +30,40 @@ use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
-    let total_episodes = app.episodes().len();
-    let heatmap_width = frame.area().width.saturating_sub(2).max(1);
+    let frame_area = frame.area();
+    let heatmap_width = frame_area.width.saturating_sub(2).max(1);
     let columns = heatmap_columns(heatmap_width as usize);
+    let total_episodes = app.episodes().len();
     let rows = if total_episodes == 0 {
         1
     } else {
         total_episodes.div_ceil(columns.max(1))
     };
-    let heatmap_height = rows
-        .max(7)
-        .min(u16::MAX as usize)
-        .try_into()
-        .unwrap_or(u16::MAX);
+    let total_height = frame_area.height;
+    let top_height = 3 + 3;
+    let session_height = 7;
+    let min_heatmap_height = 7;
+    let max_heatmap_height = total_height
+        .saturating_sub(top_height + session_height)
+        .max(1) as usize;
+    let requested_heatmap_height = rows.max(min_heatmap_height);
+    let heatmap_height = requested_heatmap_height.min(max_heatmap_height);
+    let heatmap_height_u16 = u16::try_from(heatmap_height).unwrap_or(u16::MAX);
+    let list_height =
+        total_height.saturating_sub(top_height + session_height + heatmap_height_u16) as usize;
+    let heatmap_length = heatmap_height_u16;
+    let list_length = u16::try_from(list_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(heatmap_height),
-            Constraint::Length(7),
+            Constraint::Length(list_length),
+            Constraint::Length(heatmap_length),
+            Constraint::Length(session_height),
         ])
-        .split(frame.area());
+        .split(frame_area);
 
     render_hint_panel(frame, chunks[0], theme);
     render_search_bar(frame, chunks[1], app, theme);
