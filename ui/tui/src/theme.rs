@@ -51,6 +51,7 @@ struct PanelStyle {
     focused_border: Color,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub enum HeatmapVariant {
     Watched,
