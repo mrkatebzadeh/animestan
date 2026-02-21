@@ -15,7 +15,7 @@
 
 use std::convert::TryFrom;
 
-use animestan_core::{Episode, MetadataSource};
+use animestan_core::{AnimeMetadata, Episode, MetadataSource};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::style::{Color, Modifier, Style};
@@ -25,9 +25,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 
-use crate::app::{
-    App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode, LeftPaneMode,
-};
+use crate::app::{App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode};
 use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
@@ -52,14 +50,9 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[2]);
 
-    let (left_base_title, anime_items) = match app.left_pane_mode() {
-        LeftPaneMode::Search => ("Anime", build_anime_items(app)),
-        LeftPaneMode::Bookmarks => ("Bookmarks", build_bookmark_items(app)),
-    };
-    let left_target = match app.left_pane_mode() {
-        LeftPaneMode::Search => FilterTarget::Anime,
-        LeftPaneMode::Bookmarks => FilterTarget::Bookmarks,
-    };
+    let left_base_title = "Marked Anime";
+    let anime_items = build_bookmark_items(app);
+    let left_target = FilterTarget::Anime;
     let mut left_title = left_base_title.to_string();
     if app.panel_filter_active_for(left_target) {
         left_title.push_str(" [Filtered]");
@@ -106,6 +99,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     render_episode_heatmap(frame, chunks[3], app, theme);
     render_details(frame, chunks[4], app, theme);
     render_status_bar(frame, chunks[5], app, theme);
+    render_search_results_modal(frame, app, theme);
     render_keybindings_modal(frame, app, theme);
     render_info_modal(frame, app, theme);
     render_exit_confirmation_modal(frame, app, theme);
@@ -238,10 +232,7 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .title("Details")
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
-    let pane_label = match app.left_pane_mode() {
-        LeftPaneMode::Search => "Search",
-        LeftPaneMode::Bookmarks => "Bookmarks",
-    };
+    let pane_label = "Anime";
     let filter_label = app.filter_label().unwrap_or("All");
     let mut lines = vec![Line::from(app.details())];
     lines.push(Line::from(format!(
@@ -306,26 +297,6 @@ fn format_elapsed(seconds: Option<f64>) -> String {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{minutes:02}:{seconds:02}")
-}
-
-fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
-    app.anime_entries()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let marker = if Some(idx) == app.selected_anime() {
-                '★'
-            } else {
-                ' '
-            };
-            let bookmark_icon = if app.is_bookmarked(entry.id.as_str()) {
-                '♥'
-            } else {
-                ' '
-            };
-            ListItem::new(format!("{marker} {bookmark_icon} {}", entry.title))
-        })
-        .collect()
 }
 
 fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
@@ -688,8 +659,99 @@ fn render_info_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     frame.render_widget(paragraph, area);
 }
 
-fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
-    if app.info_modal_loading() {
+fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &Theme) {
+    if !app.search_results_modal_visible() {
+        return;
+    }
+
+    let frame_area = frame.area();
+    if frame_area.width < 40 || frame_area.height < 10 {
+        return;
+    }
+
+    let width = frame_area.width.saturating_sub(6).min(120);
+    let height = frame_area.height.saturating_sub(6);
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let title = format!("Search: {}", app.search_results_query());
+    let block = Block::default()
+        .title(Span::styled(title, theme.title_style()))
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
+    let area = centered_rect(frame_area, width, height);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(inner);
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(chunks[0]);
+
+    let results = app.search_results();
+    let items: Vec<ListItem> = if results.is_empty() {
+        vec![ListItem::new("No results")]
+    } else {
+        results
+            .iter()
+            .map(|entry| ListItem::new(entry.title.clone()))
+            .collect()
+    };
+
+    let mut state = ListState::default();
+    if !results.is_empty() {
+        state.select(Some(app.search_results_selection()));
+    }
+
+    let list_block = Block::default()
+        .title("Matches")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
+    let list = List::new(items)
+        .block(list_block)
+        .highlight_style(theme.selected_item_style())
+        .highlight_symbol("▶ ");
+    frame.render_stateful_widget(list, columns[0], &mut state);
+
+    let metadata_lines = metadata_section_lines(
+        app.search_results_metadata(),
+        app.search_results_metadata_error(),
+        app.search_results_metadata_loading(),
+        theme,
+    );
+    let metadata_block = Block::default()
+        .title("Info")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, true));
+    let metadata = Paragraph::new(metadata_lines)
+        .block(metadata_block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(metadata, columns[1]);
+
+    let hint = Paragraph::new(Line::from(vec![
+        Span::styled("Esc", theme.title_style()),
+        Span::raw(" to close · "),
+        Span::styled("Ctrl+M", theme.title_style()),
+        Span::raw(" to mark selection"),
+    ]))
+    .style(theme.non_interactive_style());
+    frame.render_widget(hint, chunks[1]);
+}
+
+fn metadata_section_lines<'a>(
+    metadata: Option<&'a AnimeMetadata>,
+    error: Option<&'a str>,
+    loading: bool,
+    theme: &Theme,
+) -> Vec<Line<'a>> {
+    if loading {
         return vec![
             Line::from(Span::styled(
                 "Loading anime metadata...",
@@ -700,7 +762,7 @@ fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
         ];
     }
 
-    if let Some(error) = app.info_modal_error() {
+    if let Some(error) = error {
         return vec![
             Line::from(Span::styled(
                 "Failed to load metadata:",
@@ -708,14 +770,10 @@ fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
             )),
             Line::from(error),
             Line::default(),
-            Line::from(Span::styled(
-                "Press Esc to close.",
-                theme.non_interactive_style(),
-            )),
         ];
     }
 
-    if let Some(metadata) = app.info_modal_metadata() {
+    if let Some(metadata) = metadata {
         let mut lines = Vec::new();
         let status_score = format_status_score(metadata.status.as_deref(), metadata.score);
         let season_year = format_season_year(metadata.season.as_deref(), metadata.year);
@@ -725,7 +783,7 @@ fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
             .synopsis
             .as_deref()
             .map(str::trim)
-            .filter(|text| !text.is_empty())
+            .filter(|text: &&str| !text.is_empty())
             .unwrap_or("Synopsis not available.");
         lines.push(Line::from(Span::styled(
             format!("Status / Score: {status_score}"),
@@ -748,21 +806,27 @@ fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
             metadata_source_label(metadata.source)
         )));
         lines.push(Line::default());
+        return lines;
+    }
+
+    vec![Line::from("No metadata available for selection.")]
+}
+
+fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
+    let mut lines = metadata_section_lines(
+        app.info_modal_metadata(),
+        app.info_modal_error(),
+        app.info_modal_loading(),
+        theme,
+    );
+    if !app.info_modal_loading() {
+        lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             "Press Esc to close.",
             theme.non_interactive_style(),
         )));
-        return lines;
     }
-
-    vec![
-        Line::from("No metadata available for selection."),
-        Line::default(),
-        Line::from(Span::styled(
-            "Press Esc to close.",
-            theme.non_interactive_style(),
-        )),
-    ]
+    lines
 }
 
 fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
