@@ -640,7 +640,6 @@ fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let scroll_offset = u16::try_from(app.keybindings_scroll()).unwrap_or(u16::MAX);
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: true })
         .scroll((0, scroll_offset));
 
     frame.render_widget(Clear, area);
