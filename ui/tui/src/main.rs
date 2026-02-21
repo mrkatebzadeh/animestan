@@ -45,7 +45,7 @@ use tokio::sync::mpsc::{
 };
 use tokio::time::sleep;
 
-use crate::app::{App, EpisodeIndicators, LeftPaneMode, PlaybackStatus};
+use crate::app::{App, EpisodeIndicators, PlaybackStatus};
 use crate::events::{Event, EventHandler};
 use crate::theme::Theme;
 
@@ -112,7 +112,6 @@ fn run_app(
         EpisodeTracker::load_default(config).context("failed to load episode tracker")?,
     ));
     let mut favorites = FavoriteStore::load_default(config).context("failed to load favorites")?;
-    let mut refresh_favorites = false;
     let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
@@ -147,19 +146,15 @@ fn run_app(
         if app.take_pending_bookmark_toggle() {
             match app.toggle_bookmark(&mut favorites) {
                 Ok(()) => {
-                    if matches!(app.left_pane_mode(), LeftPaneMode::Bookmarks) {
-                        let details = app.details().to_string();
-                        app.load_bookmarks(&favorites);
-                        app.set_details(details);
-                    }
+                    let details = app.details().to_string();
+                    app.load_bookmarks(&favorites);
+                    app.set_details(details);
                 }
                 Err(err) => {
                     app.set_details(format!("Bookmark toggle failed: {err}"));
                 }
             }
         }
-
-        handle_bookmarks_refresh(&mut app, config, &mut favorites, &mut refresh_favorites);
 
         handle_search(&mut app, client.as_ref());
         handle_filters(&mut app, &tracker, &request_tx);
@@ -309,32 +304,6 @@ fn initialize_app(app: &mut App, client: &AnimeClient<FetchBackend>) {
     } else if let Err(err) = app.search(client) {
         app.set_details(format!("Search failed: {err}"));
     }
-}
-
-fn handle_bookmarks_refresh(
-    app: &mut App,
-    config: &AppConfig,
-    favorites: &mut FavoriteStore,
-    refresh_favorites: &mut bool,
-) {
-    if !app.take_bookmark_refresh() {
-        return;
-    }
-
-    if *refresh_favorites {
-        match FavoriteStore::load_default(config) {
-            Ok(store) => {
-                *favorites = store;
-            }
-            Err(err) => {
-                app.set_details(format!("Failed to load bookmarks: {err}"));
-            }
-        }
-    } else {
-        *refresh_favorites = true;
-    }
-
-    app.load_bookmarks(favorites);
 }
 
 fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {

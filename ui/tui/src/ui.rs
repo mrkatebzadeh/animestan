@@ -25,9 +25,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 
-use crate::app::{
-    App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode, LeftPaneMode,
-};
+use crate::app::{App, ConfirmExitChoice, EpisodeIndicators, FilterTarget, Focus, InputMode};
 use crate::events::keybindings;
 use crate::theme::{HeatmapVariant, Theme};
 
@@ -52,14 +50,9 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[2]);
 
-    let (left_base_title, anime_items) = match app.left_pane_mode() {
-        LeftPaneMode::Search => ("Anime", build_anime_items(app)),
-        LeftPaneMode::Bookmarks => ("Bookmarks", build_bookmark_items(app)),
-    };
-    let left_target = match app.left_pane_mode() {
-        LeftPaneMode::Search => FilterTarget::Anime,
-        LeftPaneMode::Bookmarks => FilterTarget::Bookmarks,
-    };
+    let left_base_title = "Marked Anime";
+    let anime_items = build_bookmark_items(app);
+    let left_target = FilterTarget::Anime;
     let mut left_title = left_base_title.to_string();
     if app.panel_filter_active_for(left_target) {
         left_title.push_str(" [Filtered]");
@@ -238,10 +231,7 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .title("Details")
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
-    let pane_label = match app.left_pane_mode() {
-        LeftPaneMode::Search => "Search",
-        LeftPaneMode::Bookmarks => "Bookmarks",
-    };
+    let pane_label = "Anime";
     let filter_label = app.filter_label().unwrap_or("All");
     let mut lines = vec![Line::from(app.details())];
     lines.push(Line::from(format!(
@@ -306,26 +296,6 @@ fn format_elapsed(seconds: Option<f64>) -> String {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{minutes:02}:{seconds:02}")
-}
-
-fn build_anime_items(app: &App) -> Vec<ListItem<'_>> {
-    app.anime_entries()
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let marker = if Some(idx) == app.selected_anime() {
-                '★'
-            } else {
-                ' '
-            };
-            let bookmark_icon = if app.is_bookmarked(entry.id.as_str()) {
-                '♥'
-            } else {
-                ' '
-            };
-            ListItem::new(format!("{marker} {bookmark_icon} {}", entry.title))
-        })
-        .collect()
 }
 
 fn build_bookmark_items(app: &App) -> Vec<ListItem<'_>> {
