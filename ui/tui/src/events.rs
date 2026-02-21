@@ -49,6 +49,11 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "Ctrl+M",
+            description: "Mark highlighted search result",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "/",
             description: "Filter the focused list",
             mode: InputMode::Normal,
@@ -260,6 +265,11 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
+    if app.search_results_modal_visible() {
+        handle_search_results_modal(app, key_event);
+        return;
+    }
+
     if app.show_keybindings() {
         app.toggle_keybindings();
         return;
@@ -334,6 +344,20 @@ fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             {
                 app.append_quick_launch_char(ch);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) {
+    match key_event.code {
+        KeyCode::Esc => app.close_search_results_modal(),
+        KeyCode::Down | KeyCode::Char('j') => app.move_search_results_selection_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.move_search_results_selection_up(),
+        KeyCode::Char('m') => {
+            if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                app.request_bookmark_toggle();
             }
         }
         _ => {}
