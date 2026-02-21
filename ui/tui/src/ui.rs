@@ -177,7 +177,7 @@ fn render_panel_filter_input(
         .borders(Borders::ALL)
         .border_style(border_style(theme, active));
     let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.panel_filter_query()),
     ]);
     let inner = block.inner(area);
@@ -205,7 +205,7 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .border_style(border_style(theme, app.input_mode() == InputMode::Search));
 
     let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.search_query()),
     ]);
 
@@ -265,9 +265,10 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
     let status_line = Line::from(Span::styled(
         left_status,
-        Style::default().fg(Color::White).bg(Color::DarkGray),
+        theme.item_style().bg(theme.non_interactive_color()),
     ));
-    let status = Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray));
+    let status =
+        Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
     frame.render_widget(status, chunks[1]);
 }
 
@@ -279,17 +280,11 @@ fn render_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let hint = "Space=Play/Pause q=Quit";
 
     let spans = vec![
-        Span::styled(
-            now_playing_label,
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(now_playing_label, theme.title_style()),
         Span::raw(" | "),
-        Span::styled(
-            format!("Elapsed: {elapsed}"),
-            Style::default().fg(Color::Cyan),
-        ),
+        Span::styled(format!("Elapsed: {elapsed}"), theme.item_style()),
         Span::raw(" | "),
-        Span::styled(hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(hint, theme.non_interactive_style()),
     ];
 
     let block = Block::default()
@@ -621,15 +616,13 @@ fn render_keybindings_modal(frame: &mut Frame, app: &App, theme: &Theme) {
             current_mode = Some(binding.mode);
             lines.push(Line::from(Span::styled(
                 format!("{} mode", input_mode_label(binding.mode)),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                theme.title_style(),
             )));
         }
 
         let key_label = format!("{:<width$}", binding.keys, width = key_width);
         lines.push(Line::from(vec![
-            Span::styled(key_label, Style::default().fg(Color::Cyan)),
+            Span::styled(key_label, Style::default().fg(theme.title_color())),
             Span::raw("  "),
             Span::raw(binding.description),
         ]));
@@ -682,16 +675,11 @@ fn render_info_modal(frame: &mut Frame, app: &App, theme: &Theme) {
         .unwrap_or_else(|| "Anime Info".to_string());
 
     let block = Block::default()
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ))
+        .title(Span::styled(title, theme.title_style()))
         .borders(Borders::ALL)
         .border_style(border_style(theme, false));
 
-    let paragraph = Paragraph::new(build_info_modal_lines(app))
+    let paragraph = Paragraph::new(build_info_modal_lines(app, theme))
         .wrap(Wrap { trim: true })
         .block(block);
 
@@ -699,12 +687,12 @@ fn render_info_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     frame.render_widget(paragraph, area);
 }
 
-fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
+fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
     if app.info_modal_loading() {
         return vec![
             Line::from(Span::styled(
                 "Loading anime metadata...",
-                Style::default().fg(Color::Yellow),
+                theme.title_style(),
             )),
             Line::default(),
             Line::from("This may take a moment. Press Esc to cancel."),
@@ -715,13 +703,13 @@ fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
         return vec![
             Line::from(Span::styled(
                 "Failed to load metadata:",
-                Style::default().fg(Color::Red),
+                theme.selected_item_style(),
             )),
             Line::from(error),
             Line::default(),
             Line::from(Span::styled(
                 "Press Esc to close.",
-                Style::default().fg(Color::DarkGray),
+                theme.non_interactive_style(),
             )),
         ];
     }
@@ -740,7 +728,7 @@ fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
             .unwrap_or("Synopsis not available.");
         lines.push(Line::from(Span::styled(
             format!("Status / Score: {status_score}"),
-            Style::default().fg(Color::Cyan),
+            theme.title_style(),
         )));
         lines.push(Line::from(format!("Season / Year: {season_year}")));
         lines.push(Line::from(format!("Genres: {genres}")));
@@ -761,7 +749,7 @@ fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             "Press Esc to close.",
-            Style::default().fg(Color::DarkGray),
+            theme.non_interactive_style(),
         )));
         return lines;
     }
@@ -771,7 +759,7 @@ fn build_info_modal_lines(app: &App) -> Vec<Line<'_>> {
         Line::default(),
         Line::from(Span::styled(
             "Press Esc to close.",
-            Style::default().fg(Color::DarkGray),
+            theme.non_interactive_style(),
         )),
     ]
 }
@@ -833,12 +821,9 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     let yes_selected = matches!(app.confirm_exit_choice(), ConfirmExitChoice::Yes);
     let button_style = |selected| {
         if selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            theme.selected_item_style()
         } else {
-            Style::default().fg(Color::White)
+            theme.item_style()
         }
     };
 
@@ -851,17 +836,11 @@ fn render_exit_confirmation_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     ]);
 
     let lines = vec![
-        Line::from(Span::styled(
-            QUESTION_TEXT,
-            Style::default().fg(Color::White),
-        )),
+        Line::from(Span::styled(QUESTION_TEXT, theme.title_style())),
         Line::default(),
         button_line,
         Line::default(),
-        Line::from(Span::styled(
-            HINT_TEXT,
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(Span::styled(HINT_TEXT, theme.non_interactive_style())),
     ];
 
     let content_height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
@@ -914,7 +893,7 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App, theme: &Theme) {
         .split(inner);
 
     let prompt = Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::DarkGray)),
+        Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.quick_launch_query()),
     ]);
     let paragraph = Paragraph::new(prompt);
@@ -945,11 +924,7 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App, theme: &Theme) {
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(theme.selected_item_style())
         .highlight_symbol("▶ ");
     frame.render_stateful_widget(list, chunks[1], &mut state);
 
@@ -957,10 +932,10 @@ fn render_quick_launch_palette(frame: &mut Frame, app: &App, theme: &Theme) {
         Span::raw("Enter to run · Esc to close"),
         Span::styled(
             " · Ctrl+K opens this palette",
-            Style::default().fg(Color::DarkGray),
+            theme.non_interactive_style(),
         ),
     ]))
-    .style(Style::default().fg(Color::DarkGray));
+    .style(theme.non_interactive_style());
     frame.render_widget(hint, chunks[2]);
 }
 

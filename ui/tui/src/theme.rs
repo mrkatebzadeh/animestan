@@ -68,6 +68,26 @@ impl Theme {
     pub fn non_interactive_style(&self) -> Style {
         self.non_interactive.style()
     }
+
+    #[must_use]
+    pub fn title_style(&self) -> Style {
+        self.titles.style().add_modifier(Modifier::BOLD)
+    }
+
+    #[must_use]
+    pub fn item_style(&self) -> Style {
+        self.items.style()
+    }
+
+    #[must_use]
+    pub fn non_interactive_color(&self) -> Color {
+        self.non_interactive.fg
+    }
+
+    #[must_use]
+    pub fn title_color(&self) -> Color {
+        self.titles.fg
+    }
 }
 
 impl TextStyle {
