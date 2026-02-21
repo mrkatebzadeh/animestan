@@ -349,26 +349,23 @@ fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
         app.current_selection_label()
     );
     let hint_text = "Press ? for keybindings";
-    let hint_width = u16::try_from(hint_text.chars().count())
-        .unwrap_or(u16::MAX)
-        .saturating_add(2);
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(1), Constraint::Length(hint_width)])
-        .split(chunks[2]);
+    let total_width = chunks[2].width as usize;
+    let status_len = left_status.chars().count();
+    let hint_len = hint_text.chars().count();
+    let spacing = total_width.saturating_sub(status_len + hint_len);
+    let spacer = " ".repeat(spacing);
 
-    let status_line = Line::from(Span::styled(
-        left_status,
-        theme.item_style().bg(theme.non_interactive_color()),
-    ));
+    let status_line = Line::from(vec![
+        Span::styled(
+            left_status,
+            theme.item_style().bg(theme.non_interactive_color()),
+        ),
+        Span::raw(spacer),
+        Span::styled(hint_text, theme.non_interactive_style()),
+    ]);
     let status =
         Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(status, columns[0]);
-
-    let hint = Paragraph::new(Span::styled(hint_text, theme.non_interactive_style()))
-        .alignment(Alignment::Right)
-        .style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(hint, columns[1]);
+    frame.render_widget(status, chunks[2]);
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {
