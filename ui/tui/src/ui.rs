@@ -262,14 +262,10 @@ fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme)
         .current_playback_label()
         .unwrap_or_else(|| "Idle".to_string());
     let elapsed = format_elapsed(app.playback_elapsed());
-    let hint = "Space=Play/Pause q=Quit";
-
     let spans = vec![
         Span::styled(now_playing_label, theme.title_style()),
         Span::raw(" | "),
         Span::styled(format!("Elapsed: {elapsed}"), theme.item_style()),
-        Span::raw(" | "),
-        Span::styled(hint, theme.non_interactive_style()),
     ];
     let now_playing = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
     frame.render_widget(now_playing, chunks[1]);
