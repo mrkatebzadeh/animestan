@@ -83,7 +83,7 @@ struct PlaybackResult {
 fn main() -> Result<()> {
     let args = Args::parse();
     let config = Arc::new(AppConfig::load_default().context("failed to load configuration")?);
-    let theme = Arc::new(Theme::default());
+    let theme = Arc::new(Theme::load(&config).context("failed to load theme configuration")?);
     init_logging("animestan-tui", args.verbosity, &config, false)
         .context("failed to initialize logging")?;
     info!("launching animestan-tui");

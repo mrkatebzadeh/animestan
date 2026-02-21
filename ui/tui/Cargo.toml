@@ -7,9 +7,11 @@ rust-version = "1.85"
 [dependencies]
 animestan-core = { path = "../../core" }
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.28"
 ratatui = "0.28"
+toml = "0.8"
 spdlog = { version = "0.5", package = "spdlog-rs" }
 serde_json = "1.0"
 nucleo = "0.5"
