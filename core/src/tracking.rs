@@ -13,12 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    fs, io,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spdlog::prelude::*;
@@ -28,6 +23,7 @@ use crate::{
     config::AppConfig,
     error::Error,
     models::{Episode, EpisodePlaybackState, PlaybackFilter},
+    store::{load_json_or_default, now_epoch, save_json_pretty},
 };
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -57,28 +53,20 @@ impl EpisodeTracker {
     /// Returns [`Error::TrackingRead`] when the file cannot be read or
     /// [`Error::TrackingParse`] when its contents cannot be decoded.
     pub fn load(path: PathBuf) -> CoreResult<Self> {
-        match fs::read_to_string(&path) {
-            Ok(contents) => {
-                debug!("loaded playback progress from {}", path.display());
-                let store: ProgressStore =
-                    serde_json::from_str(&contents).map_err(|source| Error::TrackingParse {
-                        path: path.clone(),
-                        source,
-                    })?;
-                Ok(Self { path, store })
-            }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                debug!(
-                    "no playback progress file at {}, starting empty",
-                    path.display()
-                );
-                Ok(Self {
-                    path,
-                    store: ProgressStore::default(),
-                })
-            }
-            Err(source) => Err(Error::TrackingRead { path, source }.into()),
+        let store: ProgressStore = load_json_or_default(
+            &path,
+            |path, source| Error::TrackingParse { path, source },
+            |path, source| Error::TrackingRead { path, source },
+        )?;
+        if store.episodes.is_empty() {
+            debug!(
+                "no playback progress file at {}, starting empty",
+                path.display()
+            );
+        } else {
+            debug!("loaded playback progress from {}", path.display());
         }
+        Ok(Self { path, store })
     }
 
     /// Loads tracking data from the path derived via [`AppConfig::progress_path`].
@@ -273,35 +261,10 @@ impl EpisodeTracker {
     }
 
     fn save(&self) -> CoreResult<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|source| Error::TrackingWrite {
-                path: self.path.clone(),
-                source,
-            })?;
-        }
-
-        let tmp_path = Path::new(&self.path).with_extension("json.tmp");
-        let payload =
-            serde_json::to_string_pretty(&self.store).map_err(|source| Error::TrackingWrite {
-                path: self.path.clone(),
-                source: io::Error::other(source),
-            })?;
-        fs::write(&tmp_path, payload).map_err(|source| Error::TrackingWrite {
-            path: self.path.clone(),
-            source,
-        })?;
-        fs::rename(&tmp_path, &self.path).map_err(|source| Error::TrackingWrite {
-            path: self.path.clone(),
-            source,
+        save_json_pretty(&self.path, &self.store, |path, source| {
+            Error::TrackingWrite { path, source }
         })?;
         debug!("saved playback progress to {}", self.path.display());
         Ok(())
     }
-}
-
-fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }
