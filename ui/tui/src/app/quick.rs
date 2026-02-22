@@ -14,12 +14,13 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use super::{
-    App, FilterCandidate, Focus, QUICK_LAUNCH_HISTORY_SIZE, QUICK_LAUNCH_RECENT_PLAY_SIZE,
+    App, FilterCandidate, Focus, PendingFlag, QUICK_LAUNCH_HISTORY_SIZE,
+    QUICK_LAUNCH_RECENT_PLAY_SIZE,
 };
 
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum QuickLaunchAction {
     GoToSearch,
     OpenAnimePanel,
@@ -29,21 +30,21 @@ pub enum QuickLaunchAction {
     PlayLastEpisode { episode_id: String },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct QuickLaunchCandidate {
     pub label: String,
     pub action: QuickLaunchAction,
     pub score: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct LastPlayedEpisode {
     episode_id: String,
     title: Option<String>,
     anime_id: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct PendingPlayback {
     episode_id: String,
     title: Option<String>,
@@ -52,74 +53,74 @@ pub(super) struct PendingPlayback {
 
 impl App {
     pub fn quick_launch_active(&self) -> bool {
-        self.quick_launch_active
+        matches!(self.quick.active, PendingFlag::Yes)
     }
 
     pub fn quick_launch_query(&self) -> &str {
-        &self.quick_launch_query
+        &self.quick.query
     }
 
     pub fn quick_launch_selection(&self) -> usize {
-        self.quick_launch_selection
+        self.quick.selection
     }
 
     pub fn quick_launch_items(&self) -> &[QuickLaunchCandidate] {
-        &self.quick_launch_items
+        &self.quick.items
     }
 
     pub fn open_quick_launch(&mut self) {
-        self.quick_launch_active = true;
-        self.quick_launch_selection = 0;
-        self.quick_launch_query.clear();
+        self.quick.active = PendingFlag::Yes;
+        self.quick.selection = 0;
+        self.quick.query.clear();
         self.set_details("Quick Launch: type to filter, Enter to run, Esc to close.");
         self.refresh_quick_launch_items();
     }
 
     pub fn close_quick_launch(&mut self) {
-        self.quick_launch_active = false;
+        self.quick.active = PendingFlag::No;
     }
 
     pub fn append_quick_launch_char(&mut self, ch: char) {
-        self.quick_launch_query.push(ch);
+        self.quick.query.push(ch);
         self.refresh_quick_launch_items();
     }
 
     pub fn pop_quick_launch_char(&mut self) {
-        self.quick_launch_query.pop();
+        self.quick.query.pop();
         self.refresh_quick_launch_items();
     }
 
     pub fn move_quick_launch_selection_up(&mut self) {
-        if self.quick_launch_selection > 0 {
-            self.quick_launch_selection -= 1;
+        if self.quick.selection > 0 {
+            self.quick.selection -= 1;
         }
     }
 
     pub fn move_quick_launch_selection_down(&mut self, len: usize) {
         if len == 0 {
-            self.quick_launch_selection = 0;
+            self.quick.selection = 0;
             return;
         }
-        if self.quick_launch_selection + 1 < len {
-            self.quick_launch_selection += 1;
+        if self.quick.selection + 1 < len {
+            self.quick.selection += 1;
         }
     }
 
     pub fn run_quick_launch_selection(&mut self) {
-        if let Some(candidate) = self.quick_launch_items.get(self.quick_launch_selection) {
+        if let Some(candidate) = self.quick.items.get(self.quick.selection) {
             let action = candidate.action.clone();
             match action {
                 QuickLaunchAction::GoToSearch => {
                     self.enter_search_mode();
-                    self.focus = Focus::Left;
+                    self.nav.focus = Focus::Left;
                     self.set_details("Focus: search input");
                 }
                 QuickLaunchAction::OpenAnimePanel => {
-                    self.focus = Focus::Left;
+                    self.nav.focus = Focus::Left;
                     self.set_details("Open: anime panel");
                 }
                 QuickLaunchAction::OpenEpisodePanel => {
-                    self.focus = Focus::Right;
+                    self.nav.focus = Focus::Right;
                     self.set_details("Open: episode panel");
                 }
                 QuickLaunchAction::DownloadCurrentEpisode => {
@@ -131,10 +132,12 @@ impl App {
                 }
                 QuickLaunchAction::PlayLastEpisode { episode_id } => {
                     let title = self
+                        .quick
                         .last_played_episode
                         .as_ref()
                         .and_then(|entry| entry.title.clone());
                     let anime_id = self
+                        .quick
                         .last_played_episode
                         .as_ref()
                         .and_then(|entry| entry.anime_id.clone());
@@ -154,9 +157,9 @@ impl App {
 
     pub(super) fn refresh_quick_launch_items(&mut self) {
         let candidates = self.build_quick_launch_candidates();
-        self.quick_launch_items = self.rank_quick_launch_candidates(candidates);
-        if self.quick_launch_selection >= self.quick_launch_items.len() {
-            self.quick_launch_selection = self.quick_launch_items.len().saturating_sub(1);
+        self.quick.items = self.rank_quick_launch_candidates(candidates);
+        if self.quick.selection >= self.quick.items.len() {
+            self.quick.selection = self.quick.items.len().saturating_sub(1);
         }
     }
 
@@ -168,7 +171,7 @@ impl App {
             action: QuickLaunchAction::GoToSearch,
         });
 
-        if !matches!(self.focus, Focus::Left) {
+        if !matches!(self.nav.focus, Focus::Left) {
             candidates.push(QuickLaunchCandidate {
                 label: "Open anime".to_string(),
                 score: 30,
@@ -176,7 +179,7 @@ impl App {
             });
         }
 
-        if !matches!(self.focus, Focus::Right) {
+        if !matches!(self.nav.focus, Focus::Right) {
             candidates.push(QuickLaunchCandidate {
                 label: "Open episodes".to_string(),
                 score: 30,
@@ -184,7 +187,7 @@ impl App {
             });
         }
 
-        if matches!(self.focus, Focus::Right) {
+        if matches!(self.nav.focus, Focus::Right) {
             candidates.push(QuickLaunchCandidate {
                 label: "Download current episode".to_string(),
                 score: 25,
@@ -192,7 +195,7 @@ impl App {
             });
         }
 
-        if let Some(entry) = &self.last_played_episode {
+        if let Some(entry) = &self.quick.last_played_episode {
             let label = if let Some(title) = &entry.title {
                 format!("Play last episode: {title}")
             } else {
@@ -254,16 +257,12 @@ impl App {
     }
 
     pub fn record_anime_history(&mut self, anime_id: &str) {
-        if let Some(pos) = self
-            .quick_launch_history
-            .iter()
-            .position(|id| id == anime_id)
-        {
-            self.quick_launch_history.remove(pos);
+        if let Some(pos) = self.quick.history.iter().position(|id| id == anime_id) {
+            self.quick.history.remove(pos);
         }
-        self.quick_launch_history.push_front(anime_id.to_string());
-        if self.quick_launch_history.len() > QUICK_LAUNCH_HISTORY_SIZE {
-            self.quick_launch_history.pop_back();
+        self.quick.history.push_front(anime_id.to_string());
+        if self.quick.history.len() > QUICK_LAUNCH_HISTORY_SIZE {
+            self.quick.history.pop_back();
         }
     }
 
@@ -275,18 +274,19 @@ impl App {
     ) {
         if let Some(anime_id) = anime_id.clone() {
             if let Some(pos) = self
-                .quick_launch_recently_played
+                .quick
+                .recently_played
                 .iter()
                 .position(|id| id == &anime_id)
             {
-                self.quick_launch_recently_played.remove(pos);
+                self.quick.recently_played.remove(pos);
             }
-            self.quick_launch_recently_played.push_front(anime_id);
-            if self.quick_launch_recently_played.len() > QUICK_LAUNCH_RECENT_PLAY_SIZE {
-                self.quick_launch_recently_played.pop_back();
+            self.quick.recently_played.push_front(anime_id);
+            if self.quick.recently_played.len() > QUICK_LAUNCH_RECENT_PLAY_SIZE {
+                self.quick.recently_played.pop_back();
             }
         }
-        self.last_played_episode = Some(LastPlayedEpisode {
+        self.quick.last_played_episode = Some(LastPlayedEpisode {
             episode_id,
             title,
             anime_id,
@@ -300,7 +300,7 @@ impl App {
         title: Option<String>,
         anime_id: Option<String>,
     ) {
-        self.pending_playback_override = Some(PendingPlayback {
+        self.quick.pending_playback_override = Some(PendingPlayback {
             episode_id,
             title,
             anime_id,
@@ -310,7 +310,8 @@ impl App {
     pub fn take_pending_playback_override(
         &mut self,
     ) -> Option<(String, Option<String>, Option<String>)> {
-        self.pending_playback_override
+        self.quick
+            .pending_playback_override
             .take()
             .map(|pending| (pending.episode_id, pending.title, pending.anime_id))
     }

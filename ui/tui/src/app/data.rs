@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{AnimeProgress, App, Episode, EpisodeIndicators, FavoriteEntry, FilterTarget, HashMap};
+use super::{
+    AnimeProgress, App, Episode, EpisodeIndicators, FavoriteEntry, FilterActive, FilterTarget,
+    HashMap, SearchModal,
+};
 
 use animestan_core::{AnimeClient, CoreResult, FavoriteStore, FetchBackend};
 
@@ -27,71 +30,75 @@ impl App {
     }
 
     pub fn set_episodes_loading(&mut self, loading: bool) {
-        self.episodes_loading = loading;
+        self.data.episodes_loading = loading;
     }
 
     pub fn episodes_loading(&self) -> bool {
-        self.episodes_loading
+        self.data.episodes_loading
     }
 
     pub fn next_fetch_generation(&mut self) -> u64 {
-        self.fetch_generation = self.fetch_generation.wrapping_add(1);
-        self.fetch_generation
+        self.data.fetch_generation = self.data.fetch_generation.wrapping_add(1);
+        self.data.fetch_generation
     }
 
     pub fn current_fetch_generation(&self) -> u64 {
-        self.fetch_generation
+        self.data.fetch_generation
     }
 
     pub fn unfiltered_episodes(&self) -> &[Episode] {
-        &self.episodes
+        &self.data.episodes
     }
 
     pub fn set_episode_indicators(&mut self, indicators: HashMap<String, EpisodeIndicators>) {
-        self.episode_indicators = indicators;
+        self.data.episode_indicators = indicators;
     }
 
     pub fn episode_indicators(&self, episode_id: &str) -> EpisodeIndicators {
-        self.episode_indicators
+        self.data
+            .episode_indicators
             .get(episode_id)
             .copied()
             .unwrap_or_default()
     }
 
     pub fn load_bookmarks(&mut self, store: &FavoriteStore) {
-        self.bookmark_entries = store.list();
+        self.data.bookmark_entries = store.list();
         self.apply_saved_panel_filter(FilterTarget::Bookmarks);
         self.reset_navigation_state();
-        if self.bookmark_entries.is_empty() {
+        if self.data.bookmark_entries.is_empty() {
             self.set_details("No bookmarks saved yet. Use the CLI to add some.");
-            self.anime_selection_changed = false;
+            self.nav.anime_selection_changed = false;
         } else {
-            self.set_details(format!("Loaded {} bookmarks", self.bookmark_entries.len()));
-            self.anime_selection_changed = true;
+            self.set_details(format!(
+                "Loaded {} bookmarks",
+                self.data.bookmark_entries.len()
+            ));
+            self.nav.anime_selection_changed = true;
         }
         self.refresh_quick_launch_items();
     }
 
     pub fn sync_bookmark_cache(&mut self, store: &FavoriteStore) {
-        self.bookmark_entries = store.list();
+        self.data.bookmark_entries = store.list();
         self.apply_saved_panel_filter(FilterTarget::Bookmarks);
-        self.anime_selection_changed = !self.bookmark_entries.is_empty();
+        self.nav.anime_selection_changed = !self.data.bookmark_entries.is_empty();
         self.refresh_quick_launch_items();
     }
 
     pub fn set_episodes(&mut self, episodes: Vec<Episode>) {
-        self.episodes = episodes;
-        self.filtered_episodes.clear();
-        self.filtered_episode_entries.clear();
-        self.episode_indicators.clear();
+        self.data.episodes = episodes;
+        self.data.filtered_episodes.clear();
+        self.data.filtered_episode_entries.clear();
+        self.data.episode_indicators.clear();
         self.apply_saved_panel_filter(FilterTarget::Episodes);
-        self.right_index = 0;
-        self.selected_episode = None;
-        self.episodes_loading = false;
+        self.nav.right_index = 0;
+        self.nav.selected_episode = None;
+        self.data.episodes_loading = false;
     }
 
     pub fn anime_progress_for(&self, anime_id: &str) -> Option<AnimeProgress> {
-        self.anime_progress.get(anime_id).copied()
+        self.data.anime_progress.get(anime_id).copied()
     }
 
     pub fn record_selected_anime_progress(&mut self) {
@@ -100,7 +107,7 @@ impl App {
         };
 
         if let Some(progress) = self.compute_anime_progress() {
-            self.anime_progress.insert(anime.id.clone(), progress);
+            self.data.anime_progress.insert(anime.id.clone(), progress);
         }
     }
 
@@ -122,32 +129,33 @@ impl App {
     }
 
     pub fn clear_episodes(&mut self) {
-        self.episodes.clear();
-        self.filtered_episodes.clear();
-        self.filtered_episode_entries.clear();
-        self.episode_indicators.clear();
+        self.data.episodes.clear();
+        self.data.filtered_episodes.clear();
+        self.data.filtered_episode_entries.clear();
+        self.data.episode_indicators.clear();
         self.apply_saved_panel_filter(FilterTarget::Episodes);
-        self.right_index = 0;
-        self.selected_episode = None;
-        self.episodes_loading = false;
+        self.nav.right_index = 0;
+        self.nav.selected_episode = None;
+        self.data.episodes_loading = false;
     }
 
     pub fn set_filtered_episodes(&mut self, episodes: Vec<Episode>) {
-        self.filtered_episodes = episodes;
+        self.data.filtered_episodes = episodes;
         self.apply_saved_panel_filter(FilterTarget::Episodes);
-        self.right_index = 0;
-        self.selected_episode = None;
+        self.nav.right_index = 0;
+        self.nav.selected_episode = None;
     }
 
     pub fn clear_filtered_episodes(&mut self) {
-        self.filtered_episodes.clear();
+        self.data.filtered_episodes.clear();
         self.apply_saved_panel_filter(FilterTarget::Episodes);
-        self.right_index = 0;
-        self.selected_episode = None;
+        self.nav.right_index = 0;
+        self.nav.selected_episode = None;
     }
 
     pub fn is_bookmarked(&self, anime_id: &str) -> bool {
-        self.bookmark_entries
+        self.data
+            .bookmark_entries
             .iter()
             .any(|entry| entry.anime.id == anime_id)
     }
@@ -172,7 +180,7 @@ impl App {
 
         self.sync_bookmark_cache(store);
         self.set_details(details);
-        if self.search_results_modal_visible {
+        if matches!(self.search.modal_visible, SearchModal::Visible) {
             self.close_search_results_modal();
         }
         Ok(())
@@ -210,14 +218,14 @@ impl App {
 
         let episodes = client.list_episodes(&anime.id)?;
         self.set_episodes(episodes);
-        self.set_details(format!("Loaded {} episodes", self.episodes.len()));
-        self.anime_selection_changed = false;
+        self.set_details(format!("Loaded {} episodes", self.data.episodes.len()));
+        self.nav.anime_selection_changed = false;
         Ok(())
     }
 
     pub(super) fn visible_episodes(&self) -> &[Episode] {
-        if self.episode_filter_active {
-            &self.filtered_episode_entries
+        if matches!(self.filters.episode_active, FilterActive::Active) {
+            &self.data.filtered_episode_entries
         } else {
             self.base_episode_entries()
         }
@@ -225,17 +233,17 @@ impl App {
 
     pub(super) fn base_episode_entries(&self) -> &[Episode] {
         if self.current_filter().is_some() {
-            &self.filtered_episodes
+            &self.data.filtered_episodes
         } else {
-            &self.episodes
+            &self.data.episodes
         }
     }
 
     pub(super) fn visible_bookmark_entries(&self) -> &[FavoriteEntry] {
-        if self.bookmark_filter_active {
-            &self.filtered_bookmark_entries
+        if matches!(self.filters.bookmark_active, FilterActive::Active) {
+            &self.data.filtered_bookmark_entries
         } else {
-            &self.bookmark_entries
+            &self.data.bookmark_entries
         }
     }
 }
