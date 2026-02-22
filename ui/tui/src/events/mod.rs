@@ -17,11 +17,16 @@ use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{
-    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind};
 
-use crate::app::{App, ConfirmExitChoice, Focus, InputMode};
+use crate::app::{App, ConfirmExitChoice, InputMode};
+
+mod keybindings;
+mod normal;
+mod panel_filter;
+mod quick_launch;
+mod search;
+mod search_results;
 
 #[derive(Clone, Copy, Debug)]
 pub struct KeyBinding {
@@ -290,285 +295,26 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
-    if app.search_results_modal_visible() && handle_search_results_modal(app, key_event) {
+    if app.search_results_modal_visible() && search_results::handle_modal(app, key_event) {
         return;
     }
 
-    if app.show_keybindings() && handle_keybindings_modal(app, key_event) {
+    if app.show_keybindings() && keybindings::handle_modal(app, key_event) {
         return;
     }
 
     if app.quick_launch_active() {
-        handle_quick_launch_mode(app, key_event);
+        quick_launch::handle(app, key_event);
         return;
     }
 
     if app.panel_filter_mode() {
-        handle_panel_filter_mode(app, key_event);
+        panel_filter::handle(app, key_event);
         return;
     }
 
     match app.input_mode() {
-        InputMode::Normal => handle_normal_mode(app, key_event),
-        InputMode::Search => handle_search_mode(app, key_event),
-    }
-}
-
-fn handle_normal_mode(app: &mut App, key_event: KeyEvent) {
-    if handle_normal_navigation_shortcuts(app, key_event) {
-        return;
-    }
-
-    match key_event.code {
-        KeyCode::Char('s') => app.enter_search_mode(),
-        KeyCode::Char('/') => {
-            app.enter_panel_filter(app.filter_target_for_focus());
-        }
-        KeyCode::Char('q') => app.request_exit(),
-        KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-        KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.open_quick_launch();
-        }
-        KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-        KeyCode::Left | KeyCode::Right => {
-            app.toggle_focus();
-        }
-        KeyCode::Tab => app.cycle_focus(),
-        KeyCode::Char('w') => app.request_mark_current_episode(true),
-        KeyCode::Char('u') => app.request_mark_current_episode(false),
-        KeyCode::Char('m') => app.request_bookmark_toggle(),
-        KeyCode::Char('W') => app.request_mark_all_episodes(true),
-        KeyCode::Char('U') => app.request_mark_all_episodes(false),
-        KeyCode::Char('K') => app.request_mark_up_to_current(),
-        KeyCode::Char('f') => app.cycle_filter(),
-        KeyCode::Char('i') => {
-            app.open_info_modal();
-            app.set_details("Press Esc to close info modal.");
-        }
-        KeyCode::Char('d') => app.request_download(),
-        KeyCode::Char('D') => app.request_delete(),
-        KeyCode::Char(' ') => app.select_current(),
-        KeyCode::Char('?') => app.show_help(),
-        KeyCode::Enter => handle_enter_in_normal_mode(app),
-        _ => {}
-    }
-}
-
-fn handle_quick_launch_mode(app: &mut App, key_event: KeyEvent) {
-    let candidates_len = app.quick_launch_items().len();
-    match key_event.code {
-        KeyCode::Esc => app.close_quick_launch(),
-        KeyCode::Enter => app.run_quick_launch_selection(),
-        KeyCode::Backspace => app.pop_quick_launch_char(),
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.move_quick_launch_selection_down(candidates_len);
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.move_quick_launch_selection_up();
-        }
-        KeyCode::Char(ch) => {
-            if !key_event
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            {
-                app.append_quick_launch_char(ch);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn handle_search_results_modal(app: &mut App, key_event: KeyEvent) -> bool {
-    if handle_search_results_navigation_shortcuts(app, key_event) {
-        return true;
-    }
-
-    match key_event.code {
-        KeyCode::Esc => app.close_search_results_modal(),
-        KeyCode::Enter => app.request_search_results_add(),
-        KeyCode::Down | KeyCode::Char('j') => app.move_search_results_selection_down(),
-        KeyCode::Up | KeyCode::Char('k') => app.move_search_results_selection_up(),
-        KeyCode::Char('m') => {
-            if key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                app.request_bookmark_toggle();
-            }
-        }
-        _ => {}
-    }
-
-    true
-}
-
-fn handle_keybindings_modal(app: &mut App, key_event: KeyEvent) -> bool {
-    if !app.show_keybindings() {
-        return false;
-    }
-
-    match key_event.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.toggle_keybindings();
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.scroll_keybindings(1);
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.scroll_keybindings(-1);
-        }
-        KeyCode::PageDown => {
-            let viewport = app.keybindings_viewport_lines();
-            let step = i64::try_from(viewport.max(1)).unwrap_or(i64::MAX);
-            app.scroll_keybindings(step);
-        }
-        KeyCode::PageUp => {
-            let viewport = app.keybindings_viewport_lines();
-            let step = i64::try_from(viewport.max(1)).unwrap_or(i64::MAX);
-            app.scroll_keybindings(-step);
-        }
-        KeyCode::Home => {
-            app.set_keybindings_scroll(0);
-        }
-        KeyCode::End => {
-            app.set_keybindings_scroll(app.keybindings_max_scroll());
-        }
-        _ => {}
-    }
-
-    true
-}
-
-fn handle_enter_in_normal_mode(app: &mut App) {
-    if matches!(app.focus(), Focus::Left) {
-        app.toggle_focus();
-    } else {
-        app.request_play();
-    }
-}
-
-fn handle_normal_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
-    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
-        if app.consume_pending_double_g() {
-            app.move_to_top();
-        } else {
-            app.start_pending_double_g();
-        }
-        return true;
-    }
-
-    app.cancel_pending_double_g();
-
-    match key_event.code {
-        KeyCode::Char('G') => {
-            app.move_to_bottom();
-            true
-        }
-        KeyCode::Char('M') => {
-            app.move_to_middle();
-            true
-        }
-        KeyCode::Char('d' | 'D') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.half_page_down();
-                true
-            } else {
-                false
-            }
-        }
-        KeyCode::Char('u' | 'U') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.half_page_up();
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-fn handle_search_results_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
-    if app.search_results().is_empty() {
-        return false;
-    }
-
-    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
-        if app.consume_pending_double_g() {
-            app.search_results_move_to_top();
-        } else {
-            app.start_pending_double_g();
-        }
-        return true;
-    }
-
-    app.cancel_pending_double_g();
-
-    match key_event.code {
-        KeyCode::Char('G') => {
-            app.search_results_move_to_bottom();
-            true
-        }
-        KeyCode::Char('d' | 'D') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.search_results_half_page_down();
-                true
-            } else {
-                false
-            }
-        }
-        KeyCode::Char('u' | 'U') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.search_results_half_page_up();
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-fn handle_panel_filter_mode(app: &mut App, key_event: KeyEvent) {
-    match key_event.code {
-        KeyCode::Esc | KeyCode::Enter => app.exit_panel_filter(),
-        KeyCode::Backspace => {
-            let mut query = app.panel_filter_query().to_string();
-            query.pop();
-            app.update_panel_filter_query(query);
-        }
-        KeyCode::Char(ch) => {
-            if !key_event
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            {
-                let mut query = app.panel_filter_query().to_string();
-                query.push(ch);
-                app.update_panel_filter_query(query);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn handle_search_mode(app: &mut App, key_event: KeyEvent) {
-    match key_event.code {
-        KeyCode::Esc => app.exit_search_mode(),
-        KeyCode::Enter => {
-            app.exit_search_mode();
-            app.request_search();
-            if !matches!(app.focus(), Focus::Left) {
-                app.toggle_focus();
-            }
-        }
-        KeyCode::Backspace => {
-            app.pop_search_char();
-        }
-        KeyCode::Char(ch) => {
-            if !key_event
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            {
-                app.append_search_char(ch);
-            }
-        }
-        _ => {}
+        InputMode::Normal => normal::handle(app, key_event),
+        InputMode::Search => search::handle(app, key_event),
     }
 }
