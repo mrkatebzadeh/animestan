@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use animestan_core::{AnimeEntry, AnimeMetadata, Episode, FavoriteEntry, PlaybackFilter};
 use nucleo::Matcher;
@@ -150,6 +150,12 @@ pub struct AnimeProgress {
     pub total: usize,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MetadataSummary {
+    pub status: Option<String>,
+    pub score: Option<f32>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 enum PanelMode {
     #[default]
@@ -230,6 +236,9 @@ struct DataState {
     fetch_generation: u64,
     episode_indicators: HashMap<String, EpisodeIndicators>,
     anime_progress: HashMap<String, AnimeProgress>,
+    metadata_cache: HashMap<String, MetadataSummary>,
+    metadata_pending: HashSet<String>,
+    metadata_failed: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
