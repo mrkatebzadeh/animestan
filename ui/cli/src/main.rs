@@ -41,7 +41,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Search { query } => handle_search(&client, &query),
-        Commands::Info { title } => handle_info(&title),
+        Commands::Info { title } => handle_info(&config, &title),
         Commands::Episodes {
             anime_id,
             unwatched,
