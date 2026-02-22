@@ -244,6 +244,27 @@ impl MetadataProvider for MetadataResolver {
 }
 
 impl MetadataResolver {
+    /// Fetches metadata using a provider-specific identifier when available.
+    ///
+    /// # Errors
+    ///
+    /// * `CoreError::MetadataNotFound` if the identifier cannot be resolved.
+    /// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
+    ///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
+    /// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
+    pub fn fetch_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, CoreError> {
+        match self.primary_kind {
+            MetadataProviderKind::AllManga => match self.allmanga.fetch_by_id(id, query) {
+                Ok(metadata) => Ok(metadata),
+                Err(primary_err) => match self.fetch_with(self.fallback_kind, query) {
+                    Ok(metadata) => Ok(metadata),
+                    Err(_) => Err(primary_err),
+                },
+            },
+            _ => self.fetch_by_query(query),
+        }
+    }
+
     fn fetch_with(
         &self,
         kind: MetadataProviderKind,
