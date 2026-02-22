@@ -57,6 +57,20 @@ impl AllMangaMetadataProvider {
         }
     }
 
+    pub(super) fn fetch_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, Error> {
+        let key = format!("id:{id}");
+        if let Some(metadata) = self.cache.get(&key)? {
+            return Ok(metadata);
+        }
+        let mut show = self.fetch_show_details(id)?;
+        if let Ok(season) = self.fetch_show_season(id) {
+            show.season = season;
+        }
+        let metadata = show_to_metadata(show, query);
+        self.cache.insert(key, metadata.clone())?;
+        Ok(metadata)
+    }
+
     fn fetch_allmanga(&self, query: &str) -> Result<AnimeMetadata, Error> {
         let search_id = self.search_show_id(query)?;
         let mut show = self.fetch_show_details(&search_id)?;

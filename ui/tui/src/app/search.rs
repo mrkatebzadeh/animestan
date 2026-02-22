@@ -232,11 +232,6 @@ impl App {
         self.set_search_results_selection(target);
     }
 
-    pub fn search_results_selected_title(&self) -> Option<&str> {
-        self.current_search_result()
-            .map(|entry| entry.title.as_str())
-    }
-
     pub fn request_search_results_add(&mut self) {
         self.search.add_pending = PendingFlag::Yes;
     }
