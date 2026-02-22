@@ -19,6 +19,7 @@ mod downloads;
 mod error;
 mod favorites;
 mod fixtures;
+mod format;
 mod logging;
 mod metadata;
 mod models;
@@ -34,6 +35,9 @@ pub use crate::error::Error;
 pub use crate::error::Error as CoreError;
 pub type CoreResult<T> = anyhow::Result<T>;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
+pub use crate::format::{
+    format_list, format_season_year, format_status_score, metadata_source_label,
+};
 pub use crate::logging::init_logging;
 pub use crate::metadata::{
     AniListMetadataProvider, AnimeMetadata, KitsuMetadataProvider, MetadataProvider,
