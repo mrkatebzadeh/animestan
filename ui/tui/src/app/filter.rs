@@ -13,68 +13,73 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{App, FilterCandidate, FilterTarget, Focus, Matcher, PlaybackFilter};
+use super::{
+    App, FilterActive, FilterCandidate, FilterTarget, Focus, Matcher, PanelMode, PendingFlag,
+    PlaybackFilter,
+};
 
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 
 impl App {
     pub fn panel_filter_mode(&self) -> bool {
-        self.panel_filter_mode
+        matches!(self.filters.panel_mode, PanelMode::Active)
     }
 
     pub fn panel_filter_target(&self) -> Option<FilterTarget> {
-        self.panel_filter_target
+        self.filters.panel_target
     }
 
     pub fn panel_filter_query(&self) -> &str {
-        &self.panel_filter_query
+        &self.filters.panel_query
     }
 
     pub fn panel_filter_active_for(&self, target: FilterTarget) -> bool {
         match target {
-            FilterTarget::Anime | FilterTarget::Bookmarks => self.bookmark_filter_active,
-            FilterTarget::Episodes => self.episode_filter_active,
+            FilterTarget::Anime | FilterTarget::Bookmarks => {
+                matches!(self.filters.bookmark_active, FilterActive::Active)
+            }
+            FilterTarget::Episodes => matches!(self.filters.episode_active, FilterActive::Active),
         }
     }
 
     pub fn filter_target_for_focus(&self) -> FilterTarget {
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => FilterTarget::Anime,
             Focus::Right => FilterTarget::Episodes,
         }
     }
 
     pub fn enter_panel_filter(&mut self, target: FilterTarget) {
-        self.pending_double_g = false;
-        self.panel_filter_mode = true;
-        self.panel_filter_target = Some(target);
-        self.panel_filter_query.clear();
+        self.nav.pending_double_g = false;
+        self.filters.panel_mode = PanelMode::Active;
+        self.filters.panel_target = Some(target);
+        self.filters.panel_query.clear();
         self.set_details("Panel filter: type to narrow results, Enter to apply, Esc to close.");
     }
 
     pub fn exit_panel_filter(&mut self) {
-        self.panel_filter_mode = false;
-        self.panel_filter_target = None;
+        self.filters.panel_mode = PanelMode::Inactive;
+        self.filters.panel_target = None;
     }
 
     pub fn update_panel_filter_query(&mut self, query: String) {
-        self.panel_filter_query = query;
-        if let Some(target) = self.panel_filter_target {
+        self.filters.panel_query = query;
+        if let Some(target) = self.filters.panel_target {
             self.apply_panel_filter_for_target(target);
         }
     }
 
     pub fn filter_label(&self) -> Option<&'static str> {
-        self.filter_mode.label()
+        self.filters.filter_mode.label()
     }
 
     pub fn current_filter(&self) -> Option<PlaybackFilter> {
-        self.filter_mode.as_filter()
+        self.filters.filter_mode.as_filter()
     }
 
     pub fn take_filter_changed(&mut self) -> bool {
-        if self.filter_changed {
-            self.filter_changed = false;
+        if matches!(self.filters.filter_changed, PendingFlag::Yes) {
+            self.filters.filter_changed = PendingFlag::No;
             true
         } else {
             false
@@ -82,13 +87,13 @@ impl App {
     }
 
     pub fn cycle_filter(&mut self) {
-        self.filter_mode = self.filter_mode.next();
-        self.filter_changed = true;
-        self.right_index = 0;
-        self.selected_episode = None;
-        if let Some(label) = self.filter_mode.label() {
+        self.filters.filter_mode = self.filters.filter_mode.next();
+        self.filters.filter_changed = PendingFlag::Yes;
+        self.nav.right_index = 0;
+        self.nav.selected_episode = None;
+        if let Some(label) = self.filters.filter_mode.label() {
             self.set_details(format!("Filter set to {label}"));
-            self.filtered_episodes.clear();
+            self.data.filtered_episodes.clear();
         } else {
             self.set_details("Filters cleared");
             self.clear_filtered_episodes();
@@ -96,7 +101,7 @@ impl App {
     }
 
     fn apply_panel_filter_for_target(&mut self, target: FilterTarget) {
-        let query = self.panel_filter_query.clone();
+        let query = self.filters.panel_query.clone();
         self.apply_panel_filter_with_query(target, &query);
         *self.saved_query_mut(target) = query;
     }
@@ -115,36 +120,41 @@ impl App {
 
     fn apply_bookmark_filter(&mut self, query: &str) {
         if query.is_empty() {
-            self.bookmark_filter_active = false;
-            self.filtered_bookmark_entries.clear();
-            self.left_index = self
+            self.filters.bookmark_active = FilterActive::Inactive;
+            self.data.filtered_bookmark_entries.clear();
+            self.nav.left_index = self
+                .nav
                 .left_index
                 .min(self.visible_bookmark_entries().len().saturating_sub(1));
-            self.selected_anime = None;
-            self.anime_selection_changed = true;
+            self.nav.selected_anime = None;
+            self.nav.anime_selection_changed = true;
             return;
         }
 
-        let filtered = fuzzy_filter(&mut self.matcher, &self.bookmark_entries, query, |entry| {
-            entry.anime.title.as_str()
-        });
-        self.filtered_bookmark_entries = filtered;
-        self.bookmark_filter_active = true;
-        if self.left_index >= self.visible_bookmark_entries().len() {
-            self.left_index = 0;
-            self.selected_anime = None;
+        let filtered = fuzzy_filter(
+            &mut self.matcher,
+            &self.data.bookmark_entries,
+            query,
+            |entry| entry.anime.title.as_str(),
+        );
+        self.data.filtered_bookmark_entries = filtered;
+        self.filters.bookmark_active = FilterActive::Active;
+        if self.nav.left_index >= self.visible_bookmark_entries().len() {
+            self.nav.left_index = 0;
+            self.nav.selected_anime = None;
         }
-        self.anime_selection_changed = true;
+        self.nav.anime_selection_changed = true;
     }
 
     fn apply_episode_filter(&mut self, query: &str) {
         if query.is_empty() {
-            self.episode_filter_active = false;
-            self.filtered_episode_entries.clear();
-            self.right_index = self
+            self.filters.episode_active = FilterActive::Inactive;
+            self.data.filtered_episode_entries.clear();
+            self.nav.right_index = self
+                .nav
                 .right_index
                 .min(self.visible_episodes().len().saturating_sub(1));
-            self.selected_episode = None;
+            self.nav.selected_episode = None;
             return;
         }
 
@@ -152,25 +162,25 @@ impl App {
         let filtered = fuzzy_filter(&mut self.matcher, &base, query, |episode| {
             episode.title.as_str()
         });
-        self.filtered_episode_entries = filtered;
-        self.episode_filter_active = true;
-        if self.right_index >= self.visible_episodes().len() {
-            self.right_index = 0;
-            self.selected_episode = None;
+        self.data.filtered_episode_entries = filtered;
+        self.filters.episode_active = FilterActive::Active;
+        if self.nav.right_index >= self.visible_episodes().len() {
+            self.nav.right_index = 0;
+            self.nav.selected_episode = None;
         }
     }
 
     fn saved_query_mut(&mut self, target: FilterTarget) -> &mut String {
         match target {
-            FilterTarget::Anime | FilterTarget::Bookmarks => &mut self.bookmark_filter_query,
-            FilterTarget::Episodes => &mut self.episode_filter_query,
+            FilterTarget::Anime | FilterTarget::Bookmarks => &mut self.filters.bookmark_query,
+            FilterTarget::Episodes => &mut self.filters.episode_query,
         }
     }
 
     fn saved_query(&self, target: FilterTarget) -> &str {
         match target {
-            FilterTarget::Anime | FilterTarget::Bookmarks => &self.bookmark_filter_query,
-            FilterTarget::Episodes => &self.episode_filter_query,
+            FilterTarget::Anime | FilterTarget::Bookmarks => &self.filters.bookmark_query,
+            FilterTarget::Episodes => &self.filters.episode_query,
         }
     }
 

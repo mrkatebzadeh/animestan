@@ -35,8 +35,9 @@ const DEFAULT_SEARCH_QUERY: &str = "";
 const QUICK_LAUNCH_HISTORY_SIZE: usize = 12;
 const QUICK_LAUNCH_RECENT_PLAY_SIZE: usize = 8;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum Focus {
+    #[default]
     Left,
     Right,
 }
@@ -65,8 +66,9 @@ impl ConfirmExitChoice {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum InputMode {
+    #[default]
     Normal,
     Search,
 }
@@ -78,8 +80,9 @@ pub enum EpisodeMarkAction {
     UpToCurrent,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum PlaybackStatus {
+    #[default]
     None,
     Playing,
     Downloading,
@@ -92,8 +95,9 @@ pub enum FilterTarget {
     Bookmarks,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum FilterMode {
+    #[default]
     None,
     Unwatched,
     InProgress,
@@ -146,80 +150,166 @@ pub struct AnimeProgress {
     pub total: usize,
 }
 
-#[allow(clippy::struct_excessive_bools)]
-pub struct App {
+#[derive(Clone, Copy, Debug, Default)]
+enum PanelMode {
+    #[default]
+    Inactive,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum FilterActive {
+    #[default]
+    Inactive,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum SearchModal {
+    #[default]
+    Hidden,
+    Visible,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum MetaFetch {
+    #[default]
+    Idle,
+    Pending,
+    Loading,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum PendingFlag {
+    #[default]
+    No,
+    Yes,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum Progress {
+    #[default]
+    Idle,
+    Active,
+}
+
+#[derive(Debug, Default)]
+struct NavState {
     focus: Focus,
     input_mode: InputMode,
     left_index: usize,
     right_index: usize,
     selected_anime: Option<usize>,
     selected_episode: Option<usize>,
+    pending_double_g: bool,
+    anime_selection_changed: bool,
+}
+
+#[derive(Debug, Default)]
+struct FilterState {
+    panel_mode: PanelMode,
+    panel_target: Option<FilterTarget>,
+    panel_query: String,
+    bookmark_active: FilterActive,
+    episode_active: FilterActive,
+    bookmark_query: String,
+    episode_query: String,
+    filter_changed: PendingFlag,
+    filter_mode: FilterMode,
+}
+
+#[derive(Debug, Default)]
+struct DataState {
     search_results: Vec<AnimeEntry>,
     bookmark_entries: Vec<FavoriteEntry>,
     episodes: Vec<Episode>,
     filtered_episodes: Vec<Episode>,
     filtered_bookmark_entries: Vec<FavoriteEntry>,
     filtered_episode_entries: Vec<Episode>,
-    panel_filter_mode: bool,
-    panel_filter_target: Option<FilterTarget>,
-    panel_filter_query: String,
-    bookmark_filter_active: bool,
-    episode_filter_active: bool,
-    bookmark_filter_query: String,
-    episode_filter_query: String,
     episodes_loading: bool,
     fetch_generation: u64,
-    search_query: String,
-    pending_search: bool,
-    pending_playback_request: bool,
-    pending_download: bool,
-    pending_delete: bool,
-    pending_bookmark_toggle: bool,
+    episode_indicators: HashMap<String, EpisodeIndicators>,
+    anime_progress: HashMap<String, AnimeProgress>,
+}
+
+#[derive(Debug, Default)]
+struct SearchState {
+    query: String,
+    pending_search: PendingFlag,
+    results_query: String,
+    modal_visible: SearchModal,
+    selection: usize,
+    metadata: Option<AnimeMetadata>,
+    metadata_error: Option<String>,
+    metadata_generation: u64,
+    meta_state: MetaFetch,
+    add_pending: PendingFlag,
+}
+
+#[derive(Debug, Default)]
+struct PlaybackState {
+    status: PlaybackStatus,
+    in_progress: Progress,
+    current_episode_id: Option<String>,
+    current_anime_title: Option<String>,
+    current_episode_title: Option<String>,
+    elapsed_seconds: Option<f64>,
+    pending_playback_request: PendingFlag,
+    pending_download: PendingFlag,
+    pending_delete: PendingFlag,
+    pending_bookmark_toggle: PendingFlag,
     pending_episode_mark_action: Option<EpisodeMarkAction>,
-    pending_double_g: bool,
-    anime_selection_changed: bool,
-    filter_changed: bool,
-    filter_mode: FilterMode,
-    playback_status: PlaybackStatus,
-    playback_in_progress: bool,
-    current_playing_episode_id: Option<String>,
-    current_playing_anime_title: Option<String>,
-    current_playing_episode_title: Option<String>,
-    playback_elapsed_seconds: Option<f64>,
+}
+
+#[derive(Debug, Default)]
+struct QuickLaunchState {
+    active: PendingFlag,
+    query: String,
+    selection: usize,
+    items: Vec<QuickLaunchCandidate>,
+    history: VecDeque<String>,
+    recently_played: VecDeque<String>,
+    last_played_episode: Option<LastPlayedEpisode>,
+    pending_playback_override: Option<PendingPlayback>,
+}
+
+#[derive(Debug, Default)]
+struct ModalState {
+    info_visible: bool,
+    info_loading: bool,
+    info_metadata: Option<AnimeMetadata>,
+    info_error: Option<String>,
+    pending_info_fetch: bool,
+    info_fetch_generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct KeybindingsState {
+    scroll: usize,
+    content_lines: usize,
+    viewport_lines: usize,
+}
+
+#[derive(Debug)]
+struct UiState {
     details_text: String,
     should_quit: bool,
     confirm_exit: bool,
     confirm_exit_choice: ConfirmExitChoice,
     show_keybindings: bool,
+}
+
+pub struct App {
+    nav: NavState,
+    filters: FilterState,
+    data: DataState,
+    search: SearchState,
+    playback: PlaybackState,
+    quick: QuickLaunchState,
+    modal: ModalState,
+    keybindings: KeybindingsState,
+    ui: UiState,
     matcher: Matcher,
-    episode_indicators: HashMap<String, EpisodeIndicators>,
-    quick_launch_active: bool,
-    quick_launch_query: String,
-    anime_progress: HashMap<String, AnimeProgress>,
-    quick_launch_selection: usize,
-    quick_launch_items: Vec<QuickLaunchCandidate>,
-    quick_launch_history: VecDeque<String>,
-    quick_launch_recently_played: VecDeque<String>,
-    last_played_episode: Option<LastPlayedEpisode>,
-    pending_playback_override: Option<PendingPlayback>,
-    info_modal_visible: bool,
-    info_modal_loading: bool,
-    info_modal_metadata: Option<AnimeMetadata>,
-    info_modal_error: Option<String>,
-    pending_info_fetch: bool,
-    info_fetch_generation: u64,
-    search_results_query: String,
-    search_results_modal_visible: bool,
-    search_results_selection: usize,
-    search_results_metadata: Option<AnimeMetadata>,
-    search_results_metadata_error: Option<String>,
-    search_results_metadata_loading: bool,
-    search_results_metadata_generation: u64,
-    search_results_metadata_pending: bool,
-    search_results_add_pending: bool,
-    keybindings_scroll: usize,
-    keybindings_content_lines: usize,
-    keybindings_viewport_lines: usize,
 }
 
 #[derive(Clone, Copy)]

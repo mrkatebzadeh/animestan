@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{App, EpisodeMarkAction};
+use super::{App, EpisodeMarkAction, PendingFlag, Progress};
 
 impl App {
     pub fn request_play(&mut self) {
@@ -21,12 +21,12 @@ impl App {
     }
 
     pub fn request_play_async(&mut self) {
-        self.pending_playback_request = true;
+        self.playback.pending_playback_request = PendingFlag::Yes;
     }
 
     pub fn take_pending_play_async(&mut self) -> bool {
-        if self.pending_playback_request {
-            self.pending_playback_request = false;
+        if matches!(self.playback.pending_playback_request, PendingFlag::Yes) {
+            self.playback.pending_playback_request = PendingFlag::No;
             true
         } else {
             false
@@ -34,35 +34,39 @@ impl App {
     }
 
     pub fn set_playback_in_progress(&mut self, in_progress: bool) {
-        self.playback_in_progress = in_progress;
+        self.playback.in_progress = if in_progress {
+            Progress::Active
+        } else {
+            Progress::Idle
+        };
     }
 
     pub fn playback_in_progress(&self) -> bool {
-        self.playback_in_progress
+        matches!(self.playback.in_progress, Progress::Active)
     }
 
     pub fn set_current_playing_episode(&mut self, id: Option<String>) {
-        self.current_playing_episode_id = id;
-        if self.current_playing_episode_id.is_none() {
-            self.current_playing_anime_title = None;
-            self.current_playing_episode_title = None;
-            self.playback_elapsed_seconds = None;
+        self.playback.current_episode_id = id;
+        if self.playback.current_episode_id.is_none() {
+            self.playback.current_anime_title = None;
+            self.playback.current_episode_title = None;
+            self.playback.elapsed_seconds = None;
         }
     }
 
     pub fn current_playing_episode_id(&self) -> Option<&str> {
-        self.current_playing_episode_id.as_deref()
+        self.playback.current_episode_id.as_deref()
     }
 
     pub fn set_current_playback_titles(&mut self, anime: Option<String>, episode: Option<String>) {
-        self.current_playing_anime_title = anime;
-        self.current_playing_episode_title = episode;
+        self.playback.current_anime_title = anime;
+        self.playback.current_episode_title = episode;
     }
 
     pub fn current_playback_label(&self) -> Option<String> {
         match (
-            self.current_playing_anime_title.as_deref(),
-            self.current_playing_episode_title.as_deref(),
+            self.playback.current_anime_title.as_deref(),
+            self.playback.current_episode_title.as_deref(),
         ) {
             (Some(anime), Some(episode)) => Some(format!("{anime} — {episode}")),
             (Some(anime), None) => Some(anime.to_string()),
@@ -72,11 +76,11 @@ impl App {
     }
 
     pub fn set_playback_elapsed(&mut self, elapsed: Option<f64>) {
-        self.playback_elapsed_seconds = elapsed;
+        self.playback.elapsed_seconds = elapsed;
     }
 
     pub fn playback_elapsed(&self) -> Option<f64> {
-        self.playback_elapsed_seconds
+        self.playback.elapsed_seconds
     }
 
     pub fn request_download(&mut self) {
@@ -84,7 +88,7 @@ impl App {
             self.set_details("Highlight an episode to download.");
             return;
         }
-        self.pending_download = true;
+        self.playback.pending_download = PendingFlag::Yes;
         if let Some(title) = self.current_episode_title() {
             self.set_details(format!(
                 "Preparing download for {title}. Local copies can be removed with 'D'."
@@ -95,8 +99,8 @@ impl App {
     }
 
     pub fn take_pending_download(&mut self) -> bool {
-        if self.pending_download {
-            self.pending_download = false;
+        if matches!(self.playback.pending_download, PendingFlag::Yes) {
+            self.playback.pending_download = PendingFlag::No;
             true
         } else {
             false
@@ -108,7 +112,7 @@ impl App {
             self.set_details("Highlight an episode to delete its download.");
             return;
         }
-        self.pending_delete = true;
+        self.playback.pending_delete = PendingFlag::Yes;
         if let Some(title) = self.current_episode_title() {
             self.set_details(format!("Preparing to delete local copy of {title}."));
         } else {
@@ -117,8 +121,8 @@ impl App {
     }
 
     pub fn take_pending_delete(&mut self) -> bool {
-        if self.pending_delete {
-            self.pending_delete = false;
+        if matches!(self.playback.pending_delete, PendingFlag::Yes) {
+            self.playback.pending_delete = PendingFlag::No;
             true
         } else {
             false
@@ -126,12 +130,12 @@ impl App {
     }
 
     pub fn request_bookmark_toggle(&mut self) {
-        self.pending_bookmark_toggle = true;
+        self.playback.pending_bookmark_toggle = PendingFlag::Yes;
     }
 
     pub fn take_pending_bookmark_toggle(&mut self) -> bool {
-        if self.pending_bookmark_toggle {
-            self.pending_bookmark_toggle = false;
+        if matches!(self.playback.pending_bookmark_toggle, PendingFlag::Yes) {
+            self.playback.pending_bookmark_toggle = PendingFlag::No;
             true
         } else {
             false
@@ -143,7 +147,7 @@ impl App {
             self.set_details("Highlight an episode to mark.");
             return;
         }
-        self.pending_episode_mark_action = Some(EpisodeMarkAction::Current { watched });
+        self.playback.pending_episode_mark_action = Some(EpisodeMarkAction::Current { watched });
         let verb = if watched { "watched" } else { "unwatched" };
         self.set_details(format!("Marking current episode as {verb}."));
     }
@@ -153,7 +157,7 @@ impl App {
             self.set_details("Load episodes to mark them.");
             return;
         }
-        self.pending_episode_mark_action = Some(EpisodeMarkAction::All { watched });
+        self.playback.pending_episode_mark_action = Some(EpisodeMarkAction::All { watched });
         let verb = if watched { "watched" } else { "unwatched" };
         self.set_details(format!("Marking all episodes as {verb}."));
     }
@@ -167,11 +171,11 @@ impl App {
             self.set_details("Load episodes to mark them.");
             return;
         }
-        self.pending_episode_mark_action = Some(EpisodeMarkAction::UpToCurrent);
+        self.playback.pending_episode_mark_action = Some(EpisodeMarkAction::UpToCurrent);
         self.set_details("Marking episodes up to current as watched.");
     }
 
     pub fn take_pending_episode_mark_action(&mut self) -> Option<EpisodeMarkAction> {
-        self.pending_episode_mark_action.take()
+        self.playback.pending_episode_mark_action.take()
     }
 }
