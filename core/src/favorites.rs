@@ -13,16 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    fs, io,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CoreResult, config::AppConfig, error::Error, models::AnimeEntry};
+use crate::{
+    CoreResult,
+    config::AppConfig,
+    error::Error,
+    models::AnimeEntry,
+    store::{load_json_or_default, now_epoch, save_json_pretty},
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FavoriteEntry {
@@ -50,21 +51,12 @@ impl FavoriteStore {
     /// Returns `Err` if the file cannot be read or if the JSON payload cannot
     /// be parsed into a [`FavoritesStore`].
     pub fn load(path: PathBuf) -> CoreResult<Self> {
-        match fs::read_to_string(&path) {
-            Ok(contents) => {
-                let store: FavoritesStore =
-                    serde_json::from_str(&contents).map_err(|source| Error::FavoritesParse {
-                        path: path.clone(),
-                        source,
-                    })?;
-                Ok(Self { path, store })
-            }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self {
-                path,
-                store: FavoritesStore::default(),
-            }),
-            Err(source) => Err(Error::FavoritesRead { path, source }.into()),
-        }
+        let store = load_json_or_default(
+            &path,
+            |path, source| Error::FavoritesParse { path, source },
+            |path, source| Error::FavoritesRead { path, source },
+        )?;
+        Ok(Self { path, store })
     }
 
     /// Loads favorites using the default path derived from [`AppConfig`].
@@ -115,38 +107,8 @@ impl FavoriteStore {
     }
 
     fn save(&self) -> CoreResult<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|source| Error::FavoritesWrite {
-                path: self.path.clone(),
-                source,
-            })?;
-        }
-
-        let mut tmp_path = self.path.clone();
-        tmp_path.set_extension("json.tmp");
-
-        let payload =
-            serde_json::to_string_pretty(&self.store).map_err(|source| Error::FavoritesWrite {
-                path: self.path.clone(),
-                source: io::Error::other(source),
-            })?;
-
-        fs::write(&tmp_path, payload).map_err(|source| Error::FavoritesWrite {
-            path: self.path.clone(),
-            source,
-        })?;
-        fs::rename(&tmp_path, &self.path).map_err(|source| Error::FavoritesWrite {
-            path: self.path.clone(),
-            source,
-        })?;
-
-        Ok(())
+        save_json_pretty(&self.path, &self.store, |path, source| {
+            Error::FavoritesWrite { path, source }
+        })
     }
-}
-
-fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }

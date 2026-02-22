@@ -24,6 +24,7 @@ mod logging;
 mod metadata;
 mod models;
 mod source;
+mod store;
 mod tracking;
 
 pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
