@@ -13,19 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{AnimeEntry, App, Focus, InputMode};
+use super::{AnimeEntry, App, Focus, InputMode, SearchModal};
 
 impl App {
     pub fn left_index(&self) -> usize {
-        self.left_index
+        self.nav.left_index
     }
 
     pub fn right_index(&self) -> usize {
-        self.right_index
+        self.nav.right_index
     }
 
     pub fn selected_episode(&self) -> Option<usize> {
-        self.selected_episode
+        self.nav.selected_episode
     }
 
     pub fn current_anime_title(&self) -> Option<String> {
@@ -46,11 +46,11 @@ impl App {
     }
 
     pub(super) fn current_anime(&self) -> Option<&AnimeEntry> {
-        if self.search_results_modal_visible {
+        if matches!(self.search.modal_visible, SearchModal::Visible) {
             return self.current_search_result();
         }
         self.visible_bookmark_entries()
-            .get(self.left_index)
+            .get(self.nav.left_index)
             .map(|entry| &entry.anime)
     }
 
@@ -63,7 +63,7 @@ impl App {
         if available.is_empty() {
             return None;
         }
-        let index = self.selected_episode.unwrap_or(self.right_index);
+        let index = self.nav.selected_episode.unwrap_or(self.nav.right_index);
         Some(index.min(available.len() - 1))
     }
 
@@ -92,23 +92,23 @@ impl App {
     }
 
     fn active_index(&self) -> usize {
-        match self.focus {
-            Focus::Left => self.left_index,
-            Focus::Right => self.right_index,
+        match self.nav.focus {
+            Focus::Left => self.nav.left_index,
+            Focus::Right => self.nav.right_index,
         }
     }
 
     fn set_active_index(&mut self, target: usize) {
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => {
                 let len = self.left_items_len();
                 if len == 0 {
                     return;
                 }
                 let clamped = target.min(len - 1);
-                if self.left_index != clamped {
-                    self.left_index = clamped;
-                    self.anime_selection_changed = true;
+                if self.nav.left_index != clamped {
+                    self.nav.left_index = clamped;
+                    self.nav.anime_selection_changed = true;
                 }
             }
             Focus::Right => {
@@ -116,13 +116,13 @@ impl App {
                 if len == 0 {
                     return;
                 }
-                self.right_index = target.min(len - 1);
+                self.nav.right_index = target.min(len - 1);
             }
         }
     }
 
     fn active_list_len(&self) -> usize {
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => self.left_items_len(),
             Focus::Right => self.visible_episodes().len(),
         }
@@ -133,19 +133,19 @@ impl App {
             return;
         }
 
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => {
-                let previous = self.left_index;
-                if self.left_index > 0 {
-                    self.left_index -= 1;
+                let previous = self.nav.left_index;
+                if self.nav.left_index > 0 {
+                    self.nav.left_index -= 1;
                 }
-                if self.left_index != previous {
-                    self.anime_selection_changed = true;
+                if self.nav.left_index != previous {
+                    self.nav.anime_selection_changed = true;
                 }
             }
             Focus::Right => {
-                if self.right_index > 0 {
-                    self.right_index -= 1;
+                if self.nav.right_index > 0 {
+                    self.nav.right_index -= 1;
                 }
             }
         }
@@ -157,19 +157,19 @@ impl App {
             return;
         }
 
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => {
-                let previous = self.left_index;
-                if self.left_index + 1 < len {
-                    self.left_index += 1;
+                let previous = self.nav.left_index;
+                if self.nav.left_index + 1 < len {
+                    self.nav.left_index += 1;
                 }
-                if self.left_index != previous {
-                    self.anime_selection_changed = true;
+                if self.nav.left_index != previous {
+                    self.nav.anime_selection_changed = true;
                 }
             }
             Focus::Right => {
-                if self.right_index + 1 < len {
-                    self.right_index += 1;
+                if self.nav.right_index + 1 < len {
+                    self.nav.right_index += 1;
                 }
             }
         }
@@ -227,12 +227,12 @@ impl App {
     }
 
     pub(crate) fn start_pending_double_g(&mut self) {
-        self.pending_double_g = true;
+        self.nav.pending_double_g = true;
     }
 
     pub(crate) fn consume_pending_double_g(&mut self) -> bool {
-        if self.pending_double_g {
-            self.pending_double_g = false;
+        if self.nav.pending_double_g {
+            self.nav.pending_double_g = false;
             true
         } else {
             false
@@ -240,28 +240,28 @@ impl App {
     }
 
     pub(crate) fn cancel_pending_double_g(&mut self) {
-        self.pending_double_g = false;
+        self.nav.pending_double_g = false;
     }
 
     pub fn toggle_focus(&mut self) {
-        self.focus = self.focus.toggle();
-        self.set_details(match self.focus {
+        self.nav.focus = self.nav.focus.toggle();
+        self.set_details(match self.nav.focus {
             Focus::Left => "Focus: Anime list",
             Focus::Right => "Focus: Episode list",
         });
     }
 
     pub fn cycle_focus(&mut self) {
-        if matches!(self.input_mode, InputMode::Search) {
+        if matches!(self.nav.input_mode, InputMode::Search) {
             self.exit_search_mode();
-            self.focus = Focus::Left;
+            self.nav.focus = Focus::Left;
             self.set_details("Focus: Anime list");
             return;
         }
 
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => {
-                self.focus = Focus::Right;
+                self.nav.focus = Focus::Right;
                 self.set_details("Focus: Episode list");
             }
             Focus::Right => {
@@ -271,12 +271,12 @@ impl App {
     }
 
     pub fn select_current(&mut self) {
-        match self.focus {
+        match self.nav.focus {
             Focus::Left => {
                 if self.left_items_len() == 0 {
                     return;
                 }
-                self.selected_anime = Some(self.left_index);
+                self.nav.selected_anime = Some(self.nav.left_index);
                 if let Some(entry) = self.current_anime() {
                     self.set_details(format!("Selected anime: {}", entry.title));
                 }
@@ -285,8 +285,8 @@ impl App {
                 if self.visible_episodes().is_empty() {
                     return;
                 }
-                self.selected_episode = Some(self.right_index);
-                if let Some(episode) = self.visible_episodes().get(self.right_index) {
+                self.nav.selected_episode = Some(self.nav.right_index);
+                if let Some(episode) = self.visible_episodes().get(self.nav.right_index) {
                     self.set_details(format!("Selected episode: {}", episode.title));
                 }
             }
@@ -294,8 +294,8 @@ impl App {
     }
 
     pub fn take_anime_selection_changed(&mut self) -> bool {
-        if self.anime_selection_changed {
-            self.anime_selection_changed = false;
+        if self.nav.anime_selection_changed {
+            self.nav.anime_selection_changed = false;
             true
         } else {
             false
@@ -303,9 +303,9 @@ impl App {
     }
 
     pub(super) fn reset_navigation_state(&mut self) {
-        self.left_index = 0;
-        self.selected_anime = None;
+        self.nav.left_index = 0;
+        self.nav.selected_anime = None;
         self.clear_episodes();
-        self.pending_double_g = false;
+        self.nav.pending_double_g = false;
     }
 }
