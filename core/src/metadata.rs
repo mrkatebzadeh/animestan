@@ -21,6 +21,7 @@ use reqwest::blocking::Client;
 
 use crate::error::Error as CoreError;
 
+mod allmanga;
 mod anilist;
 mod kitsu;
 
@@ -32,8 +33,29 @@ fn normalize_query(query: &str) -> String {
 
 #[derive(Debug, Clone, Copy)]
 pub enum MetadataSource {
+    AllManga,
     AniList,
     Kitsu,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum MetadataProviderKind {
+    #[default]
+    AllManga,
+    AniList,
+    Kitsu,
+}
+
+impl MetadataProviderKind {
+    #[must_use]
+    pub fn from_config(value: Option<&str>) -> Self {
+        match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            Some("anilist") => Self::AniList,
+            Some("kitsu") => Self::Kitsu,
+            Some("allmanga") => Self::AllManga,
+            _ => Self::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -129,17 +151,31 @@ pub struct AniListMetadataProvider {
     cache: MetadataCache,
 }
 
+pub struct AllMangaMetadataProvider {
+    client: Client,
+    cache: MetadataCache,
+}
+
 pub struct KitsuMetadataProvider {
     client: Client,
     cache: MetadataCache,
 }
 
 pub struct MetadataResolver {
-    primary: AniListMetadataProvider,
-    fallback: KitsuMetadataProvider,
+    primary_kind: MetadataProviderKind,
+    fallback_kind: MetadataProviderKind,
+    allmanga: AllMangaMetadataProvider,
+    anilist: AniListMetadataProvider,
+    kitsu: KitsuMetadataProvider,
 }
 
 impl Default for AniListMetadataProvider {
+    fn default() -> Self {
+        Self::new(Client::new())
+    }
+}
+
+impl Default for AllMangaMetadataProvider {
     fn default() -> Self {
         Self::new(Client::new())
     }
@@ -154,17 +190,37 @@ impl Default for KitsuMetadataProvider {
 impl MetadataResolver {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            primary: AniListMetadataProvider::default(),
-            fallback: KitsuMetadataProvider::default(),
-        }
+        Self::with_primary(MetadataProviderKind::default())
     }
 
     #[must_use]
     pub fn with_clients(primary: Client, fallback: Client) -> Self {
+        let primary_kind = MetadataProviderKind::default();
+        let fallback_kind = fallback_for(primary_kind);
         Self {
-            primary: AniListMetadataProvider::new(primary),
-            fallback: KitsuMetadataProvider::new(fallback),
+            primary_kind,
+            fallback_kind,
+            allmanga: AllMangaMetadataProvider::default(),
+            anilist: AniListMetadataProvider::new(primary),
+            kitsu: KitsuMetadataProvider::new(fallback),
+        }
+    }
+
+    #[must_use]
+    pub fn from_config(config: &crate::AppConfig) -> Self {
+        let primary = MetadataProviderKind::from_config(config.metadata_source.as_deref());
+        Self::with_primary(primary)
+    }
+
+    #[must_use]
+    pub fn with_primary(primary_kind: MetadataProviderKind) -> Self {
+        let fallback_kind = fallback_for(primary_kind);
+        Self {
+            primary_kind,
+            fallback_kind,
+            allmanga: AllMangaMetadataProvider::default(),
+            anilist: AniListMetadataProvider::default(),
+            kitsu: KitsuMetadataProvider::default(),
         }
     }
 }
@@ -177,12 +233,89 @@ impl Default for MetadataResolver {
 
 impl MetadataProvider for MetadataResolver {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
-        match self.primary.fetch_by_query(query) {
+        match self.fetch_with(self.primary_kind, query) {
             Ok(metadata) => Ok(metadata),
-            Err(primary_err) => match self.fallback.fetch_by_query(query) {
+            Err(primary_err) => match self.fetch_with(self.fallback_kind, query) {
                 Ok(metadata) => Ok(metadata),
                 Err(_) => Err(primary_err),
             },
         }
+    }
+}
+
+impl MetadataResolver {
+    /// Fetches metadata using a provider-specific identifier when available.
+    ///
+    /// # Errors
+    ///
+    /// * `CoreError::MetadataNotFound` if the identifier cannot be resolved.
+    /// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
+    ///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
+    /// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
+    pub fn fetch_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, CoreError> {
+        match self.primary_kind {
+            MetadataProviderKind::AllManga => match self.allmanga.fetch_by_id(id, query) {
+                Ok(metadata) => Ok(metadata),
+                Err(primary_err) => match self.fetch_with(self.fallback_kind, query) {
+                    Ok(metadata) => Ok(metadata),
+                    Err(_) => Err(primary_err),
+                },
+            },
+            _ => self.fetch_by_query(query),
+        }
+    }
+
+    fn fetch_with(
+        &self,
+        kind: MetadataProviderKind,
+        query: &str,
+    ) -> Result<AnimeMetadata, CoreError> {
+        match kind {
+            MetadataProviderKind::AllManga => self.allmanga.fetch_by_query(query),
+            MetadataProviderKind::AniList => self.anilist.fetch_by_query(query),
+            MetadataProviderKind::Kitsu => self.kitsu.fetch_by_query(query),
+        }
+    }
+}
+
+fn fallback_for(primary: MetadataProviderKind) -> MetadataProviderKind {
+    match primary {
+        MetadataProviderKind::Kitsu => MetadataProviderKind::AniList,
+        MetadataProviderKind::AniList | MetadataProviderKind::AllManga => {
+            MetadataProviderKind::Kitsu
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MetadataProviderKind;
+
+    #[test]
+    fn provider_kind_defaults_to_allmanga() {
+        assert_eq!(
+            MetadataProviderKind::from_config(None),
+            MetadataProviderKind::AllManga
+        );
+    }
+
+    #[test]
+    fn provider_kind_parses_strings() {
+        assert_eq!(
+            MetadataProviderKind::from_config(Some("anilist")),
+            MetadataProviderKind::AniList
+        );
+        assert_eq!(
+            MetadataProviderKind::from_config(Some("kitsu")),
+            MetadataProviderKind::Kitsu
+        );
+        assert_eq!(
+            MetadataProviderKind::from_config(Some("allmanga")),
+            MetadataProviderKind::AllManga
+        );
+        assert_eq!(
+            MetadataProviderKind::from_config(Some("unknown")),
+            MetadataProviderKind::AllManga
+        );
     }
 }

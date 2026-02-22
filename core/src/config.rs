@@ -27,6 +27,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub source_id: Option<String>,
     #[serde(default)]
+    pub metadata_source: Option<String>,
+    #[serde(default)]
     pub use_fixtures: Option<bool>,
     #[serde(default)]
     pub player: Option<String>,
@@ -52,6 +54,9 @@ impl AppConfig {
 
 # Anime source to use (default: Allanime)
 # source_id = "allanime"
+
+# Metadata source for anime details (default: AllManga)
+# metadata_source = "allmanga"
 
 # Media player command (default: mpv)
 # player = "mpv"

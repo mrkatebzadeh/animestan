@@ -68,6 +68,7 @@ enum MetadataTarget {
 struct MetadataFetchRequest {
     generation: u64,
     query: String,
+    source_id: Option<String>,
     target: MetadataTarget,
 }
 
@@ -123,7 +124,7 @@ fn run_app(
     let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
-    let metadata_resolver = Arc::new(MetadataResolver::new());
+    let metadata_resolver = Arc::new(MetadataResolver::from_config(config.as_ref()));
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
@@ -407,26 +408,28 @@ fn handle_metadata_fetch(
         return;
     };
 
-    let query = match target {
+    let (query, source_id) = match target {
         MetadataTarget::InfoModal => {
             let Some(query) = app.current_anime_title() else {
                 app.set_info_modal_error("Highlight an anime to view metadata.");
                 app.set_info_modal_loading(false);
                 return;
             };
+            let source_id = app.current_anime_id();
             app.set_info_modal_loading(true);
             app.set_details(format!("Fetching metadata for {query}..."));
-            query
+            (query, source_id)
         }
         MetadataTarget::SearchResults => {
-            let Some(title) = app.search_results_selected_title() else {
+            let Some(result) = app.current_search_result() else {
                 app.set_search_results_metadata_error("Highlight an anime to view metadata.");
                 app.set_details("Highlight an anime to view metadata.");
                 return;
             };
-            let query_string = title.to_string();
+            let query_string = result.title.clone();
+            let source_id = Some(result.id.clone());
             app.set_details(format!("Fetching metadata for {query_string}..."));
-            query_string
+            (query_string, source_id)
         }
     };
 
@@ -442,6 +445,7 @@ fn handle_metadata_fetch(
     let request = MetadataFetchRequest {
         generation,
         query,
+        source_id,
         target,
     };
     let abort_handle =
@@ -918,14 +922,21 @@ fn spawn_metadata_fetch_task(
     let MetadataFetchRequest {
         generation,
         query,
+        source_id,
         target,
     } = request;
 
     runtime.spawn({
         let fut = Abortable::new(
             async move {
-                let blocking_result =
-                    tokio::task::spawn_blocking(move || resolver.fetch_by_query(&query)).await;
+                let blocking_result = tokio::task::spawn_blocking(move || {
+                    if let Some(id) = source_id.as_deref() {
+                        resolver.fetch_by_id(id, &query)
+                    } else {
+                        resolver.fetch_by_query(&query)
+                    }
+                })
+                .await;
                 let result = match blocking_result {
                     Ok(inner) => inner.map_err(|err| anyhow!("metadata fetch failed: {err}")),
                     Err(err) => Err(anyhow!("metadata fetch join failed: {err}")),
