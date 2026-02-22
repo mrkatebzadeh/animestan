@@ -18,7 +18,9 @@ use std::convert::TryFrom;
 use crate::app::{App, ConfirmExitChoice, InputMode};
 use crate::events::keybindings;
 use crate::theme::Theme;
-use animestan_core::{AnimeMetadata, MetadataSource};
+use animestan_core::{
+    AnimeMetadata, format_list, format_season_year, format_status_score, metadata_source_label,
+};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
@@ -320,39 +322,6 @@ fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
         )));
     }
     lines
-}
-
-fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
-    match (status, score) {
-        (Some(status), Some(score)) => format!("{status} / {score:.1}"),
-        (Some(status), None) => status.to_string(),
-        (None, Some(score)) => format!("Score {score:.1}"),
-        _ => "N/A".to_string(),
-    }
-}
-
-fn format_list(items: &[String]) -> String {
-    if items.is_empty() {
-        "N/A".to_string()
-    } else {
-        items.join(", ")
-    }
-}
-
-fn format_season_year(season: Option<&str>, year: Option<u16>) -> String {
-    match (season, year) {
-        (Some(season), Some(year)) => format!("{season} {year}"),
-        (Some(season), None) => season.to_string(),
-        (None, Some(year)) => year.to_string(),
-        _ => "N/A".to_string(),
-    }
-}
-
-fn metadata_source_label(source: MetadataSource) -> &'static str {
-    match source {
-        MetadataSource::AniList => "AniList",
-        MetadataSource::Kitsu => "Kitsu",
-    }
 }
 
 pub(super) fn render_exit_confirmation_modal(frame: &mut Frame, app: &App, theme: &Theme) {
