@@ -36,8 +36,8 @@ pub(crate) fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> 
     Ok(())
 }
 
-pub(crate) fn handle_info(title: &str) -> Result<()> {
-    let resolver = MetadataResolver::new();
+pub(crate) fn handle_info(config: &AppConfig, title: &str) -> Result<()> {
+    let resolver = MetadataResolver::from_config(config);
     let metadata = resolver
         .fetch_by_query(title)
         .with_context(|| format!("failed to fetch metadata for '{title}'"))?;
