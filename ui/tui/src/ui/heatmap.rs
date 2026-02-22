@@ -159,15 +159,15 @@ pub(super) fn heatmap_cell_style(
     theme: &Theme,
     alternate: bool,
 ) -> Style {
-    let color = if indicators.watched {
-        let base = theme.heatmap_color(HeatmapVariant::Watched);
-        let adjusted = (intensity + if alternate { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
-        tinted_color(base, adjusted)
-    } else if alternate {
-        Color::Rgb(80, 80, 80)
+    let base = if indicators.watched {
+        theme.heatmap_color(HeatmapVariant::Watched)
+    } else if indicators.in_progress {
+        theme.heatmap_color(HeatmapVariant::InProgress)
     } else {
-        Color::Rgb(48, 48, 48)
+        theme.heatmap_color(HeatmapVariant::Upcoming)
     };
+    let adjusted = (intensity + if alternate { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
+    let color = tinted_color(base, adjusted);
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
