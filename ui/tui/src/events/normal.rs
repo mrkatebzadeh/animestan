@@ -1,0 +1,107 @@
+// Copyright (C) 2026 M.R. Siavash Katebzadeh <mr@katebzadeh.xyz>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::app::{App, Focus};
+
+pub(super) fn handle(app: &mut App, key_event: KeyEvent) {
+    if handle_navigation_shortcuts(app, key_event) {
+        return;
+    }
+
+    match key_event.code {
+        KeyCode::Char('s') => app.enter_search_mode(),
+        KeyCode::Char('/') => {
+            app.enter_panel_filter(app.filter_target_for_focus());
+        }
+        KeyCode::Char('q') => app.request_exit(),
+        KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+        KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.open_quick_launch();
+        }
+        KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+        KeyCode::Left | KeyCode::Right => {
+            app.toggle_focus();
+        }
+        KeyCode::Tab => app.cycle_focus(),
+        KeyCode::Char('w') => app.request_mark_current_episode(true),
+        KeyCode::Char('u') => app.request_mark_current_episode(false),
+        KeyCode::Char('m') => app.request_bookmark_toggle(),
+        KeyCode::Char('W') => app.request_mark_all_episodes(true),
+        KeyCode::Char('U') => app.request_mark_all_episodes(false),
+        KeyCode::Char('K') => app.request_mark_up_to_current(),
+        KeyCode::Char('f') => app.cycle_filter(),
+        KeyCode::Char('i') => {
+            app.open_info_modal();
+            app.set_details("Press Esc to close info modal.");
+        }
+        KeyCode::Char('d') => app.request_download(),
+        KeyCode::Char('D') => app.request_delete(),
+        KeyCode::Char(' ') => app.select_current(),
+        KeyCode::Char('?') => app.show_help(),
+        KeyCode::Enter => handle_enter(app),
+        _ => {}
+    }
+}
+
+fn handle_enter(app: &mut App) {
+    if matches!(app.focus(), Focus::Left) {
+        app.toggle_focus();
+    } else {
+        app.request_play();
+    }
+}
+
+fn handle_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
+    if matches!(key_event.code, KeyCode::Char('g')) && key_event.modifiers.is_empty() {
+        if app.consume_pending_double_g() {
+            app.move_to_top();
+        } else {
+            app.start_pending_double_g();
+        }
+        return true;
+    }
+
+    app.cancel_pending_double_g();
+
+    match key_event.code {
+        KeyCode::Char('G') => {
+            app.move_to_bottom();
+            true
+        }
+        KeyCode::Char('M') => {
+            app.move_to_middle();
+            true
+        }
+        KeyCode::Char('d' | 'D') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.half_page_down();
+                true
+            } else {
+                false
+            }
+        }
+        KeyCode::Char('u' | 'U') => {
+            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
+                app.half_page_up();
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
