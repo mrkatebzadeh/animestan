@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::json;
 use url::{Url, form_urlencoded::byte_serialize};
 
-use crate::{error::Error, source::ALLANIME_API_ENDPOINT};
+use crate::{AppConfig, error::Error, source::ALLANIME_API_ENDPOINT};
 
 use super::{
     AllMangaMetadataProvider, AnimeMetadata, MetadataCache, MetadataProvider, MetadataSource,
@@ -37,7 +37,7 @@ const ALLMANGA_SEASON_QUERY: &str =
 
 impl MetadataProvider for AllMangaMetadataProvider {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, Error> {
-        let key = normalize_query(query);
+        let key = format!("allmanga:query:{}", normalize_query(query));
         if let Some(metadata) = self.cache.get(&key)? {
             return Ok(metadata);
         }
@@ -50,15 +50,19 @@ impl MetadataProvider for AllMangaMetadataProvider {
 impl AllMangaMetadataProvider {
     #[must_use]
     pub fn new(client: Client) -> Self {
-        let client = enrich_client(client);
-        Self {
+        Self::with_cache(
             client,
-            cache: MetadataCache::default(),
-        }
+            MetadataCache::new(AppConfig::default().metadata_cache_path()),
+        )
+    }
+
+    pub(super) fn with_cache(client: Client, cache: MetadataCache) -> Self {
+        let client = enrich_client(client);
+        Self { client, cache }
     }
 
     pub(super) fn fetch_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, Error> {
-        let key = format!("id:{id}");
+        let key = format!("allmanga:id:{id}");
         if let Some(metadata) = self.cache.get(&key)? {
             return Ok(metadata);
         }

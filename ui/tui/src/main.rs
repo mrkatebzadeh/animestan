@@ -21,6 +21,7 @@ mod ui;
 
 use std::collections::HashMap;
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -38,6 +39,7 @@ use crossterm::terminal::{
 use futures::future::{AbortHandle, Abortable};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use serde::{Deserialize, Serialize};
 use spdlog::prelude::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{
@@ -56,7 +58,47 @@ struct EpisodeFetchRequest {
 
 struct EpisodeFetchResult {
     generation: u64,
+    anime_id: String,
     result: CoreResult<Vec<Episode>>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct EpisodeCacheFile {
+    #[serde(default)]
+    entries: HashMap<String, Vec<Episode>>,
+}
+
+struct EpisodeCache {
+    path: PathBuf,
+    entries: HashMap<String, Vec<Episode>>,
+}
+
+impl EpisodeCache {
+    fn load(config: &AppConfig) -> Self {
+        let path = config.episodes_cache_path();
+        let entries = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<EpisodeCacheFile>(&contents).ok())
+            .map(|cache| cache.entries)
+            .unwrap_or_default();
+        Self { path, entries }
+    }
+
+    fn get(&self, anime_id: &str) -> Option<Vec<Episode>> {
+        self.entries.get(anime_id).cloned()
+    }
+
+    fn insert(&mut self, anime_id: &str, episodes: &[Episode]) -> Result<()> {
+        self.entries.insert(anime_id.to_string(), episodes.to_vec());
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let payload = serde_json::to_string_pretty(&EpisodeCacheFile {
+            entries: self.entries.clone(),
+        })?;
+        std::fs::write(&self.path, payload)?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +173,7 @@ fn run_app(
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
+    let mut episode_cache = EpisodeCache::load(config);
     let (playback_request_tx, mut playback_request_rx) = unbounded_channel::<PlaybackRequest>();
     let (playback_result_tx, mut playback_result_rx) = unbounded_channel::<PlaybackResult>();
     let mut active_playback: Option<AbortHandle> = None;
@@ -176,7 +219,7 @@ fn run_app(
         }
 
         handle_search(&mut app, client.as_ref());
-        handle_filters(&mut app, &tracker, &request_tx);
+        handle_filters(&mut app, &tracker, &request_tx, &mut episode_cache);
         handle_metadata_fetch(
             &mut app,
             &metadata_resolver,
@@ -218,7 +261,11 @@ fn run_app(
                     match fetch_result.result {
                         Ok(episodes) => {
                             let count = episodes.len();
-                            app.set_episodes(episodes);
+                            let anime_id = fetch_result.anime_id.clone();
+                            app.set_episodes(episodes.clone());
+                            if let Err(err) = episode_cache.insert(&anime_id, &episodes) {
+                                app.set_details(format!("Failed to cache episodes: {err}"));
+                            }
                             app.set_details(format!("Loaded {count} episodes"));
                             if app.current_filter().is_some() {
                                 if let Err(err) = apply_episode_filter(&mut app, &tracker) {
@@ -388,13 +435,20 @@ fn handle_filters(
     app: &mut App,
     tracker: &Arc<Mutex<EpisodeTracker>>,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
+    episode_cache: &mut EpisodeCache,
 ) {
     let mut apply_filter = false;
 
     if app.take_anime_selection_changed() {
         if let Some(anime_id) = app.current_anime_id() {
             app.record_anime_history(&anime_id);
-            app.set_episodes_loading(true);
+            if let Some(cached) = episode_cache.get(&anime_id) {
+                app.set_episodes(cached);
+                app.set_episodes_loading(true);
+                app.set_details("Loaded cached episodes; refreshing...");
+            } else {
+                app.set_episodes_loading(true);
+            }
             let generation = app.next_fetch_generation();
             let request = EpisodeFetchRequest {
                 generation,
@@ -953,16 +1007,21 @@ fn spawn_episode_fetch_task(
     } = request;
 
     runtime.spawn({
+        let fetch_id = anime_id.clone();
         let fut = Abortable::new(
             async move {
                 sleep(Duration::from_millis(200)).await;
                 let blocking_result =
-                    tokio::task::spawn_blocking(move || client.list_episodes(&anime_id)).await;
+                    tokio::task::spawn_blocking(move || client.list_episodes(&fetch_id)).await;
                 let result = match blocking_result {
                     Ok(res) => res,
                     Err(err) => Err(anyhow!("episode fetch join failed: {err}")),
                 };
-                let _ = result_tx.send(EpisodeFetchResult { generation, result });
+                let _ = result_tx.send(EpisodeFetchResult {
+                    generation,
+                    anime_id,
+                    result,
+                });
             },
             abort_registration,
         );
