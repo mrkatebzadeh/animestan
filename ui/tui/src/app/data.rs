@@ -14,8 +14,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use super::{
-    AnimeProgress, App, Episode, EpisodeIndicators, FavoriteEntry, FilterActive, FilterTarget,
-    HashMap, SearchModal,
+    AnimeMetadata, AnimeProgress, App, Episode, EpisodeIndicators, FavoriteEntry, FilterActive,
+    FilterTarget, HashMap, MetadataSummary, SearchModal,
 };
 
 use animestan_core::{AnimeClient, CoreResult, FavoriteStore, FetchBackend};
@@ -99,6 +99,43 @@ impl App {
 
     pub fn anime_progress_for(&self, anime_id: &str) -> Option<AnimeProgress> {
         self.data.anime_progress.get(anime_id).copied()
+    }
+
+    pub fn metadata_summary(&self, anime_id: &str) -> Option<&MetadataSummary> {
+        self.data.metadata_cache.get(anime_id)
+    }
+
+    pub fn next_metadata_fetch_candidate(&mut self) -> Option<(String, String)> {
+        let candidates: Vec<(String, String)> = self
+            .visible_bookmark_entries()
+            .iter()
+            .map(|entry| (entry.anime.id.clone(), entry.anime.title.clone()))
+            .collect();
+
+        for (anime_id, title) in candidates {
+            if self.should_fetch_metadata(&anime_id) {
+                self.data.metadata_pending.insert(anime_id.clone());
+                return Some((anime_id, title));
+            }
+        }
+        None
+    }
+
+    pub fn set_metadata_summary(&mut self, anime_id: &str, metadata: &AnimeMetadata) {
+        let summary = MetadataSummary {
+            status: metadata.status.clone(),
+            score: metadata.score,
+        };
+        self.data
+            .metadata_cache
+            .insert(anime_id.to_string(), summary);
+        self.data.metadata_pending.remove(anime_id);
+        self.data.metadata_failed.remove(anime_id);
+    }
+
+    pub fn set_metadata_failure(&mut self, anime_id: &str) {
+        self.data.metadata_pending.remove(anime_id);
+        self.data.metadata_failed.insert(anime_id.to_string());
     }
 
     pub fn record_selected_anime_progress(&mut self) {
@@ -245,5 +282,11 @@ impl App {
         } else {
             &self.data.bookmark_entries
         }
+    }
+
+    fn should_fetch_metadata(&self, anime_id: &str) -> bool {
+        !self.data.metadata_cache.contains_key(anime_id)
+            && !self.data.metadata_pending.contains(anime_id)
+            && !self.data.metadata_failed.contains(anime_id)
     }
 }
