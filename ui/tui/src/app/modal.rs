@@ -17,37 +17,37 @@ use super::{AnimeMetadata, App};
 
 impl App {
     pub fn info_modal_visible(&self) -> bool {
-        self.info_modal_visible
+        self.modal.info_visible
     }
 
     pub fn info_modal_loading(&self) -> bool {
-        self.info_modal_loading
+        self.modal.info_loading
     }
 
     pub fn info_modal_metadata(&self) -> Option<&AnimeMetadata> {
-        self.info_modal_metadata.as_ref()
+        self.modal.info_metadata.as_ref()
     }
 
     pub fn info_modal_error(&self) -> Option<&str> {
-        self.info_modal_error.as_deref()
+        self.modal.info_error.as_deref()
     }
 
     pub fn open_info_modal(&mut self) {
-        self.info_modal_visible = true;
-        self.info_modal_metadata = None;
-        self.info_modal_error = None;
-        self.pending_info_fetch = true;
+        self.modal.info_visible = true;
+        self.modal.info_metadata = None;
+        self.modal.info_error = None;
+        self.modal.pending_info_fetch = true;
     }
 
     pub fn close_info_modal(&mut self) {
-        self.info_modal_visible = false;
-        self.info_modal_loading = false;
-        self.pending_info_fetch = false;
+        self.modal.info_visible = false;
+        self.modal.info_loading = false;
+        self.modal.pending_info_fetch = false;
     }
 
     pub fn take_pending_info_fetch(&mut self) -> bool {
-        if self.pending_info_fetch {
-            self.pending_info_fetch = false;
+        if self.modal.pending_info_fetch {
+            self.modal.pending_info_fetch = false;
             true
         } else {
             false
@@ -55,25 +55,25 @@ impl App {
     }
 
     pub fn next_info_fetch_generation(&mut self) -> u64 {
-        self.info_fetch_generation = self.info_fetch_generation.wrapping_add(1);
-        self.info_fetch_generation
+        self.modal.info_fetch_generation = self.modal.info_fetch_generation.wrapping_add(1);
+        self.modal.info_fetch_generation
     }
 
     pub fn current_info_fetch_generation(&self) -> u64 {
-        self.info_fetch_generation
+        self.modal.info_fetch_generation
     }
 
     pub fn set_info_modal_loading(&mut self, loading: bool) {
-        self.info_modal_loading = loading;
+        self.modal.info_loading = loading;
     }
 
     pub fn set_info_modal_metadata(&mut self, metadata: AnimeMetadata) {
-        self.info_modal_metadata = Some(metadata);
-        self.info_modal_error = None;
+        self.modal.info_metadata = Some(metadata);
+        self.modal.info_error = None;
     }
 
     pub fn set_info_modal_error(&mut self, error: impl Into<String>) {
-        self.info_modal_error = Some(error.into());
-        self.info_modal_metadata = None;
+        self.modal.info_error = Some(error.into());
+        self.modal.info_metadata = None;
     }
 }
