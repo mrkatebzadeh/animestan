@@ -88,13 +88,22 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
     let rows: Vec<Row> = favorites
         .iter()
         .map(|entry| {
-            let stats = app.anime_progress_for(&entry.anime.id);
-            let progress = stats.map_or_else(
+            let progress_stats = app.anime_progress_for(&entry.anime.id);
+            let progress = progress_stats.map_or_else(
                 || "--/--".to_string(),
                 |stats| format!("{}/{}", stats.watched, stats.total),
             );
+            let metadata = app.metadata_summary(&entry.anime.id);
+            let status = metadata
+                .and_then(|summary| summary.status.as_deref())
+                .unwrap_or("—");
+            let score = metadata
+                .and_then(|summary| summary.score)
+                .map_or_else(|| "—".to_string(), |value| format!("{value:.1}"));
             Row::new(vec![
                 Cell::from(entry.anime.title.clone()),
+                Cell::from(status),
+                Cell::from(score),
                 Cell::from(progress),
             ])
         })
@@ -105,17 +114,29 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
         state.select(Some(app.left_index().min(rows.len() - 1)));
     }
 
+    let focused = app.focus() == Focus::Left;
+    let mut border = border_style(theme, focused);
+    if focused {
+        border = border.add_modifier(Modifier::BOLD);
+    }
     let block = Block::default()
         .title("Anime")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, app.focus() == Focus::Left));
+        .border_style(border);
 
     let table = Table::new(
         rows,
-        [Constraint::Percentage(60), Constraint::Percentage(40)],
+        [
+            Constraint::Percentage(48),
+            Constraint::Percentage(20),
+            Constraint::Percentage(12),
+            Constraint::Percentage(20),
+        ],
     )
     .header(Row::new(vec![
         Cell::from(Span::styled("Title", theme.title_style())),
+        Cell::from(Span::styled("Status", theme.title_style())),
+        Cell::from(Span::styled("Score", theme.title_style())),
         Cell::from(Span::styled("Progress", theme.title_style())),
     ]))
     .block(block)
