@@ -29,6 +29,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub metadata_source: Option<String>,
     #[serde(default)]
+    pub metadata_cache_path: Option<String>,
+    #[serde(default)]
+    pub episodes_cache_path: Option<String>,
+    #[serde(default)]
     pub use_fixtures: Option<bool>,
     #[serde(default)]
     pub player: Option<String>,
@@ -57,6 +61,12 @@ impl AppConfig {
 
 # Metadata source for anime details (default: AllManga)
 # metadata_source = "allmanga"
+
+# Path to cached metadata (relative to config dir or absolute)
+# metadata_cache_path = "metadata_cache.json"
+
+# Path to cached episode lists (relative to config dir or absolute)
+# episodes_cache_path = "episodes_cache.json"
 
 # Media player command (default: mpv)
 # player = "mpv"
@@ -144,6 +154,34 @@ impl AppConfig {
             }
         } else {
             Self::config_dir().join("favorites.json")
+        }
+    }
+
+    #[must_use]
+    pub fn metadata_cache_path(&self) -> PathBuf {
+        if let Some(path) = self.metadata_cache_path.as_deref() {
+            let configured = PathBuf::from(path);
+            if configured.is_absolute() {
+                configured
+            } else {
+                Self::config_dir().join(configured)
+            }
+        } else {
+            Self::config_dir().join("metadata_cache.json")
+        }
+    }
+
+    #[must_use]
+    pub fn episodes_cache_path(&self) -> PathBuf {
+        if let Some(path) = self.episodes_cache_path.as_deref() {
+            let configured = PathBuf::from(path);
+            if configured.is_absolute() {
+                configured
+            } else {
+                Self::config_dir().join(configured)
+            }
+        } else {
+            Self::config_dir().join("episodes_cache.json")
         }
     }
 
