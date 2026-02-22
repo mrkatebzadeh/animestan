@@ -123,7 +123,7 @@ fn run_app(
     let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
-    let metadata_resolver = Arc::new(MetadataResolver::new());
+    let metadata_resolver = Arc::new(MetadataResolver::from_config(config.as_ref()));
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
