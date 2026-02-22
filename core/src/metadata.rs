@@ -151,6 +151,11 @@ pub struct AniListMetadataProvider {
     cache: MetadataCache,
 }
 
+pub struct AllMangaMetadataProvider {
+    client: Client,
+    cache: MetadataCache,
+}
+
 pub struct KitsuMetadataProvider {
     client: Client,
     cache: MetadataCache,
@@ -159,11 +164,18 @@ pub struct KitsuMetadataProvider {
 pub struct MetadataResolver {
     primary_kind: MetadataProviderKind,
     fallback_kind: MetadataProviderKind,
+    allmanga: AllMangaMetadataProvider,
     anilist: AniListMetadataProvider,
     kitsu: KitsuMetadataProvider,
 }
 
 impl Default for AniListMetadataProvider {
+    fn default() -> Self {
+        Self::new(Client::new())
+    }
+}
+
+impl Default for AllMangaMetadataProvider {
     fn default() -> Self {
         Self::new(Client::new())
     }
@@ -188,6 +200,7 @@ impl MetadataResolver {
         Self {
             primary_kind,
             fallback_kind,
+            allmanga: AllMangaMetadataProvider::default(),
             anilist: AniListMetadataProvider::new(primary),
             kitsu: KitsuMetadataProvider::new(fallback),
         }
@@ -205,6 +218,7 @@ impl MetadataResolver {
         Self {
             primary_kind,
             fallback_kind,
+            allmanga: AllMangaMetadataProvider::default(),
             anilist: AniListMetadataProvider::default(),
             kitsu: KitsuMetadataProvider::default(),
         }
@@ -236,10 +250,7 @@ impl MetadataResolver {
         query: &str,
     ) -> Result<AnimeMetadata, CoreError> {
         match kind {
-            MetadataProviderKind::AllManga => {
-                let metadata = self.anilist.fetch_by_query(query)?;
-                Ok(allmanga::decorate_metadata(metadata, query))
-            }
+            MetadataProviderKind::AllManga => self.allmanga.fetch_by_query(query),
             MetadataProviderKind::AniList => self.anilist.fetch_by_query(query),
             MetadataProviderKind::Kitsu => self.kitsu.fetch_by_query(query),
         }
