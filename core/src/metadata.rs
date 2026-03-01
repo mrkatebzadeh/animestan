@@ -14,24 +14,26 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
 
-use crate::error::Error as CoreError;
+use crate::{AppConfig, error::Error as CoreError, store::now_epoch};
 
 mod allmanga;
 mod anilist;
 mod kitsu;
 
-const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const CACHE_TTL_SECS: u64 = 5 * 60;
 
 fn normalize_query(query: &str) -> String {
     query.trim().to_lowercase()
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MetadataSource {
     AllManga,
     AniList,
@@ -58,7 +60,7 @@ impl MetadataProviderKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnimeMetadata {
     pub title: String,
     pub synopsis: Option<String>,
@@ -91,38 +93,53 @@ pub trait MetadataProvider: Send + Sync {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError>;
 }
 
+#[derive(Clone, Debug)]
 struct MetadataCache {
-    inner: Mutex<HashMap<String, CacheEntry>>,
+    inner: std::sync::Arc<MetadataCacheInner>,
 }
 
-impl Default for MetadataCache {
-    fn default() -> Self {
-        Self {
-            inner: Mutex::new(HashMap::new()),
-        }
-    }
+#[derive(Debug)]
+struct MetadataCacheInner {
+    entries: Mutex<HashMap<String, CacheEntry>>,
+    loaded: Mutex<bool>,
+    path: PathBuf,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
     metadata: AnimeMetadata,
-    created_at: Instant,
+    created_at: u64,
 }
 
 impl CacheEntry {
     fn is_expired(&self) -> bool {
-        self.created_at.elapsed() >= CACHE_TTL
+        now_epoch().saturating_sub(self.created_at) >= CACHE_TTL_SECS
     }
 }
 
 impl MetadataCache {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            inner: std::sync::Arc::new(MetadataCacheInner {
+                entries: Mutex::new(HashMap::new()),
+                loaded: Mutex::new(false),
+                path,
+            }),
+        }
+    }
+
     fn get(&self, key: &str) -> Result<Option<AnimeMetadata>, CoreError> {
+        self.load_if_needed()?;
         let mut guard = self
             .inner
+            .entries
             .lock()
             .map_err(|_| CoreError::MetadataCacheLock)?;
         if let Some(entry) = guard.get(key) {
             if entry.is_expired() {
                 guard.remove(key);
+                drop(guard);
+                self.save()?;
                 return Ok(None);
             }
             return Ok(Some(entry.metadata.clone()));
@@ -131,19 +148,100 @@ impl MetadataCache {
     }
 
     fn insert(&self, key: String, metadata: AnimeMetadata) -> Result<(), CoreError> {
+        self.load_if_needed()?;
         let mut guard = self
             .inner
+            .entries
             .lock()
             .map_err(|_| CoreError::MetadataCacheLock)?;
         guard.insert(
             key,
             CacheEntry {
                 metadata,
-                created_at: Instant::now(),
+                created_at: now_epoch(),
             },
         );
+        drop(guard);
+        self.save()?;
         Ok(())
     }
+
+    fn load_if_needed(&self) -> Result<(), CoreError> {
+        let mut loaded = self
+            .inner
+            .loaded
+            .lock()
+            .map_err(|_| CoreError::MetadataCacheLock)?;
+        if *loaded {
+            return Ok(());
+        }
+
+        let path = self.inner.path.clone();
+        let cache = match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                serde_json::from_str::<MetadataCacheFile>(&contents).map_err(|source| {
+                    CoreError::MetadataCacheParse {
+                        path: path.clone(),
+                        source,
+                    }
+                })?
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => MetadataCacheFile::default(),
+            Err(source) => {
+                return Err(CoreError::MetadataCacheRead {
+                    path: path.clone(),
+                    source,
+                });
+            }
+        };
+        let mut guard = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|_| CoreError::MetadataCacheLock)?;
+        guard.clear();
+        guard.extend(
+            cache
+                .entries
+                .into_iter()
+                .filter(|(_, entry)| !entry.is_expired()),
+        );
+        *loaded = true;
+        Ok(())
+    }
+
+    fn save(&self) -> Result<(), CoreError> {
+        let guard = self
+            .inner
+            .entries
+            .lock()
+            .map_err(|_| CoreError::MetadataCacheLock)?;
+        let cache = MetadataCacheFile {
+            entries: guard.clone(),
+        };
+        if let Some(parent) = self.inner.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| CoreError::MetadataCacheWrite {
+                path: self.inner.path.clone(),
+                source,
+            })?;
+        }
+        let payload = serde_json::to_string_pretty(&cache).map_err(|source| {
+            CoreError::MetadataCacheWrite {
+                path: self.inner.path.clone(),
+                source: std::io::Error::other(source),
+            }
+        })?;
+        std::fs::write(&self.inner.path, payload).map_err(|source| CoreError::MetadataCacheWrite {
+            path: self.inner.path.clone(),
+            source,
+        })
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct MetadataCacheFile {
+    #[serde(default)]
+    entries: HashMap<String, CacheEntry>,
 }
 
 pub struct AniListMetadataProvider {
@@ -171,7 +269,8 @@ pub struct MetadataResolver {
 
 impl Default for AniListMetadataProvider {
     fn default() -> Self {
-        Self::new(Client::new())
+        let cache = MetadataCache::new(AppConfig::default().metadata_cache_path());
+        Self::with_cache(Client::new(), cache)
     }
 }
 
@@ -183,7 +282,8 @@ impl Default for AllMangaMetadataProvider {
 
 impl Default for KitsuMetadataProvider {
     fn default() -> Self {
-        Self::new(Client::new())
+        let cache = MetadataCache::new(AppConfig::default().metadata_cache_path());
+        Self::with_cache(Client::new(), cache)
     }
 }
 
@@ -197,30 +297,37 @@ impl MetadataResolver {
     pub fn with_clients(primary: Client, fallback: Client) -> Self {
         let primary_kind = MetadataProviderKind::default();
         let fallback_kind = fallback_for(primary_kind);
+        let cache = MetadataCache::new(AppConfig::default().metadata_cache_path());
         Self {
             primary_kind,
             fallback_kind,
-            allmanga: AllMangaMetadataProvider::default(),
-            anilist: AniListMetadataProvider::new(primary),
-            kitsu: KitsuMetadataProvider::new(fallback),
+            allmanga: AllMangaMetadataProvider::with_cache(Client::new(), cache.clone()),
+            anilist: AniListMetadataProvider::with_cache(primary, cache.clone()),
+            kitsu: KitsuMetadataProvider::with_cache(fallback, cache),
         }
     }
 
     #[must_use]
     pub fn from_config(config: &crate::AppConfig) -> Self {
         let primary = MetadataProviderKind::from_config(config.metadata_source.as_deref());
-        Self::with_primary(primary)
+        Self::with_primary_and_cache(primary, config.metadata_cache_path())
     }
 
     #[must_use]
     pub fn with_primary(primary_kind: MetadataProviderKind) -> Self {
+        Self::with_primary_and_cache(primary_kind, AppConfig::default().metadata_cache_path())
+    }
+
+    #[must_use]
+    pub fn with_primary_and_cache(primary_kind: MetadataProviderKind, cache_path: PathBuf) -> Self {
         let fallback_kind = fallback_for(primary_kind);
+        let cache = MetadataCache::new(cache_path);
         Self {
             primary_kind,
             fallback_kind,
-            allmanga: AllMangaMetadataProvider::default(),
-            anilist: AniListMetadataProvider::default(),
-            kitsu: KitsuMetadataProvider::default(),
+            allmanga: AllMangaMetadataProvider::with_cache(Client::new(), cache.clone()),
+            anilist: AniListMetadataProvider::with_cache(Client::new(), cache.clone()),
+            kitsu: KitsuMetadataProvider::with_cache(Client::new(), cache),
         }
     }
 }

@@ -21,6 +21,7 @@ mod ui;
 
 use std::collections::HashMap;
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -38,6 +39,7 @@ use crossterm::terminal::{
 use futures::future::{AbortHandle, Abortable};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use serde::{Deserialize, Serialize};
 use spdlog::prelude::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{
@@ -56,25 +58,68 @@ struct EpisodeFetchRequest {
 
 struct EpisodeFetchResult {
     generation: u64,
+    anime_id: String,
     result: CoreResult<Vec<Episode>>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct EpisodeCacheFile {
+    #[serde(default)]
+    entries: HashMap<String, Vec<Episode>>,
+}
+
+struct EpisodeCache {
+    path: PathBuf,
+    entries: HashMap<String, Vec<Episode>>,
+}
+
+impl EpisodeCache {
+    fn load(config: &AppConfig) -> Self {
+        let path = config.episodes_cache_path();
+        let entries = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<EpisodeCacheFile>(&contents).ok())
+            .map(|cache| cache.entries)
+            .unwrap_or_default();
+        Self { path, entries }
+    }
+
+    fn get(&self, anime_id: &str) -> Option<Vec<Episode>> {
+        self.entries.get(anime_id).cloned()
+    }
+
+    fn insert(&mut self, anime_id: &str, episodes: &[Episode]) -> Result<()> {
+        self.entries.insert(anime_id.to_string(), episodes.to_vec());
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let payload = serde_json::to_string_pretty(&EpisodeCacheFile {
+            entries: self.entries.clone(),
+        })?;
+        std::fs::write(&self.path, payload)?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MetadataTarget {
     InfoModal,
     SearchResults,
+    List,
 }
 
 struct MetadataFetchRequest {
     generation: u64,
     query: String,
     source_id: Option<String>,
+    anime_id: Option<String>,
     target: MetadataTarget,
 }
 
 struct MetadataFetchResult {
     generation: u64,
     target: MetadataTarget,
+    anime_id: Option<String>,
     result: Result<AnimeMetadata, anyhow::Error>,
 }
 
@@ -128,11 +173,13 @@ fn run_app(
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
+    let mut episode_cache = EpisodeCache::load(config);
     let (playback_request_tx, mut playback_request_rx) = unbounded_channel::<PlaybackRequest>();
     let (playback_result_tx, mut playback_result_rx) = unbounded_channel::<PlaybackResult>();
     let mut active_playback: Option<AbortHandle> = None;
     let (metadata_result_tx, mut metadata_result_rx) = unbounded_channel::<MetadataFetchResult>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
+    let mut active_list_metadata_fetch: Option<AbortHandle> = None;
 
     let mut app = App::new();
     app.sync_bookmark_cache(&favorites);
@@ -172,7 +219,7 @@ fn run_app(
         }
 
         handle_search(&mut app, client.as_ref());
-        handle_filters(&mut app, &tracker, &request_tx);
+        handle_filters(&mut app, &tracker, &request_tx, &mut episode_cache);
         handle_metadata_fetch(
             &mut app,
             &metadata_resolver,
@@ -214,7 +261,11 @@ fn run_app(
                     match fetch_result.result {
                         Ok(episodes) => {
                             let count = episodes.len();
-                            app.set_episodes(episodes);
+                            let anime_id = fetch_result.anime_id.clone();
+                            app.set_episodes(episodes.clone());
+                            if let Err(err) = episode_cache.insert(&anime_id, &episodes) {
+                                app.set_details(format!("Failed to cache episodes: {err}"));
+                            }
                             app.set_details(format!("Loaded {count} episodes"));
                             if app.current_filter().is_some() {
                                 if let Err(err) = apply_episode_filter(&mut app, &tracker) {
@@ -252,6 +303,9 @@ fn run_app(
                         match fetch_result.result {
                             Ok(metadata) => {
                                 let title = metadata.title.clone();
+                                if let Some(anime_id) = fetch_result.anime_id.clone() {
+                                    app.set_metadata_summary(&anime_id, &metadata);
+                                }
                                 app.set_info_modal_metadata(metadata);
                                 app.set_details(format!("Loaded metadata for {title}"));
                             }
@@ -271,6 +325,9 @@ fn run_app(
                         match fetch_result.result {
                             Ok(metadata) => {
                                 let title = metadata.title.clone();
+                                if let Some(anime_id) = fetch_result.anime_id.clone() {
+                                    app.set_metadata_summary(&anime_id, &metadata);
+                                }
                                 app.set_search_results_metadata(metadata);
                                 app.set_details(format!("Loaded metadata for {title}"));
                             }
@@ -278,6 +335,19 @@ fn run_app(
                                 let message = format!("Metadata load failed: {err}");
                                 app.set_search_results_metadata_error(message.clone());
                                 app.set_details(message);
+                            }
+                        }
+                    }
+                    MetadataTarget::List => {
+                        active_list_metadata_fetch = None;
+                        if let Some(anime_id) = fetch_result.anime_id {
+                            match fetch_result.result {
+                                Ok(metadata) => {
+                                    app.set_metadata_summary(&anime_id, &metadata);
+                                }
+                                Err(_) => {
+                                    app.set_metadata_failure(&anime_id);
+                                }
                             }
                         }
                     }
@@ -290,6 +360,14 @@ fn run_app(
                 }
             }
         }
+
+        handle_list_metadata_fetch(
+            &mut app,
+            &metadata_resolver,
+            &runtime_handle,
+            &metadata_result_tx,
+            &mut active_list_metadata_fetch,
+        );
 
         if handle_download(&mut app, config, client.as_ref(), &tracker) {
             continue;
@@ -357,13 +435,20 @@ fn handle_filters(
     app: &mut App,
     tracker: &Arc<Mutex<EpisodeTracker>>,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
+    episode_cache: &mut EpisodeCache,
 ) {
     let mut apply_filter = false;
 
     if app.take_anime_selection_changed() {
         if let Some(anime_id) = app.current_anime_id() {
             app.record_anime_history(&anime_id);
-            app.set_episodes_loading(true);
+            if let Some(cached) = episode_cache.get(&anime_id) {
+                app.set_episodes(cached);
+                app.set_episodes_loading(true);
+                app.set_details("Loaded cached episodes; refreshing...");
+            } else {
+                app.set_episodes_loading(true);
+            }
             let generation = app.next_fetch_generation();
             let request = EpisodeFetchRequest {
                 generation,
@@ -408,7 +493,7 @@ fn handle_metadata_fetch(
         return;
     };
 
-    let (query, source_id) = match target {
+    let (query, source_id, anime_id) = match target {
         MetadataTarget::InfoModal => {
             let Some(query) = app.current_anime_title() else {
                 app.set_info_modal_error("Highlight an anime to view metadata.");
@@ -418,7 +503,7 @@ fn handle_metadata_fetch(
             let source_id = app.current_anime_id();
             app.set_info_modal_loading(true);
             app.set_details(format!("Fetching metadata for {query}..."));
-            (query, source_id)
+            (query, source_id.clone(), source_id)
         }
         MetadataTarget::SearchResults => {
             let Some(result) = app.current_search_result() else {
@@ -429,13 +514,15 @@ fn handle_metadata_fetch(
             let query_string = result.title.clone();
             let source_id = Some(result.id.clone());
             app.set_details(format!("Fetching metadata for {query_string}..."));
-            (query_string, source_id)
+            (query_string, source_id.clone(), source_id)
         }
+        MetadataTarget::List => return,
     };
 
     let generation = match target {
         MetadataTarget::InfoModal => app.next_info_fetch_generation(),
         MetadataTarget::SearchResults => app.next_search_results_metadata_generation(),
+        MetadataTarget::List => 0,
     };
 
     if let Some(handle) = active_fetch.take() {
@@ -446,8 +533,37 @@ fn handle_metadata_fetch(
         generation,
         query,
         source_id,
+        anime_id,
         target,
     };
+    let abort_handle =
+        spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone());
+    *active_fetch = Some(abort_handle);
+}
+
+fn handle_list_metadata_fetch(
+    app: &mut App,
+    resolver: &Arc<MetadataResolver>,
+    runtime: &Handle,
+    result_tx: &UnboundedSender<MetadataFetchResult>,
+    active_fetch: &mut Option<AbortHandle>,
+) {
+    if active_fetch.is_some() {
+        return;
+    }
+
+    let Some((anime_id, title)) = app.next_metadata_fetch_candidate() else {
+        return;
+    };
+
+    let request = MetadataFetchRequest {
+        generation: 0,
+        query: title,
+        source_id: Some(anime_id.clone()),
+        anime_id: Some(anime_id),
+        target: MetadataTarget::List,
+    };
+
     let abort_handle =
         spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone());
     *active_fetch = Some(abort_handle);
@@ -891,16 +1007,21 @@ fn spawn_episode_fetch_task(
     } = request;
 
     runtime.spawn({
+        let fetch_id = anime_id.clone();
         let fut = Abortable::new(
             async move {
                 sleep(Duration::from_millis(200)).await;
                 let blocking_result =
-                    tokio::task::spawn_blocking(move || client.list_episodes(&anime_id)).await;
+                    tokio::task::spawn_blocking(move || client.list_episodes(&fetch_id)).await;
                 let result = match blocking_result {
                     Ok(res) => res,
                     Err(err) => Err(anyhow!("episode fetch join failed: {err}")),
                 };
-                let _ = result_tx.send(EpisodeFetchResult { generation, result });
+                let _ = result_tx.send(EpisodeFetchResult {
+                    generation,
+                    anime_id,
+                    result,
+                });
             },
             abort_registration,
         );
@@ -923,6 +1044,7 @@ fn spawn_metadata_fetch_task(
         generation,
         query,
         source_id,
+        anime_id,
         target,
     } = request;
 
@@ -944,6 +1066,7 @@ fn spawn_metadata_fetch_task(
                 let _ = result_tx.send(MetadataFetchResult {
                     generation,
                     target,
+                    anime_id,
                     result,
                 });
             },

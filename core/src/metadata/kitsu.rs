@@ -16,17 +16,18 @@
 use reqwest::blocking::Client;
 use serde::Deserialize;
 
-use crate::error::Error as CoreError;
+use crate::{AppConfig, error::Error as CoreError};
 
 use super::{
-    AnimeMetadata, KitsuMetadataProvider, MetadataProvider, MetadataSource, normalize_query,
+    AnimeMetadata, KitsuMetadataProvider, MetadataCache, MetadataProvider, MetadataSource,
+    normalize_query,
 };
 
 const KITSU_SEARCH_URL: &str = "https://kitsu.io/api/edge/anime";
 
 impl MetadataProvider for KitsuMetadataProvider {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
-        let key = normalize_query(query);
+        let key = format!("kitsu:{}", normalize_query(query));
         if let Some(metadata) = self.cache.get(&key)? {
             return Ok(metadata);
         }
@@ -39,10 +40,14 @@ impl MetadataProvider for KitsuMetadataProvider {
 impl KitsuMetadataProvider {
     #[must_use]
     pub fn new(client: Client) -> Self {
-        Self {
+        Self::with_cache(
             client,
-            cache: super::MetadataCache::default(),
-        }
+            MetadataCache::new(AppConfig::default().metadata_cache_path()),
+        )
+    }
+
+    pub(super) fn with_cache(client: Client, cache: MetadataCache) -> Self {
+        Self { client, cache }
     }
 
     fn fetch_kitsu(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
