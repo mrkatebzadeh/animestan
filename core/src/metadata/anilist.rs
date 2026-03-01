@@ -16,10 +16,11 @@
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Error as CoreError;
+use crate::{AppConfig, error::Error as CoreError};
 
 use super::{
-    AniListMetadataProvider, AnimeMetadata, MetadataProvider, MetadataSource, normalize_query,
+    AniListMetadataProvider, AnimeMetadata, MetadataCache, MetadataProvider, MetadataSource,
+    normalize_query,
 };
 
 const ANILIST_URL: &str = "https://graphql.anilist.co";
@@ -27,7 +28,7 @@ const ANILIST_QUERY: &str = "query ($search: String!) {\n  Media(search: $search
 
 impl MetadataProvider for AniListMetadataProvider {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
-        let key = normalize_query(query);
+        let key = format!("anilist:{}", normalize_query(query));
         if let Some(metadata) = self.cache.get(&key)? {
             return Ok(metadata);
         }
@@ -40,10 +41,14 @@ impl MetadataProvider for AniListMetadataProvider {
 impl AniListMetadataProvider {
     #[must_use]
     pub fn new(client: Client) -> Self {
-        Self {
+        Self::with_cache(
             client,
-            cache: super::MetadataCache::default(),
-        }
+            MetadataCache::new(AppConfig::default().metadata_cache_path()),
+        )
+    }
+
+    pub(super) fn with_cache(client: Client, cache: MetadataCache) -> Self {
+        Self { client, cache }
     }
 
     fn fetch_anilist(&self, query: &str) -> Result<AnimeMetadata, CoreError> {

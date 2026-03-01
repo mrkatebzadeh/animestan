@@ -30,6 +30,24 @@ pub enum Error {
     EmptyCatalog,
     #[error("metadata cache lock poisoned")]
     MetadataCacheLock,
+    #[error("failed to read metadata cache file at '{path}': {source}")]
+    MetadataCacheRead {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write metadata cache file at '{path}': {source}")]
+    MetadataCacheWrite {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse metadata cache file at '{path}': {source}")]
+    MetadataCacheParse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("missing fixture response for url '{url}'")]
     MissingFixture { url: String },
     #[error("failed to render url from template '{template}': {source}")]
