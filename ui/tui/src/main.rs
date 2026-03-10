@@ -21,6 +21,7 @@ mod theme;
 mod ui;
 
 use std::collections::HashMap;
+use std::fs;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -222,7 +223,22 @@ fn run_app(
     let mut app = App::new();
     match metadata_cache::load(&metadata_cache_path) {
         Ok(entries) => app.load_metadata_cache(entries),
-        Err(err) => app.set_details(format!("Failed to load metadata cache: {err}")),
+        Err(err) => {
+            let mut details = format!("Failed to load metadata cache: {err}");
+            let is_parse_error = {
+                #[allow(clippy::redundant_closure_for_method_calls)]
+                err.get_ref()
+                    .is_some_and(|inner| inner.is::<serde_json::Error>())
+            };
+            if is_parse_error {
+                if fs::remove_file(&metadata_cache_path).is_ok() {
+                    details = "Metadata cache corrupted, resetting.".to_string();
+                } else {
+                    details = "Metadata cache corrupted and could not be cleared.".to_string();
+                }
+            }
+            app.set_details(details);
+        }
     }
     app.sync_bookmark_cache(&favorites);
     if let Ok(cache_guard) = episode_cache.lock() {
