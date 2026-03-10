@@ -103,6 +103,10 @@ impl App {
         self.data.anime_progress.get(anime_id).copied()
     }
 
+    pub fn set_anime_progress(&mut self, anime_id: String, progress: AnimeProgress) {
+        self.data.anime_progress.insert(anime_id, progress);
+    }
+
     pub fn metadata_summary(&self, anime_id: &str) -> Option<MetadataSummary> {
         self.data
             .metadata_store

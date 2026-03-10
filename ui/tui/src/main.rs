@@ -215,6 +215,7 @@ fn run_app(
     let (playback_result_tx, mut playback_result_rx) = unbounded_channel::<PlaybackResult>();
     let mut active_playback: Option<AbortHandle> = None;
     let (metadata_result_tx, mut metadata_result_rx) = unbounded_channel::<MetadataFetchResult>();
+    let (background_job_tx, mut background_job_rx) = unbounded_channel::<()>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
     let mut active_list_metadata_fetch: Option<AbortHandle> = None;
 
@@ -242,10 +243,14 @@ fn run_app(
         .iter()
         .map(|entry| entry.anime.id.clone())
         .collect();
+    let total_background_jobs =
+        background_metadata_targets.len() + background_episode_targets.len();
+    if total_background_jobs > 0 {
+        app.start_metadata_background_refresh(total_background_jobs);
+    }
     let background_metadata_handles = if background_metadata_targets.is_empty() {
         Vec::new()
     } else {
-        app.start_metadata_background_refresh(background_metadata_targets.len());
         spawn_background_metadata_refresh_tasks(
             &runtime_handle,
             &metadata_resolver,
@@ -261,6 +266,7 @@ fn run_app(
             &client,
             background_episode_targets,
             &episode_cache,
+            background_job_tx.clone(),
         )
     };
 
@@ -482,6 +488,10 @@ fn run_app(
                     break;
                 }
             }
+        }
+
+        while background_job_rx.try_recv().is_ok() {
+            app.finish_metadata_background_fetch();
         }
 
         handle_list_metadata_fetch(
@@ -1214,11 +1224,13 @@ fn spawn_metadata_fetch_task(
     abort_handle
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn spawn_background_episode_refresh_tasks(
     runtime: &Handle,
     client: &Arc<AnimeClient<FetchBackend>>,
     anime_ids: Vec<String>,
     cache: &Arc<Mutex<EpisodeCache>>,
+    background_job_tx: UnboundedSender<()>,
 ) -> Vec<AbortHandle> {
     anime_ids
         .into_iter()
@@ -1228,6 +1240,7 @@ fn spawn_background_episode_refresh_tasks(
             let client = Arc::clone(client);
             let cache = Arc::clone(cache);
             let fetch_id = anime_id.clone();
+            let job_tx = background_job_tx.clone();
             runtime.spawn({
                 let fut = Abortable::new(
                     async move {
@@ -1236,6 +1249,7 @@ fn spawn_background_episode_refresh_tasks(
                                 .await;
                         if let Ok(Ok(episodes)) = blocking_result {
                             let _ = cache.lock().unwrap().insert(&anime_id, &episodes);
+                            let _ = job_tx.send(());
                         }
                     },
                     abort_registration,
