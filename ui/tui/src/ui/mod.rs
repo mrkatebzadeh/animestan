@@ -21,12 +21,14 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
 
+mod details;
 mod heatmap;
 mod lists;
 mod modals;
 mod search;
 mod session;
 
+use self::details::render_anime_details_panel;
 use self::heatmap::render_episode_heatmap;
 use self::lists::{build_episode_items, render_anime_table, render_list};
 use self::modals::{
@@ -66,14 +68,23 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[0]);
 
+    let details_height = 9u16;
+    let left_column_split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(details_height)])
+        .split(lists_layout[0]);
+    let anime_panel_area = left_column_split[0];
+    let details_panel_area = left_column_split[1];
+
     let left_target = FilterTarget::Anime;
     let left_filter_visible = should_show_panel_filter(app, left_target);
     let (left_filter_area, left_list_area) =
-        split_filter_area(lists_layout[0], left_filter_visible);
+        split_filter_area(anime_panel_area, left_filter_visible);
     if let Some(area) = left_filter_area {
         render_panel_filter_input(frame, area, app, left_filter_visible, theme);
     }
     render_anime_table(frame, left_list_area, app, theme);
+    render_anime_details_panel(frame, details_panel_area, app, theme);
 
     let episode_items = build_episode_items(app);
     let mut episodes_title = if let Some(label) = app.filter_label() {
