@@ -117,6 +117,18 @@ impl App {
             })
     }
 
+    pub fn episode_refresh_pending(&self, anime_id: &str) -> bool {
+        self.data.episode_refresh_pending.contains(anime_id)
+    }
+
+    pub fn mark_episode_refresh_pending(&mut self, anime_id: String) {
+        self.data.episode_refresh_pending.insert(anime_id);
+    }
+
+    pub fn clear_episode_refresh_pending(&mut self, anime_id: &str) {
+        self.data.episode_refresh_pending.remove(anime_id);
+    }
+
     pub fn cached_metadata(&self, anime_id: &str) -> Option<&AnimeMetadata> {
         self.data
             .metadata_store

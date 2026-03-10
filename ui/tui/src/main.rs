@@ -248,6 +248,11 @@ fn run_app(
     if total_background_jobs > 0 {
         app.start_metadata_background_refresh(total_background_jobs);
     }
+    if !background_episode_targets.is_empty() {
+        for anime_id in &background_episode_targets {
+            app.mark_episode_refresh_pending(anime_id.clone());
+        }
+    }
     let background_metadata_handles = if background_metadata_targets.is_empty() {
         Vec::new()
     } else {
@@ -360,10 +365,12 @@ fn run_app(
                             {
                                 app.set_details(format!("Failed to refresh indicators: {err}"));
                             }
+                            app.clear_episode_refresh_pending(&anime_id);
                         }
                         Err(err) => {
                             app.set_episodes_loading(false);
                             app.set_details(format!("Episode load failed: {err}"));
+                            app.clear_episode_refresh_pending(&fetch_result.anime_id);
                         }
                     }
                 }
@@ -585,23 +592,29 @@ fn handle_filters(
                 let cache = episode_cache.lock().unwrap();
                 cache.get(&anime_id)
             };
+            let has_cached = cached.is_some();
             if let Some(cached) = cached {
                 app.set_episodes(cached);
-                app.set_episodes_loading(true);
                 app.set_details("Loaded cached episodes; refreshing...");
-            } else {
-                app.set_episodes_loading(true);
             }
-            let generation = app.next_fetch_generation();
-            let request = EpisodeFetchRequest {
-                generation,
-                anime_id,
-            };
-            if request_tx.send(request).is_err() {
-                app.set_episodes_loading(false);
-                app.set_details("Episode fetch queue unavailable.");
-            } else {
-                app.set_details("Fetching episodes...");
+            app.set_episodes_loading(true);
+            let should_fetch = !app.episode_refresh_pending(&anime_id);
+            if should_fetch {
+                app.mark_episode_refresh_pending(anime_id.clone());
+                let generation = app.next_fetch_generation();
+                let request = EpisodeFetchRequest {
+                    generation,
+                    anime_id: anime_id.clone(),
+                };
+                if request_tx.send(request).is_err() {
+                    app.set_episodes_loading(false);
+                    app.clear_episode_refresh_pending(&anime_id);
+                    app.set_details("Episode fetch queue unavailable.");
+                } else if has_cached {
+                    app.set_details("Refreshing cached episodes...");
+                } else {
+                    app.set_details("Fetching episodes...");
+                }
             }
             app.request_info_metadata();
         } else {
