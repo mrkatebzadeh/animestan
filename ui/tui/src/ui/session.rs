@@ -68,12 +68,10 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
     let now_playing = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
     frame.render_widget(now_playing, chunks[1]);
 
-    let metadata_indicator = format!(" | {}", app.metadata_spinner_char());
     let left_status = format!(
-        "Mode: {} | Selection: {}{}",
+        "Mode: {} | Selection: {}",
         app.mode_label(),
         app.current_selection_label(),
-        metadata_indicator
     );
     let hint_text = "Press ? for keybindings";
     let total_width = chunks[2].width as usize;
@@ -93,6 +91,10 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
             Style::default()
                 .bg(theme.non_interactive_color())
                 .add_modifier(Modifier::REVERSED),
+        ),
+        Span::styled(
+            format!(" {}", app.metadata_spinner_char()),
+            theme.item_style().bg(theme.non_interactive_color()),
         ),
     ]);
     let status =
