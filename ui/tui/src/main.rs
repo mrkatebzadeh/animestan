@@ -48,7 +48,7 @@ use tokio::sync::mpsc::{
 };
 use tokio::time::sleep;
 
-use crate::app::{App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
+use crate::app::{AnimeProgress, App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
 use crate::events::{Event, EventHandler};
 use crate::theme::Theme;
 
@@ -99,6 +99,40 @@ impl EpisodeCache {
         })?;
         std::fs::write(&self.path, payload)?;
         Ok(())
+    }
+}
+
+fn populate_anime_progress_from_cache(
+    app: &mut App,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    cache: &EpisodeCache,
+) {
+    if let Ok(guard) = tracker.lock() {
+        let bookmark_ids: Vec<String> = app
+            .bookmark_entries()
+            .iter()
+            .map(|entry| entry.anime.id.clone())
+            .collect();
+        for anime_id in bookmark_ids {
+            if let Some(episodes) = cache.entries.get(&anime_id) {
+                let watched = episodes
+                    .iter()
+                    .filter(|episode| {
+                        guard
+                            .state_for(&episode.id)
+                            .as_ref()
+                            .is_some_and(|state| state.watched)
+                    })
+                    .count();
+                app.set_anime_progress(
+                    anime_id.clone(),
+                    AnimeProgress {
+                        watched,
+                        total: episodes.len(),
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -190,6 +224,9 @@ fn run_app(
         Err(err) => app.set_details(format!("Failed to load metadata cache: {err}")),
     }
     app.sync_bookmark_cache(&favorites);
+    if let Ok(cache_guard) = episode_cache.lock() {
+        populate_anime_progress_from_cache(&mut app, &tracker, &cache_guard);
+    }
     initialize_app(&mut app, client.as_ref());
     if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
         app.set_details(format!("Failed to refresh indicators: {err}"));
