@@ -32,8 +32,11 @@ pub(super) fn render_anime_details_panel(frame: &mut Frame, area: Rect, app: &Ap
 }
 
 pub(super) fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
+    let metadata = app
+        .info_modal_metadata()
+        .or_else(|| app.cached_metadata_for_current_anime());
     let mut lines = metadata_section_lines(
-        app.info_modal_metadata(),
+        metadata,
         app.info_modal_error(),
         app.info_modal_loading(),
         theme,
@@ -49,8 +52,11 @@ pub(super) fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Lin
 }
 
 fn build_details_panel_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
+    let metadata = app
+        .info_modal_metadata()
+        .or_else(|| app.cached_metadata_for_current_anime());
     let mut lines = metadata_section_lines(
-        app.info_modal_metadata(),
+        metadata,
         app.info_modal_error(),
         app.info_modal_loading(),
         theme,
@@ -71,28 +77,6 @@ pub(super) fn metadata_section_lines<'a>(
     loading: bool,
     theme: &Theme,
 ) -> Vec<Line<'a>> {
-    if loading {
-        return vec![
-            Line::from(Span::styled(
-                "Loading anime metadata...",
-                theme.title_style(),
-            )),
-            Line::default(),
-            Line::from("This may take a moment. Press Esc to cancel."),
-        ];
-    }
-
-    if let Some(error) = error {
-        return vec![
-            Line::from(Span::styled(
-                "Failed to load metadata:",
-                theme.selected_item_style(),
-            )),
-            Line::from(error),
-            Line::default(),
-        ];
-    }
-
     if let Some(metadata) = metadata {
         let mut lines = Vec::new();
         let status_score = format_status_score(metadata.status.as_deref(), metadata.score);
@@ -127,6 +111,28 @@ pub(super) fn metadata_section_lines<'a>(
         )));
         lines.push(Line::default());
         return lines;
+    }
+
+    if let Some(error) = error {
+        return vec![
+            Line::from(Span::styled(
+                "Failed to load metadata:",
+                theme.selected_item_style(),
+            )),
+            Line::from(error),
+            Line::default(),
+        ];
+    }
+
+    if loading {
+        return vec![
+            Line::from(Span::styled(
+                "Loading anime metadata...",
+                theme.title_style(),
+            )),
+            Line::default(),
+            Line::from("This may take a moment. Press Esc to cancel."),
+        ];
     }
 
     vec![Line::from("No metadata available for selection.")]

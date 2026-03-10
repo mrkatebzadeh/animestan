@@ -15,6 +15,7 @@
 
 mod app;
 mod events;
+mod metadata_cache;
 mod playback;
 mod theme;
 mod ui;
@@ -106,6 +107,7 @@ enum MetadataTarget {
     InfoModal,
     SearchResults,
     List,
+    Background,
 }
 
 struct MetadataFetchRequest {
@@ -170,6 +172,7 @@ fn run_app(
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
     let metadata_resolver = Arc::new(MetadataResolver::from_config(config.as_ref()));
+    let metadata_cache_path = config.metadata_cache_path();
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
@@ -180,12 +183,32 @@ fn run_app(
     let (metadata_result_tx, mut metadata_result_rx) = unbounded_channel::<MetadataFetchResult>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
     let mut active_list_metadata_fetch: Option<AbortHandle> = None;
+    let mut background_metadata_handles: Vec<AbortHandle> = Vec::new();
 
     let mut app = App::new();
+    match metadata_cache::load(&metadata_cache_path) {
+        Ok(entries) => app.load_metadata_cache(entries),
+        Err(err) => app.set_details(format!("Failed to load metadata cache: {err}")),
+    }
     app.sync_bookmark_cache(&favorites);
     initialize_app(&mut app, client.as_ref());
     if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
         app.set_details(format!("Failed to refresh indicators: {err}"));
+    }
+
+    let background_metadata_targets: Vec<(String, String)> = app
+        .bookmark_entries()
+        .iter()
+        .map(|entry| (entry.anime.id.clone(), entry.anime.title.clone()))
+        .collect();
+    if !background_metadata_targets.is_empty() {
+        app.start_metadata_background_refresh(background_metadata_targets.len());
+        background_metadata_handles = spawn_background_metadata_refresh_tasks(
+            &runtime_handle,
+            &metadata_resolver,
+            background_metadata_targets,
+            &metadata_result_tx,
+        );
     }
 
     let mut events = EventHandler::new(Duration::from_millis(250));
@@ -196,7 +219,7 @@ fn run_app(
 
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),
-            Event::Tick => {}
+            Event::Tick => app.advance_metadata_spinner(),
         }
 
         if app.take_pending_bookmark_toggle() {
@@ -304,7 +327,15 @@ fn run_app(
                             Ok(metadata) => {
                                 let title = metadata.title.clone();
                                 if let Some(anime_id) = fetch_result.anime_id.clone() {
-                                    app.set_metadata_summary(&anime_id, &metadata);
+                                    app.store_metadata(&anime_id, &metadata);
+                                    if let Err(err) = metadata_cache::save(
+                                        &metadata_cache_path,
+                                        app.metadata_entries(),
+                                    ) {
+                                        app.set_details(format!(
+                                            "Failed to persist metadata cache: {err}"
+                                        ));
+                                    }
                                 }
                                 app.set_info_modal_metadata(metadata);
                                 app.set_details(format!("Loaded metadata for {title}"));
@@ -326,7 +357,15 @@ fn run_app(
                             Ok(metadata) => {
                                 let title = metadata.title.clone();
                                 if let Some(anime_id) = fetch_result.anime_id.clone() {
-                                    app.set_metadata_summary(&anime_id, &metadata);
+                                    app.store_metadata(&anime_id, &metadata);
+                                    if let Err(err) = metadata_cache::save(
+                                        &metadata_cache_path,
+                                        app.metadata_entries(),
+                                    ) {
+                                        app.set_details(format!(
+                                            "Failed to persist metadata cache: {err}"
+                                        ));
+                                    }
                                 }
                                 app.set_search_results_metadata(metadata);
                                 app.set_details(format!("Loaded metadata for {title}"));
@@ -343,13 +382,42 @@ fn run_app(
                         if let Some(anime_id) = fetch_result.anime_id {
                             match fetch_result.result {
                                 Ok(metadata) => {
-                                    app.set_metadata_summary(&anime_id, &metadata);
+                                    app.store_metadata(&anime_id, &metadata);
+                                    if let Err(err) = metadata_cache::save(
+                                        &metadata_cache_path,
+                                        app.metadata_entries(),
+                                    ) {
+                                        app.set_details(format!(
+                                            "Failed to persist metadata cache: {err}"
+                                        ));
+                                    }
                                 }
                                 Err(_) => {
                                     app.set_metadata_failure(&anime_id);
                                 }
                             }
                         }
+                    }
+                    MetadataTarget::Background => {
+                        if let Some(anime_id) = fetch_result.anime_id {
+                            match fetch_result.result {
+                                Ok(metadata) => {
+                                    app.store_metadata(&anime_id, &metadata);
+                                    if let Err(err) = metadata_cache::save(
+                                        &metadata_cache_path,
+                                        app.metadata_entries(),
+                                    ) {
+                                        app.set_details(format!(
+                                            "Failed to persist metadata cache: {err}"
+                                        ));
+                                    }
+                                }
+                                Err(_) => {
+                                    app.set_metadata_failure(&anime_id);
+                                }
+                            }
+                        }
+                        app.finish_metadata_background_fetch();
                     }
                 },
                 Err(TryRecvError::Empty) => break,
@@ -407,6 +475,9 @@ fn run_app(
         handle.abort();
     }
     if let Some(handle) = active_playback.take() {
+        handle.abort();
+    }
+    for handle in background_metadata_handles {
         handle.abort();
     }
 
@@ -517,13 +588,13 @@ fn handle_metadata_fetch(
             app.set_details(format!("Fetching metadata for {query_string}..."));
             (query_string, source_id.clone(), source_id)
         }
-        MetadataTarget::List => return,
+        MetadataTarget::Background | MetadataTarget::List => return,
     };
 
     let generation = match target {
         MetadataTarget::InfoModal => app.next_info_fetch_generation(),
         MetadataTarget::SearchResults => app.next_search_results_metadata_generation(),
-        MetadataTarget::List => 0,
+        MetadataTarget::List | MetadataTarget::Background => 0,
     };
 
     if let Some(handle) = active_fetch.take() {
@@ -1079,6 +1150,27 @@ fn spawn_metadata_fetch_task(
     });
 
     abort_handle
+}
+
+fn spawn_background_metadata_refresh_tasks(
+    runtime: &Handle,
+    resolver: &Arc<MetadataResolver>,
+    entries: Vec<(String, String)>,
+    result_tx: &UnboundedSender<MetadataFetchResult>,
+) -> Vec<AbortHandle> {
+    entries
+        .into_iter()
+        .map(|(anime_id, query)| {
+            let request = MetadataFetchRequest {
+                generation: 0,
+                query,
+                source_id: None,
+                anime_id: Some(anime_id.clone()),
+                target: MetadataTarget::Background,
+            };
+            spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone())
+        })
+        .collect()
 }
 
 fn spawn_playback_task(

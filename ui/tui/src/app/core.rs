@@ -15,8 +15,8 @@
 
 use super::{
     App, ConfirmExitChoice, DEFAULT_SEARCH_QUERY, DataState, FilterState, Focus, InputMode,
-    KeybindingsState, Matcher, ModalState, NavState, PanelMode, PlaybackState, PlaybackStatus,
-    QuickLaunchState, SearchState, UiState,
+    KeybindingsState, Matcher, MetadataBackgroundState, ModalState, NavState, PanelMode,
+    PlaybackState, PlaybackStatus, QuickLaunchState, SearchState, UiState,
 };
 
 use crate::events;
@@ -58,6 +58,7 @@ impl App {
                 confirm_exit_choice: ConfirmExitChoice::Yes,
                 show_keybindings: false,
             },
+            metadata_background: MetadataBackgroundState::default(),
             matcher: Matcher::new(Config::DEFAULT),
         }
     }
@@ -201,5 +202,38 @@ impl App {
         self.keybindings
             .content_lines
             .saturating_sub(self.keybindings.viewport_lines)
+    }
+
+    const METADATA_SPINNER_CHARS: [char; 4] = ['|', '/', '-', '\\'];
+
+    pub fn start_metadata_background_refresh(&mut self, jobs: usize) {
+        self.metadata_background.pending = jobs;
+        self.metadata_background.spinner_index = 0;
+    }
+
+    pub fn finish_metadata_background_fetch(&mut self) {
+        if self.metadata_background.pending > 0 {
+            self.metadata_background.pending -= 1;
+        }
+    }
+
+    pub fn background_refreshing(&self) -> bool {
+        self.metadata_background.pending > 0
+    }
+
+    pub fn metadata_spinner_char(&self) -> char {
+        if self.background_refreshing() {
+            let idx = self.metadata_background.spinner_index % Self::METADATA_SPINNER_CHARS.len();
+            Self::METADATA_SPINNER_CHARS[idx]
+        } else {
+            '█'
+        }
+    }
+
+    pub fn advance_metadata_spinner(&mut self) {
+        if self.background_refreshing() {
+            self.metadata_background.spinner_index =
+                (self.metadata_background.spinner_index + 1) % Self::METADATA_SPINNER_CHARS.len();
+        }
     }
 }
