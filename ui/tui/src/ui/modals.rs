@@ -18,9 +18,6 @@ use std::convert::TryFrom;
 use crate::app::{App, ConfirmExitChoice, InputMode};
 use crate::events::keybindings;
 use crate::theme::Theme;
-use animestan_core::{
-    AnimeMetadata, format_list, format_season_year, format_status_score, metadata_source_label,
-};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::style::Style;
@@ -30,6 +27,7 @@ use ratatui::widgets::{
 };
 
 use super::border_style;
+use super::details::{build_info_modal_lines, metadata_section_lines};
 
 const KEYBINDINGS_HEADER: [&str; 6] = [
     ".█████╗ ███╗   ██╗██╗███╗   ███╗███████╗███████╗████████╗ █████╗ ███╗   ██╗",
@@ -267,90 +265,6 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     ]))
     .style(theme.non_interactive_style());
     frame.render_widget(hint, layout[2]);
-}
-
-fn metadata_section_lines<'a>(
-    metadata: Option<&'a AnimeMetadata>,
-    error: Option<&'a str>,
-    loading: bool,
-    theme: &Theme,
-) -> Vec<Line<'a>> {
-    if loading {
-        return vec![
-            Line::from(Span::styled(
-                "Loading anime metadata...",
-                theme.title_style(),
-            )),
-            Line::default(),
-            Line::from("This may take a moment. Press Esc to cancel."),
-        ];
-    }
-
-    if let Some(error) = error {
-        return vec![
-            Line::from(Span::styled(
-                "Failed to load metadata:",
-                theme.selected_item_style(),
-            )),
-            Line::from(error),
-            Line::default(),
-        ];
-    }
-
-    if let Some(metadata) = metadata {
-        let mut lines = Vec::new();
-        let status_score = format_status_score(metadata.status.as_deref(), metadata.score);
-        let season_year = format_season_year(metadata.season.as_deref(), metadata.year);
-        let genres = format_list(&metadata.genres);
-        let studios = format_list(&metadata.studios);
-        let synopsis = metadata
-            .synopsis
-            .as_deref()
-            .map(str::trim)
-            .filter(|text: &&str| !text.is_empty())
-            .unwrap_or("Synopsis not available.");
-        lines.push(Line::from(Span::styled(
-            format!("Status / Score: {status_score}"),
-            theme.title_style(),
-        )));
-        lines.push(Line::from(format!("Season / Year: {season_year}")));
-        lines.push(Line::from(format!("Genres: {genres}")));
-        lines.push(Line::from(format!("Studios: {studios}")));
-        lines.push(Line::default());
-        lines.push(Line::from("Synopsis:"));
-        lines.push(Line::from(synopsis));
-        lines.push(Line::default());
-        lines.push(Line::from(format!(
-            "Trailer: {}",
-            metadata.trailer_url.as_deref().unwrap_or("N/A")
-        )));
-        lines.push(Line::from(format!(
-            "Source: {} ({})",
-            &metadata.source_url,
-            metadata_source_label(metadata.source)
-        )));
-        lines.push(Line::default());
-        return lines;
-    }
-
-    vec![Line::from("No metadata available for selection.")]
-}
-
-fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
-    let mut lines = metadata_section_lines(
-        app.info_modal_metadata(),
-        app.info_modal_error(),
-        app.info_modal_loading(),
-        theme,
-    );
-    if !app.info_modal_loading() {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "Press Esc to close.",
-            theme.non_interactive_style(),
-        )));
-    }
-    lines
 }
 
 pub(super) fn render_exit_confirmation_modal(frame: &mut Frame, app: &App, theme: &Theme) {
