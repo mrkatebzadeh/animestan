@@ -204,7 +204,7 @@ impl App {
             .saturating_sub(self.keybindings.viewport_lines)
     }
 
-    const METADATA_SPINNER_CHARS: [char; 4] = ['|', '/', '-', '\\'];
+    const METADATA_SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
     pub fn start_metadata_background_refresh(&mut self, jobs: usize) {
         self.metadata_background.pending = jobs;

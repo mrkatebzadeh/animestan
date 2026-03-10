@@ -68,11 +68,7 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
     let now_playing = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
     frame.render_widget(now_playing, chunks[1]);
 
-    let metadata_indicator = if app.background_refreshing() {
-        format!(" | Meta: {} Refreshing", app.metadata_spinner_char())
-    } else {
-        format!(" | Meta: {}", app.metadata_spinner_char())
-    };
+    let metadata_indicator = format!(" | {}", app.metadata_spinner_char());
     let left_status = format!(
         "Mode: {} | Selection: {}{}",
         app.mode_label(),
