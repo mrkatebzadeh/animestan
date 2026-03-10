@@ -153,9 +153,16 @@ impl App {
     }
 
     pub fn store_metadata(&mut self, anime_id: &str, metadata: &AnimeMetadata) {
+        let now = now_epoch();
+        let created_at = self
+            .data
+            .metadata_store
+            .get(anime_id)
+            .map_or(now, |entry| entry.created_at);
         let entry = CachedMetadataEntry {
             metadata: metadata.clone(),
-            updated_at: now_epoch(),
+            created_at,
+            updated_at: now,
         };
         self.data.metadata_store.insert(anime_id.to_string(), entry);
         self.data.metadata_pending.remove(anime_id);
