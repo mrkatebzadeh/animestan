@@ -207,7 +207,9 @@ fn run_app(
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
     let metadata_resolver = Arc::new(MetadataResolver::from_config(config.as_ref()));
-    let metadata_cache_path = config.metadata_cache_path();
+    let metadata_cache_path = config
+        .metadata_cache_path()
+        .with_file_name("metadata_cache_tui.json");
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
