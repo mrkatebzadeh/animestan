@@ -27,7 +27,7 @@ mod modals;
 mod search;
 mod session;
 
-use self::heatmap::{heatmap_columns, render_episode_heatmap};
+use self::heatmap::render_episode_heatmap;
 use self::lists::{build_episode_items, render_anime_table, render_list};
 use self::modals::{
     render_exit_confirmation_modal, render_info_modal, render_keybindings_modal,
@@ -38,23 +38,14 @@ use self::session::render_session_panel;
 
 pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let frame_area = frame.area();
-    let heatmap_width = frame_area.width.saturating_sub(2).max(1);
-    let columns = heatmap_columns(heatmap_width as usize);
-    let total_episodes = app.episodes().len();
-    let rows = if total_episodes == 0 {
-        1
-    } else {
-        total_episodes.div_ceil(columns.max(1))
-    };
     let total_height = frame_area.height as usize;
     let session_default = 7;
     let session_min = 3;
-    let min_heatmap_height = 7;
-    let requested_heatmap_height = rows.max(min_heatmap_height);
-    let available_for_session = total_height.saturating_sub(requested_heatmap_height + session_min);
+    let progress_panel_height = 3;
+    let available_for_session = total_height.saturating_sub(progress_panel_height + session_min);
     let session_height_usize = available_for_session.min(session_default);
-    let max_heatmap_height = total_height.saturating_sub(session_height_usize).max(1);
-    let heatmap_height = requested_heatmap_height.min(max_heatmap_height);
+    let max_progress_height = total_height.saturating_sub(session_height_usize).max(1);
+    let heatmap_height = progress_panel_height.min(max_progress_height);
     let heatmap_length = u16::try_from(heatmap_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
     let list_height = total_height.saturating_sub(session_height_usize + heatmap_height);
     let list_length = u16::try_from(list_height.min(u16::MAX as usize)).unwrap_or(u16::MAX);
