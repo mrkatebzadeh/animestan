@@ -15,13 +15,11 @@
 
 mod app;
 mod events;
-mod metadata_cache;
 mod playback;
 mod theme;
 mod ui;
 
 use std::collections::HashMap;
-use std::fs;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -41,7 +39,6 @@ use crossterm::terminal::{
 use futures::future::{AbortHandle, Abortable};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use serde::{Deserialize, Serialize};
 use spdlog::prelude::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{
@@ -64,43 +61,74 @@ struct EpisodeFetchResult {
     result: CoreResult<Vec<Episode>>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct EpisodeCacheFile {
-    #[serde(default)]
-    entries: HashMap<String, Vec<Episode>>,
-}
-
 struct EpisodeCache {
-    path: PathBuf,
-    entries: HashMap<String, Vec<Episode>>,
+    dir: PathBuf,
 }
 
 impl EpisodeCache {
     fn load(config: &AppConfig) -> Self {
-        let path = config.episodes_cache_path();
-        let entries = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|contents| serde_json::from_str::<EpisodeCacheFile>(&contents).ok())
-            .map(|cache| cache.entries)
-            .unwrap_or_default();
-        Self { path, entries }
+        let dir = config.episodes_cache_path().with_file_name("episodes");
+        Self { dir }
     }
 
     fn get(&self, anime_id: &str) -> Option<Vec<Episode>> {
-        self.entries.get(anime_id).cloned()
+        let path = self.dir.join(format!("{anime_id}.json"));
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<Vec<Episode>>(&contents).ok())
     }
 
     fn insert(&mut self, anime_id: &str, episodes: &[Episode]) -> Result<()> {
-        self.entries.insert(anime_id.to_string(), episodes.to_vec());
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let payload = serde_json::to_string_pretty(&EpisodeCacheFile {
-            entries: self.entries.clone(),
-        })?;
-        std::fs::write(&self.path, payload)?;
+        std::fs::create_dir_all(&self.dir)?;
+        let payload = serde_json::to_string_pretty(episodes)?;
+        let path = self.dir.join(format!("{anime_id}.json"));
+        std::fs::write(path, payload)?;
         Ok(())
     }
+}
+
+fn metadata_cache_dir(config: &AppConfig) -> PathBuf {
+    config.metadata_cache_path().with_file_name("metadata")
+}
+
+fn metadata_cache_file(config: &AppConfig, anime_id: &str) -> PathBuf {
+    metadata_cache_dir(config).join(format!("{anime_id}.json"))
+}
+
+fn load_metadata_cache_files(config: &AppConfig) -> HashMap<String, AnimeMetadata> {
+    let mut entries = HashMap::new();
+    let dir = metadata_cache_dir(config);
+    let Ok(read_dir) = std::fs::read_dir(&dir) else {
+        return entries;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            if let Ok(metadata) = serde_json::from_str::<AnimeMetadata>(&contents) {
+                entries.insert(stem.to_string(), metadata);
+            }
+        }
+    }
+    entries
+}
+
+fn save_metadata_cache_file(
+    config: &AppConfig,
+    anime_id: &str,
+    metadata: &AnimeMetadata,
+) -> Result<()> {
+    let dir = metadata_cache_dir(config);
+    std::fs::create_dir_all(&dir)?;
+    let path = metadata_cache_file(config, anime_id);
+    let payload = serde_json::to_string_pretty(metadata)?;
+    std::fs::write(path, payload)?;
+    Ok(())
 }
 
 fn populate_anime_progress_from_cache(
@@ -115,7 +143,7 @@ fn populate_anime_progress_from_cache(
             .map(|entry| entry.anime.id.clone())
             .collect();
         for anime_id in bookmark_ids {
-            if let Some(episodes) = cache.entries.get(&anime_id) {
+            if let Some(episodes) = cache.get(&anime_id) {
                 let watched = episodes
                     .iter()
                     .filter(|episode| {
@@ -151,6 +179,7 @@ struct MetadataFetchRequest {
     source_id: Option<String>,
     anime_id: Option<String>,
     target: MetadataTarget,
+    force_refresh: bool,
 }
 
 struct MetadataFetchResult {
@@ -207,9 +236,6 @@ fn run_app(
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
     let metadata_resolver = Arc::new(MetadataResolver::from_config(config.as_ref()));
-    let metadata_cache_path = config
-        .metadata_cache_path()
-        .with_file_name("metadata_cache_tui.json");
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;
@@ -223,24 +249,8 @@ fn run_app(
     let mut active_list_metadata_fetch: Option<AbortHandle> = None;
 
     let mut app = App::new();
-    match metadata_cache::load(&metadata_cache_path) {
-        Ok(entries) => app.load_metadata_cache(entries),
-        Err(err) => {
-            let mut details = format!("Failed to load metadata cache: {err}");
-            let is_parse_error = {
-                #[allow(clippy::redundant_closure_for_method_calls)]
-                err.get_ref()
-                    .is_some_and(|inner| inner.is::<serde_json::Error>())
-            };
-            if is_parse_error {
-                if fs::remove_file(&metadata_cache_path).is_ok() {
-                    details = "Metadata cache corrupted, resetting.".to_string();
-                } else {
-                    details = "Metadata cache corrupted and could not be cleared.".to_string();
-                }
-            }
-            app.set_details(details);
-        }
+    for (anime_id, metadata) in load_metadata_cache_files(config) {
+        app.store_metadata(&anime_id, &metadata);
     }
     app.sync_bookmark_cache(&favorites);
     if let Ok(cache_guard) = episode_cache.lock() {
@@ -414,10 +424,9 @@ fn run_app(
                                 let title = metadata.title.clone();
                                 if let Some(anime_id) = fetch_result.anime_id.clone() {
                                     app.store_metadata(&anime_id, &metadata);
-                                    if let Err(err) = metadata_cache::save(
-                                        &metadata_cache_path,
-                                        app.metadata_entries(),
-                                    ) {
+                                    if let Err(err) =
+                                        save_metadata_cache_file(config, &anime_id, &metadata)
+                                    {
                                         app.set_details(format!(
                                             "Failed to persist metadata cache: {err}"
                                         ));
@@ -444,10 +453,9 @@ fn run_app(
                                 let title = metadata.title.clone();
                                 if let Some(anime_id) = fetch_result.anime_id.clone() {
                                     app.store_metadata(&anime_id, &metadata);
-                                    if let Err(err) = metadata_cache::save(
-                                        &metadata_cache_path,
-                                        app.metadata_entries(),
-                                    ) {
+                                    if let Err(err) =
+                                        save_metadata_cache_file(config, &anime_id, &metadata)
+                                    {
                                         app.set_details(format!(
                                             "Failed to persist metadata cache: {err}"
                                         ));
@@ -469,10 +477,9 @@ fn run_app(
                             match fetch_result.result {
                                 Ok(metadata) => {
                                     app.store_metadata(&anime_id, &metadata);
-                                    if let Err(err) = metadata_cache::save(
-                                        &metadata_cache_path,
-                                        app.metadata_entries(),
-                                    ) {
+                                    if let Err(err) =
+                                        save_metadata_cache_file(config, &anime_id, &metadata)
+                                    {
                                         app.set_details(format!(
                                             "Failed to persist metadata cache: {err}"
                                         ));
@@ -489,10 +496,9 @@ fn run_app(
                             match fetch_result.result {
                                 Ok(metadata) => {
                                     app.store_metadata(&anime_id, &metadata);
-                                    if let Err(err) = metadata_cache::save(
-                                        &metadata_cache_path,
-                                        app.metadata_entries(),
-                                    ) {
+                                    if let Err(err) =
+                                        save_metadata_cache_file(config, &anime_id, &metadata)
+                                    {
                                         app.set_details(format!(
                                             "Failed to persist metadata cache: {err}"
                                         ));
@@ -710,6 +716,7 @@ fn handle_metadata_fetch(
         source_id,
         anime_id,
         target,
+        force_refresh: false,
     };
     let abort_handle =
         spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone());
@@ -737,6 +744,7 @@ fn handle_list_metadata_fetch(
         source_id: Some(anime_id.clone()),
         anime_id: Some(anime_id),
         target: MetadataTarget::List,
+        force_refresh: false,
     };
 
     let abort_handle =
@@ -1221,13 +1229,20 @@ fn spawn_metadata_fetch_task(
         source_id,
         anime_id,
         target,
+        force_refresh,
     } = request;
 
     runtime.spawn({
         let fut = Abortable::new(
             async move {
                 let blocking_result = tokio::task::spawn_blocking(move || {
-                    if let Some(id) = source_id.as_deref() {
+                    if force_refresh {
+                        if let Some(id) = source_id.as_deref() {
+                            resolver.refresh_by_id(id, &query)
+                        } else {
+                            resolver.refresh_by_query(&query)
+                        }
+                    } else if let Some(id) = source_id.as_deref() {
                         resolver.fetch_by_id(id, &query)
                     } else {
                         resolver.fetch_by_query(&query)
@@ -1309,6 +1324,7 @@ fn spawn_background_metadata_refresh_tasks(
                 source_id: None,
                 anime_id: Some(anime_id.clone()),
                 target: MetadataTarget::Background,
+                force_refresh: true,
             };
             spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone())
         })

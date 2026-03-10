@@ -50,6 +50,13 @@ impl KitsuMetadataProvider {
         Self { client, cache }
     }
 
+    pub(super) fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
+        let key = format!("kitsu:{}", normalize_query(query));
+        let metadata = self.fetch_kitsu(query)?;
+        self.cache.insert(key, metadata.clone())?;
+        Ok(metadata)
+    }
+
     fn fetch_kitsu(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
         let response = self
             .client
