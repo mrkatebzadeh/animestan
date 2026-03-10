@@ -7,9 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use animestan_core::AnimeMetadata;
 use serde::{Deserialize, Serialize};
 
+fn default_epoch() -> u64 {
+    0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedMetadataEntry {
     pub metadata: AnimeMetadata,
+    #[serde(default = "default_epoch")]
+    pub created_at: u64,
     pub updated_at: u64,
 }
 
