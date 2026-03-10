@@ -15,7 +15,6 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::metadata_cache::CachedMetadataEntry;
 use animestan_core::{AnimeEntry, AnimeMetadata, Episode, FavoriteEntry, PlaybackFilter};
 use nucleo::Matcher;
 use quick::{LastPlayedEpisode, PendingPlayback};
@@ -237,7 +236,7 @@ struct DataState {
     fetch_generation: u64,
     episode_indicators: HashMap<String, EpisodeIndicators>,
     anime_progress: HashMap<String, AnimeProgress>,
-    metadata_store: HashMap<String, CachedMetadataEntry>,
+    metadata_store: HashMap<String, AnimeMetadata>,
     metadata_pending: HashSet<String>,
     metadata_failed: HashSet<String>,
     episode_refresh_pending: HashSet<String>,
