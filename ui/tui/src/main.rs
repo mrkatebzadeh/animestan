@@ -597,9 +597,9 @@ fn handle_filters(
                 app.set_episodes(cached);
                 app.set_details("Loaded cached episodes; refreshing...");
             }
-            app.set_episodes_loading(true);
             let should_fetch = !app.episode_refresh_pending(&anime_id);
             if should_fetch {
+                app.set_episodes_loading(true);
                 app.mark_episode_refresh_pending(anime_id.clone());
                 let generation = app.next_fetch_generation();
                 let request = EpisodeFetchRequest {
