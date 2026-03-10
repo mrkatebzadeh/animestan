@@ -25,7 +25,6 @@ mod keybindings;
 mod normal;
 mod panel_filter;
 mod quick_launch;
-mod search;
 mod search_results;
 
 #[derive(Clone, Copy, Debug)]
@@ -313,8 +312,5 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) {
         return;
     }
 
-    match app.input_mode() {
-        InputMode::Normal => normal::handle(app, key_event),
-        InputMode::Search => search::handle(app, key_event),
-    }
+    normal::handle(app, key_event);
 }
