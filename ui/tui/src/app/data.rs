@@ -15,8 +15,9 @@
 
 use super::{
     AnimeMetadata, AnimeProgress, App, Episode, EpisodeIndicators, FavoriteEntry, FilterActive,
-    FilterTarget, HashMap, MetadataSummary, SearchModal,
+    FilterTarget, MetadataSummary, SearchModal,
 };
+use std::collections::HashMap;
 
 use animestan_core::{AnimeClient, CoreResult, FavoriteStore, FetchBackend};
 
@@ -101,8 +102,34 @@ impl App {
         self.data.anime_progress.get(anime_id).copied()
     }
 
-    pub fn metadata_summary(&self, anime_id: &str) -> Option<&MetadataSummary> {
-        self.data.metadata_cache.get(anime_id)
+    pub fn set_anime_progress(&mut self, anime_id: String, progress: AnimeProgress) {
+        self.data.anime_progress.insert(anime_id, progress);
+    }
+
+    pub fn metadata_summary(&self, anime_id: &str) -> Option<MetadataSummary> {
+        self.data
+            .metadata_store
+            .get(anime_id)
+            .map(|metadata| MetadataSummary {
+                status: metadata.status.clone(),
+                score: metadata.score,
+            })
+    }
+
+    pub fn episode_refresh_pending(&self, anime_id: &str) -> bool {
+        self.data.episode_refresh_pending.contains(anime_id)
+    }
+
+    pub fn mark_episode_refresh_pending(&mut self, anime_id: String) {
+        self.data.episode_refresh_pending.insert(anime_id);
+    }
+
+    pub fn clear_episode_refresh_pending(&mut self, anime_id: &str) {
+        self.data.episode_refresh_pending.remove(anime_id);
+    }
+
+    pub fn cached_metadata(&self, anime_id: &str) -> Option<&AnimeMetadata> {
+        self.data.metadata_store.get(anime_id)
     }
 
     pub fn next_metadata_fetch_candidate(&mut self) -> Option<(String, String)> {
@@ -121,16 +148,22 @@ impl App {
         None
     }
 
-    pub fn set_metadata_summary(&mut self, anime_id: &str, metadata: &AnimeMetadata) {
-        let summary = MetadataSummary {
-            status: metadata.status.clone(),
-            score: metadata.score,
+    pub fn store_metadata(&mut self, anime_id: &str, metadata: &AnimeMetadata) {
+        let merged = if let Some(existing) = self.data.metadata_store.get(anime_id) {
+            merge_metadata(existing, metadata)
+        } else {
+            metadata.clone()
         };
         self.data
-            .metadata_cache
-            .insert(anime_id.to_string(), summary);
+            .metadata_store
+            .insert(anime_id.to_string(), merged);
         self.data.metadata_pending.remove(anime_id);
         self.data.metadata_failed.remove(anime_id);
+    }
+
+    pub fn cached_metadata_for_current_anime(&self) -> Option<&AnimeMetadata> {
+        self.current_anime_id()
+            .and_then(|anime_id| self.cached_metadata(&anime_id))
     }
 
     pub fn set_metadata_failure(&mut self, anime_id: &str) {
@@ -285,8 +318,59 @@ impl App {
     }
 
     fn should_fetch_metadata(&self, anime_id: &str) -> bool {
-        !self.data.metadata_cache.contains_key(anime_id)
+        !self.data.metadata_store.contains_key(anime_id)
             && !self.data.metadata_pending.contains(anime_id)
             && !self.data.metadata_failed.contains(anime_id)
+    }
+}
+
+fn merge_metadata(existing: &AnimeMetadata, incoming: &AnimeMetadata) -> AnimeMetadata {
+    let synopsis = incoming
+        .synopsis
+        .as_ref()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| existing.synopsis.clone());
+    let score = incoming.score.or(existing.score);
+    let status = incoming.status.clone().or_else(|| existing.status.clone());
+    let season = incoming.season.clone().or_else(|| existing.season.clone());
+    let year = incoming.year.or(existing.year);
+    let trailer_url = incoming
+        .trailer_url
+        .clone()
+        .or_else(|| existing.trailer_url.clone());
+    let genres = if incoming.genres.is_empty() {
+        existing.genres.clone()
+    } else {
+        incoming.genres.clone()
+    };
+    let studios = if incoming.studios.is_empty() {
+        existing.studios.clone()
+    } else {
+        incoming.studios.clone()
+    };
+    let title = if incoming.title.trim().is_empty() {
+        existing.title.clone()
+    } else {
+        incoming.title.clone()
+    };
+    let source_url = if incoming.source_url.trim().is_empty() {
+        existing.source_url.clone()
+    } else {
+        incoming.source_url.clone()
+    };
+    AnimeMetadata {
+        title,
+        synopsis,
+        score,
+        genres,
+        studios,
+        status,
+        season,
+        year,
+        trailer_url,
+        source_url,
+        source: incoming.source,
     }
 }
