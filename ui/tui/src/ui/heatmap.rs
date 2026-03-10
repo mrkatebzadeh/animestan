@@ -13,12 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::app::{App, EpisodeIndicators};
+use crate::app::App;
 use crate::theme::{HeatmapVariant, Theme};
-use animestan_core::Episode;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::Frame;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
@@ -39,143 +38,88 @@ pub(super) fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, t
         return;
     }
 
-    render_heatmap_grid(frame, inner, app, theme);
-}
-
-pub(super) fn render_heatmap_grid(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    if area.height == 0 || area.width == 0 {
-        return;
-    }
-
     let episodes = app.episodes();
     if episodes.is_empty() {
         let placeholder =
-            Paragraph::new("Load episodes to view heatmap").alignment(Alignment::Center);
-        frame.render_widget(placeholder, area);
+            Paragraph::new("Load episodes to view progress").alignment(Alignment::Center);
+        frame.render_widget(placeholder, inner);
         return;
     }
 
-    let normalized = heatmap_scalars(episodes);
-    let columns = heatmap_columns(area.width as usize);
-    if columns == 0 {
+    let total = episodes.len();
+    let watched = episodes
+        .iter()
+        .filter(|episode| app.episode_indicators(&episode.id).watched)
+        .count();
+    #[allow(clippy::cast_precision_loss)]
+    let percent = if total == 0 {
+        0.0
+    } else {
+        (watched as f64 * 100.0) / total as f64
+    };
+
+    let percent_text = format!(" {watched}/{total} ({percent:.0}%)");
+    let inner_width = inner.width as usize;
+    if inner_width == 0 {
         return;
     }
 
-    let selected = app.current_episode_index();
-    let rows = episodes.len().div_ceil(columns);
-    let mut lines = Vec::new();
-
-    for row in 0..rows {
-        let start = row * columns;
-        let mut spans = Vec::new();
-        for col in 0..columns {
-            let idx = start + col;
-            if idx >= episodes.len() {
-                break;
-            }
-
-            let alternate = (row + col) % 2 == 0;
-
-            let indicators = app.episode_indicators(&episodes[idx].id);
-            let mut style = heatmap_cell_style(indicators, normalized[idx], theme, alternate);
-            if selected == Some(idx) {
-                style = style.add_modifier(Modifier::REVERSED);
-                style = style.add_modifier(Modifier::UNDERLINED);
-            }
-            spans.push(Span::styled("▉", style));
-        }
-
-        if spans.is_empty() {
-            continue;
-        }
-
-        lines.push(Line::from(spans));
-    }
-
-    if lines.is_empty() {
-        let placeholder = Paragraph::new("No episodes available").alignment(Alignment::Center);
-        frame.render_widget(placeholder, area);
+    let text_width = percent_text.chars().count();
+    if text_width >= inner_width {
+        let truncated: String = percent_text.chars().take(inner_width).collect();
+        let progress = Paragraph::new(Line::from(Span::styled(truncated, theme.title_style())))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        frame.render_widget(progress, inner);
         return;
     }
 
-    let grid = Paragraph::new(lines)
+    let bar_width = inner_width - text_width;
+    if bar_width == 0 {
+        let progress = Paragraph::new(Line::from(Span::styled(
+            percent_text.trim(),
+            theme.title_style(),
+        )))
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+        frame.render_widget(progress, inner);
+        return;
+    }
+
+    let fill_segments = if total == 0 {
+        0
+    } else {
+        (watched * bar_width + total / 2) / total
+    };
+    let fill_segments = fill_segments.min(bar_width);
+    let empty_segments = bar_width - fill_segments;
+
+    let fill_str = if fill_segments == 0 {
+        String::new()
+    } else {
+        "█".repeat(fill_segments)
+    };
+    let empty_str = if empty_segments == 0 {
+        String::new()
+    } else {
+        "░".repeat(empty_segments)
+    };
+
+    let mut spans = Vec::new();
+    if !fill_str.is_empty() {
+        let color = theme.heatmap_color(HeatmapVariant::Watched);
+        let fill_style = Style::default().fg(Color::Rgb(color.0, color.1, color.2));
+        spans.push(Span::styled(fill_str, fill_style));
+    }
+    if !empty_str.is_empty() {
+        let empty_color = theme.non_interactive_color();
+        let empty_style = Style::default().fg(empty_color);
+        spans.push(Span::styled(empty_str, empty_style));
+    }
+    spans.push(Span::styled(percent_text, theme.title_style()));
+
+    let paragraph = Paragraph::new(Line::from(spans))
         .wrap(Wrap { trim: true })
         .alignment(Alignment::Left);
-    frame.render_widget(grid, area);
-}
-
-#[allow(clippy::cast_precision_loss)]
-pub(super) fn heatmap_scalars(episodes: &[Episode]) -> Vec<f64> {
-    if episodes.is_empty() {
-        return Vec::new();
-    }
-
-    let has_air_dates = episodes.iter().any(|episode| episode.air_date.is_some());
-    let offset = if has_air_dates {
-        episodes
-            .iter()
-            .filter_map(|episode| episode.air_date)
-            .min()
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
-    let values: Vec<f64> = episodes
-        .iter()
-        .map(|episode| {
-            let raw = if has_air_dates {
-                episode
-                    .air_date
-                    .unwrap_or(offset + i64::from(episode.number))
-            } else {
-                i64::from(episode.number)
-            };
-            raw as f64
-        })
-        .collect();
-
-    let min_value = values.iter().copied().fold(f64::INFINITY, f64::min);
-    let max_value = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let range = max_value - min_value;
-
-    if range.abs() < f64::EPSILON {
-        return vec![0.5; values.len()];
-    }
-
-    values
-        .into_iter()
-        .map(|value| ((value - min_value) / range).clamp(0.0, 1.0))
-        .collect()
-}
-
-pub(super) fn heatmap_columns(width: usize) -> usize {
-    width.max(1)
-}
-
-pub(super) fn heatmap_cell_style(
-    indicators: EpisodeIndicators,
-    intensity: f64,
-    theme: &Theme,
-    alternate: bool,
-) -> Style {
-    let base = if indicators.watched {
-        theme.heatmap_color(HeatmapVariant::Watched)
-    } else if indicators.in_progress {
-        theme.heatmap_color(HeatmapVariant::InProgress)
-    } else {
-        theme.heatmap_color(HeatmapVariant::Upcoming)
-    };
-    let adjusted = (intensity + if alternate { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
-    let color = tinted_color(base, adjusted);
-    Style::default().fg(color).add_modifier(Modifier::BOLD)
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn tinted_color((r, g, b): (u8, u8, u8), intensity: f64) -> Color {
-    let factor = 0.5 + intensity.clamp(0.0, 1.0) * 0.5;
-    let red = (f64::from(r) * factor).clamp(0.0, 255.0) as u8;
-    let green = (f64::from(g) * factor).clamp(0.0, 255.0) as u8;
-    let blue = (f64::from(b) * factor).clamp(0.0, 255.0) as u8;
-    Color::Rgb(red, green, blue)
+    frame.render_widget(paragraph, inner);
 }
