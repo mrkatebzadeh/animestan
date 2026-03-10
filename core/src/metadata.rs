@@ -105,9 +105,14 @@ struct MetadataCacheInner {
     path: PathBuf,
 }
 
+fn default_epoch() -> u64 {
+    0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
     metadata: AnimeMetadata,
+    #[serde(default = "default_epoch")]
     created_at: u64,
 }
 
@@ -179,12 +184,12 @@ impl MetadataCache {
         let path = self.inner.path.clone();
         let cache = match std::fs::read_to_string(&path) {
             Ok(contents) => {
-                serde_json::from_str::<MetadataCacheFile>(&contents).map_err(|source| {
-                    CoreError::MetadataCacheParse {
-                        path: path.clone(),
-                        source,
-                    }
-                })?
+                if let Ok(cache) = serde_json::from_str::<MetadataCacheFile>(&contents) {
+                    cache
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                    MetadataCacheFile::default()
+                }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => MetadataCacheFile::default(),
             Err(source) => {
