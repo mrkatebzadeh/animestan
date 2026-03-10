@@ -77,7 +77,8 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
     let total_width = chunks[2].width as usize;
     let status_len = left_status.chars().count();
     let hint_len = hint_text.chars().count();
-    let spacing = total_width.saturating_sub(status_len + hint_len);
+    let spinner_len = 1;
+    let spacing = total_width.saturating_sub(status_len + hint_len + spinner_len);
     let spacer = " ".repeat(spacing);
 
     let status_line = Line::from(vec![
