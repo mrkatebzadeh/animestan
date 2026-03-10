@@ -36,7 +36,7 @@ impl App {
         self.modal.info_visible = true;
         self.modal.info_metadata = None;
         self.modal.info_error = None;
-        self.modal.pending_info_fetch = true;
+        self.request_info_metadata();
     }
 
     pub fn close_info_modal(&mut self) {
@@ -75,5 +75,12 @@ impl App {
     pub fn set_info_modal_error(&mut self, error: impl Into<String>) {
         self.modal.info_error = Some(error.into());
         self.modal.info_metadata = None;
+    }
+
+    pub fn request_info_metadata(&mut self) {
+        self.modal.pending_info_fetch = true;
+        self.modal.info_metadata = None;
+        self.modal.info_error = None;
+        self.modal.info_loading = true;
     }
 }
