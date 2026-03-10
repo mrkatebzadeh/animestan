@@ -28,9 +28,12 @@ struct MetadataCacheFile {
 pub fn load(path: &Path) -> io::Result<HashMap<String, CachedMetadataEntry>> {
     match fs::read_to_string(path) {
         Ok(contents) => {
-            let cache: MetadataCacheFile = serde_json::from_str(&contents)
-                .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
-            Ok(cache.entries)
+            if let Ok(cache) = serde_json::from_str::<MetadataCacheFile>(&contents) {
+                Ok(cache.entries)
+            } else {
+                let _ = fs::remove_file(path);
+                Ok(HashMap::new())
+            }
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(HashMap::new()),
         Err(err) => Err(err),
