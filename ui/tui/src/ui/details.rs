@@ -58,7 +58,7 @@ fn build_details_panel_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
     if !app.info_modal_loading() {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
-            "Press i to refresh metadata.",
+            "Press i to view full info modal.",
             theme.non_interactive_style(),
         )));
     }

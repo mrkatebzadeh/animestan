@@ -460,6 +460,7 @@ fn handle_filters(
             } else {
                 app.set_details("Fetching episodes...");
             }
+            app.request_info_metadata();
         } else {
             app.clear_episodes();
             app.set_episodes_loading(false);
