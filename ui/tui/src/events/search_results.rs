@@ -24,12 +24,29 @@ pub(super) fn handle_modal(app: &mut App, key_event: KeyEvent) -> bool {
 
     match key_event.code {
         KeyCode::Esc => app.close_search_results_modal(),
-        KeyCode::Enter => app.request_search_results_add(),
-        KeyCode::Down | KeyCode::Char('j') => app.move_search_results_selection_down(),
-        KeyCode::Up | KeyCode::Char('k') => app.move_search_results_selection_up(),
-        KeyCode::Char('m') => {
-            if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+        KeyCode::Enter => {
+            let search_query = app.search_query().trim();
+            let results_query = app.search_results_query().trim();
+            let has_results = !app.search_results().is_empty();
+            if !has_results || search_query != results_query {
+                app.request_search();
+            } else {
+                app.request_search_results_add();
+            }
+        }
+        KeyCode::Backspace => {
+            app.pop_search_char();
+        }
+        KeyCode::Down => app.move_search_results_selection_down(),
+        KeyCode::Up => app.move_search_results_selection_up(),
+        KeyCode::Char(ch) => {
+            if key_event.modifiers.contains(KeyModifiers::CONTROL) && ch == 'm' {
                 app.request_bookmark_toggle();
+            } else if !key_event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                app.append_search_char(ch);
             }
         }
         _ => {}
