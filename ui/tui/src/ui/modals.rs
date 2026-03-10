@@ -181,14 +181,41 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
-    let chunks = Layout::default()
+    let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
         .split(inner);
+
+    let input_block = Block::default()
+        .title("Search Anime")
+        .borders(Borders::ALL)
+        .border_style(border_style(theme, app.input_mode() == InputMode::Search));
+    let prompt = Line::from(vec![
+        Span::styled("> ", theme.non_interactive_style()),
+        Span::raw(app.search_query()),
+    ]);
+    let input_inner = input_block.inner(layout[0]);
+    let input_paragraph = Paragraph::new(prompt).block(input_block);
+    frame.render_widget(input_paragraph, layout[0]);
+    if app.input_mode() == InputMode::Search {
+        let typed_chars = app.search_query().chars().count();
+        let typed_offset = u16::try_from(typed_chars).unwrap_or(u16::MAX);
+        let cursor_base = input_inner.x.saturating_add(2);
+        let max_cursor = input_inner
+            .x
+            .saturating_add(input_inner.width.saturating_sub(1));
+        let cursor_x = cursor_base.saturating_add(typed_offset).min(max_cursor);
+        frame.set_cursor_position((cursor_x, input_inner.y));
+    }
+
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(chunks[0]);
+        .split(layout[1]);
 
     let results = app.search_results();
     let items: Vec<ListItem> = if results.is_empty() {
@@ -233,11 +260,13 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     let hint = Paragraph::new(Line::from(vec![
         Span::styled("Esc", theme.title_style()),
         Span::raw(" to close · "),
+        Span::styled("Enter", theme.title_style()),
+        Span::raw(" to search (press again to add) · "),
         Span::styled("Ctrl+M", theme.title_style()),
         Span::raw(" to mark selection"),
     ]))
     .style(theme.non_interactive_style());
-    frame.render_widget(hint, chunks[1]);
+    frame.render_widget(hint, layout[2]);
 }
 
 fn metadata_section_lines<'a>(
