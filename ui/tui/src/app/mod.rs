@@ -240,6 +240,7 @@ struct DataState {
     metadata_store: HashMap<String, CachedMetadataEntry>,
     metadata_pending: HashSet<String>,
     metadata_failed: HashSet<String>,
+    episode_refresh_pending: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
