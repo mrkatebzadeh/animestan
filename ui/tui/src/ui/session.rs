@@ -20,10 +20,11 @@ use ratatui::prelude::Frame;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use throbber_widgets_tui::Throbber;
 
 use super::border_style;
 
-pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -74,33 +75,40 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
         app.current_selection_label(),
     );
     let hint_text = "Press ? for keybindings";
-    let total_width = chunks[2].width as usize;
-    let status_len = left_status.chars().count();
-    let hint_len = hint_text.chars().count();
-    let spinner_len = 1;
-    let spacing = total_width.saturating_sub(status_len + hint_len + spinner_len);
-    let spacer = " ".repeat(spacing);
+    let hint_len = u16::try_from(hint_text.chars().count()).unwrap_or(u16::MAX);
+    let throbber_width = 2u16;
 
-    let status_line = Line::from(vec![
-        Span::styled(
-            left_status,
-            theme.item_style().bg(theme.non_interactive_color()),
-        ),
-        Span::raw(spacer),
-        Span::styled(
-            hint_text,
-            Style::default()
-                .bg(theme.non_interactive_color())
-                .add_modifier(Modifier::REVERSED),
-        ),
-        Span::styled(
-            format!(" {}", app.metadata_spinner_char()),
-            theme.item_style().bg(theme.non_interactive_color()),
-        ),
-    ]);
-    let status =
-        Paragraph::new(status_line).style(Style::default().bg(theme.non_interactive_color()));
-    frame.render_widget(status, chunks[2]);
+    let status_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(throbber_width),
+            Constraint::Length(hint_len),
+        ])
+        .split(chunks[2]);
+
+    let status = Paragraph::new(Line::from(Span::styled(
+        left_status,
+        theme.item_style().bg(theme.non_interactive_color()),
+    )))
+    .style(Style::default().bg(theme.non_interactive_color()));
+    frame.render_widget(status, status_chunks[0]);
+
+    let hint = Paragraph::new(Line::from(Span::styled(
+        hint_text,
+        Style::default()
+            .bg(theme.non_interactive_color())
+            .add_modifier(Modifier::REVERSED),
+    )))
+    .style(Style::default().bg(theme.non_interactive_color()));
+    frame.render_widget(hint, status_chunks[2]);
+
+    let throbber_bg = Paragraph::new(" ").style(Style::default().bg(theme.non_interactive_color()));
+    frame.render_widget(throbber_bg, status_chunks[1]);
+    if app.background_refreshing() {
+        let throbber = Throbber::default();
+        frame.render_stateful_widget(throbber, status_chunks[1], app.metadata_throbber_mut());
+    }
 }
 
 fn format_elapsed(seconds: Option<f64>) -> String {

@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use animestan_core::{AnimeEntry, AnimeMetadata, Episode, FavoriteEntry, PlaybackFilter};
 use nucleo::Matcher;
 use quick::{LastPlayedEpisode, PendingPlayback};
+use throbber_widgets_tui::ThrobberState;
 
 mod core;
 mod data;
@@ -314,7 +315,7 @@ struct UiState {
 #[derive(Debug, Default)]
 struct MetadataBackgroundState {
     pending: usize,
-    spinner_index: usize,
+    throbber: ThrobberState,
 }
 
 pub struct App {
