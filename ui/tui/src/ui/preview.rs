@@ -51,8 +51,7 @@ impl StatefulWidget for PreviewWidget<'_> {
             return;
         }
 
-        let throbber =
-            Throbber::default().label(Span::styled("Loading cover…", self.theme.title_style()));
+        let throbber = Throbber::default().label(Span::styled("Loading", self.theme.title_style()));
         let loader_state = state.throbber_mut();
         StatefulWidget::render(throbber, inner, buf, loader_state);
     }
