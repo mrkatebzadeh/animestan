@@ -221,6 +221,13 @@ impl AppConfig {
         Self::data_dir().join("logs")
     }
 
+    #[must_use]
+    pub fn covers_dir(&self) -> PathBuf {
+        let _ = self;
+
+        Self::data_dir().join("covers")
+    }
+
     /// Loads configuration from the provided `path`.
     ///
     /// # Errors
