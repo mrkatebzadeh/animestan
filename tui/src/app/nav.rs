@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{AnimeEntry, App, Focus, InputMode, SearchModal};
+use super::{AnimeEntry, App, Focus, SearchModal};
 
 impl App {
     pub fn left_index(&self) -> usize {
@@ -252,20 +252,14 @@ impl App {
     }
 
     pub fn cycle_focus(&mut self) {
-        if matches!(self.nav.input_mode, InputMode::Search) {
-            self.exit_search_mode();
-            self.nav.focus = Focus::Left;
-            self.set_details("Focus: Anime list");
-            return;
-        }
-
         match self.nav.focus {
             Focus::Left => {
                 self.nav.focus = Focus::Right;
                 self.set_details("Focus: Episode list");
             }
             Focus::Right => {
-                self.enter_search_mode();
+                self.nav.focus = Focus::Left;
+                self.set_details("Focus: Anime list");
             }
         }
     }
