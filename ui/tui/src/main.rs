@@ -37,7 +37,7 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::future::{AbortHandle, Abortable};
-use image::DynamicImage;
+use image::{DynamicImage, ImageFormat};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::Resize;
@@ -81,6 +81,10 @@ struct EpisodeCache {
     dir: PathBuf,
 }
 
+struct CoverCache {
+    dir: PathBuf,
+}
+
 impl EpisodeCache {
     fn load(config: &AppConfig) -> Self {
         let dir = config.episodes_cache_path().with_file_name("episodes");
@@ -99,6 +103,33 @@ impl EpisodeCache {
         let payload = serde_json::to_string_pretty(episodes)?;
         let path = self.dir.join(format!("{anime_id}.json"));
         std::fs::write(path, payload)?;
+        Ok(())
+    }
+}
+
+impl CoverCache {
+    fn load(config: &AppConfig) -> Self {
+        let dir = config.covers_dir();
+        Self { dir }
+    }
+
+    fn path_for(&self, anime_id: &str) -> PathBuf {
+        self.dir.join(format!("{anime_id}.png"))
+    }
+
+    fn get(&self, anime_id: &str) -> Result<Option<DynamicImage>> {
+        let path = self.path_for(anime_id);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let image = image::open(path)?;
+        Ok(Some(image))
+    }
+
+    fn insert(&self, anime_id: &str, image: &DynamicImage) -> Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        let path = self.path_for(anime_id);
+        image.save_with_format(path, ImageFormat::Png)?;
         Ok(())
     }
 }
@@ -265,6 +296,7 @@ fn run_app(
     let (image_result_tx, mut image_result_rx) = unbounded_channel::<ImageLoadResult>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
     let mut active_list_metadata_fetch: Option<AbortHandle> = None;
+    let mut cover_cache = CoverCache::load(config);
 
     let mut app = App::new();
     let picker = Picker::from_query_stdio().ok();
@@ -402,6 +434,7 @@ fn run_app(
             config,
             &request_tx,
             &episode_cache,
+            &mut cover_cache,
             &image_request_tx,
         );
         handle_metadata_fetch(
@@ -503,6 +536,7 @@ fn run_app(
                                     if let Some(image_url) = metadata.image_url.as_deref() {
                                         queue_image_load(
                                             &mut app,
+                                            &mut cover_cache,
                                             &image_request_tx,
                                             &anime_id,
                                             image_url,
@@ -540,6 +574,7 @@ fn run_app(
                                     if let Some(image_url) = metadata.image_url.as_deref() {
                                         queue_image_load(
                                             &mut app,
+                                            &mut cover_cache,
                                             &image_request_tx,
                                             &anime_id,
                                             image_url,
@@ -572,6 +607,7 @@ fn run_app(
                                     if let Some(image_url) = metadata.image_url.as_deref() {
                                         queue_image_load(
                                             &mut app,
+                                            &mut cover_cache,
                                             &image_request_tx,
                                             &anime_id,
                                             image_url,
@@ -599,6 +635,7 @@ fn run_app(
                                     if let Some(image_url) = metadata.image_url.as_deref() {
                                         queue_image_load(
                                             &mut app,
+                                            &mut cover_cache,
                                             &image_request_tx,
                                             &anime_id,
                                             image_url,
@@ -625,16 +662,11 @@ fn run_app(
         while let Ok(result) = image_result_rx.try_recv() {
             app.clear_image_pending(&result.id);
             if let Some(image) = result.image {
-                let area = app.image_state().area();
-                let protocol = if area.width > 0 && area.height > 0 {
-                    app.image_picker_mut()
-                        .and_then(|picker| picker.new_protocol(image, area, Resize::Fit(None)).ok())
-                } else {
-                    None
-                };
-                if let Some(protocol) = protocol {
-                    app.image_state_mut()
-                        .insert_manga(result.id.clone(), protocol);
+                if let Err(err) = cover_cache.insert(&result.id, &image) {
+                    app.set_details(format!("Failed to cache cover: {err}"));
+                }
+                if !insert_cover_protocol(&mut app, &result.id, image) {
+                    app.set_details("Cover cached but cannot render yet.");
                 }
             } else if let Some(error) = result.error {
                 app.set_details(format!("Failed to load cover: {error}"));
@@ -721,8 +753,26 @@ fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
     }
 }
 
+fn insert_cover_protocol(app: &mut App, anime_id: &str, image: DynamicImage) -> bool {
+    let area = app.image_state().area();
+    if area.width == 0 || area.height == 0 {
+        return false;
+    }
+    let protocol = app
+        .image_picker_mut()
+        .and_then(|picker| picker.new_protocol(image, area, Resize::Fit(None)).ok());
+    if let Some(protocol) = protocol {
+        app.image_state_mut()
+            .insert_manga(anime_id.to_string(), protocol);
+        true
+    } else {
+        false
+    }
+}
+
 fn queue_image_load(
     app: &mut App,
+    cover_cache: &mut CoverCache,
     image_request_tx: &UnboundedSender<ImageLoadRequest>,
     anime_id: &str,
     image_url: &str,
@@ -735,6 +785,19 @@ fn queue_image_load(
     }
     if app.image_state().get_image_state(anime_id).is_some() {
         return;
+    }
+    match cover_cache.get(anime_id) {
+        Ok(Some(image)) => {
+            if !insert_cover_protocol(app, anime_id, image) {
+                app.set_details("Cover cached but cannot render yet.");
+            }
+            return;
+        }
+        Ok(None) => {}
+        Err(err) => {
+            app.set_details(format!("Failed to load cached cover: {err}"));
+            return;
+        }
     }
     app.mark_image_pending(anime_id.to_string());
     if image_request_tx
@@ -754,6 +817,7 @@ fn handle_filters(
     config: &AppConfig,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
     episode_cache: &Arc<Mutex<EpisodeCache>>,
+    cover_cache: &mut CoverCache,
     image_request_tx: &UnboundedSender<ImageLoadRequest>,
 ) {
     let mut apply_filter = false;
@@ -796,7 +860,7 @@ fn handle_filters(
                 .cached_metadata_for_current_anime()
                 .and_then(|metadata| metadata.image_url.clone());
             if let Some(image_url) = image_url {
-                queue_image_load(app, image_request_tx, &anime_id, &image_url);
+                queue_image_load(app, cover_cache, image_request_tx, &anime_id, &image_url);
             }
             app.request_info_metadata();
         } else {
