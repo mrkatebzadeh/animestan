@@ -251,9 +251,9 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let config = Arc::new(AppConfig::load_default().context("failed to load configuration")?);
     let theme = Arc::new(Theme::load(&config).context("failed to load theme configuration")?);
-    init_logging("animestan-tui", args.verbosity, &config, false)
+    init_logging("animestan", args.verbosity, &config, false)
         .context("failed to initialize logging")?;
-    info!("launching animestan-tui");
+    info!("launching animestan");
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
