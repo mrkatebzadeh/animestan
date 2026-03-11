@@ -25,6 +25,7 @@ mod details;
 mod heatmap;
 mod lists;
 mod modals;
+mod preview;
 mod search;
 mod session;
 

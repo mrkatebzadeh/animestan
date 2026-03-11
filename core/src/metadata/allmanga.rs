@@ -31,7 +31,7 @@ const ALLMANGA_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0";
 
 const ALLMANGA_SEARCH_QUERY: &str = "query ($search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { edges { _id name } }}";
-const ALLMANGA_DETAILS_QUERY: &str = "query ($showId: String!) { show(_id: $showId) { _id name description genres studios status score } }";
+const ALLMANGA_DETAILS_QUERY: &str = "query ($showId: String!) { show(_id: $showId) { _id name description genres studios status score thumbnail } }";
 const ALLMANGA_SEASON_QUERY: &str =
     "query ($showId: String!) { show(_id: $showId) { _id season { quarter year } } }";
 
@@ -302,6 +302,8 @@ struct AllMangaShow {
     studios: Vec<String>,
     status: Option<String>,
     score: Option<f32>,
+    #[serde(default)]
+    thumbnail: Option<String>,
     season: Option<AllMangaSeason>,
 }
 
@@ -324,6 +326,7 @@ fn show_to_metadata(show: AllMangaShow, query: &str) -> AnimeMetadata {
         season,
         year,
         trailer_url: None,
+        image_url: show.thumbnail,
         source_url: source_url(&show.name, query),
         source: MetadataSource::AllManga,
     }

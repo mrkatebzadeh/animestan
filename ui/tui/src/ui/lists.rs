@@ -144,7 +144,7 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
     ]))
     .block(block)
     .column_spacing(1)
-    .highlight_style(theme.selected_item_style())
+    .row_highlight_style(theme.selected_item_style())
     .highlight_symbol("▶ ");
     frame.render_stateful_widget(table, area, &mut state);
 }

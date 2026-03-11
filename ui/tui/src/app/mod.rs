@@ -22,12 +22,14 @@ use quick::{LastPlayedEpisode, PendingPlayback};
 mod core;
 mod data;
 mod filter;
+pub(crate) mod image;
 mod modal;
 mod nav;
 mod playback;
 mod quick;
 mod search;
 
+pub use image::ImageState;
 #[allow(unused_imports)]
 pub use quick::{QuickLaunchAction, QuickLaunchCandidate};
 
@@ -325,6 +327,7 @@ pub struct App {
     modal: ModalState,
     keybindings: KeybindingsState,
     ui: UiState,
+    image: image::ImageUiState,
     metadata_background: MetadataBackgroundState,
     matcher: Matcher,
 }
