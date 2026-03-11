@@ -71,13 +71,14 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
     let left_status = format!(
         "Mode: {} | Selection: {}",
         app.mode_label(),
-        app.current_selection_label()
+        app.current_selection_label(),
     );
     let hint_text = "Press ? for keybindings";
     let total_width = chunks[2].width as usize;
     let status_len = left_status.chars().count();
     let hint_len = hint_text.chars().count();
-    let spacing = total_width.saturating_sub(status_len + hint_len);
+    let spinner_len = 1;
+    let spacing = total_width.saturating_sub(status_len + hint_len + spinner_len);
     let spacer = " ".repeat(spacing);
 
     let status_line = Line::from(vec![
@@ -91,6 +92,10 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &App, the
             Style::default()
                 .bg(theme.non_interactive_color())
                 .add_modifier(Modifier::REVERSED),
+        ),
+        Span::styled(
+            format!(" {}", app.metadata_spinner_char()),
+            theme.item_style().bg(theme.non_interactive_color()),
         ),
     ]);
     let status =

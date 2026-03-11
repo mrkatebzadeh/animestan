@@ -61,11 +61,14 @@ impl App {
         }
         self.nav.selected_anime = None;
         self.set_search_query(String::new());
+        self.search.selection = 0;
+        self.search.modal_visible = SearchModal::Visible;
         self.set_details("Search mode: type a query and press Enter.");
     }
 
     pub fn exit_search_mode(&mut self) {
         self.nav.input_mode = InputMode::Normal;
+        self.hide_search_modal();
     }
 
     pub fn append_search_char(&mut self, ch: char) {
@@ -108,11 +111,7 @@ impl App {
         self.data.search_results = entries;
         self.search.results_query.clone_from(&query);
         self.search.selection = 0;
-        self.search.modal_visible = if self.data.search_results.is_empty() {
-            SearchModal::Hidden
-        } else {
-            SearchModal::Visible
-        };
+        self.search.modal_visible = SearchModal::Visible;
         self.search.metadata = None;
         self.search.metadata_error = None;
         self.search.meta_state = MetaFetch::Idle;
@@ -178,6 +177,10 @@ impl App {
     }
 
     pub fn close_search_results_modal(&mut self) {
+        self.exit_search_mode();
+    }
+
+    fn hide_search_modal(&mut self) {
         self.search.modal_visible = SearchModal::Hidden;
         self.search.metadata = None;
         self.search.metadata_error = None;

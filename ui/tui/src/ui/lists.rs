@@ -93,11 +93,14 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
                 || "--/--".to_string(),
                 |stats| format!("{}/{}", stats.watched, stats.total),
             );
-            let metadata = app.metadata_summary(&entry.anime.id);
-            let status = metadata
+            let metadata_summary = app.metadata_summary(&entry.anime.id);
+            let status = metadata_summary
+                .as_ref()
                 .and_then(|summary| summary.status.as_deref())
-                .unwrap_or("—");
-            let score = metadata
+                .unwrap_or("—")
+                .to_string();
+            let score = metadata_summary
+                .as_ref()
                 .and_then(|summary| summary.score)
                 .map_or_else(|| "—".to_string(), |value| format!("{value:.1}"));
             Row::new(vec![

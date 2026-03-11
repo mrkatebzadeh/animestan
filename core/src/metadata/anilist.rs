@@ -51,6 +51,13 @@ impl AniListMetadataProvider {
         Self { client, cache }
     }
 
+    pub(super) fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
+        let key = format!("anilist:{}", normalize_query(query));
+        let metadata = self.fetch_anilist(query)?;
+        self.cache.insert(key, metadata.clone())?;
+        Ok(metadata)
+    }
+
     fn fetch_anilist(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
         let request = AniListGraphQl {
             query: ANILIST_QUERY,
