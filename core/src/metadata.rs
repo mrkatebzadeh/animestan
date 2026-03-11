@@ -105,9 +105,14 @@ struct MetadataCacheInner {
     path: PathBuf,
 }
 
+fn default_epoch() -> u64 {
+    0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
     metadata: AnimeMetadata,
+    #[serde(default = "default_epoch")]
     created_at: u64,
 }
 
@@ -179,12 +184,12 @@ impl MetadataCache {
         let path = self.inner.path.clone();
         let cache = match std::fs::read_to_string(&path) {
             Ok(contents) => {
-                serde_json::from_str::<MetadataCacheFile>(&contents).map_err(|source| {
-                    CoreError::MetadataCacheParse {
-                        path: path.clone(),
-                        source,
-                    }
-                })?
+                if let Ok(cache) = serde_json::from_str::<MetadataCacheFile>(&contents) {
+                    cache
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                    MetadataCacheFile::default()
+                }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => MetadataCacheFile::default(),
             Err(source) => {
@@ -261,7 +266,6 @@ pub struct KitsuMetadataProvider {
 
 pub struct MetadataResolver {
     primary_kind: MetadataProviderKind,
-    fallback_kind: MetadataProviderKind,
     allmanga: AllMangaMetadataProvider,
     anilist: AniListMetadataProvider,
     kitsu: KitsuMetadataProvider,
@@ -296,11 +300,9 @@ impl MetadataResolver {
     #[must_use]
     pub fn with_clients(primary: Client, fallback: Client) -> Self {
         let primary_kind = MetadataProviderKind::default();
-        let fallback_kind = fallback_for(primary_kind);
         let cache = MetadataCache::new(AppConfig::default().metadata_cache_path());
         Self {
             primary_kind,
-            fallback_kind,
             allmanga: AllMangaMetadataProvider::with_cache(Client::new(), cache.clone()),
             anilist: AniListMetadataProvider::with_cache(primary, cache.clone()),
             kitsu: KitsuMetadataProvider::with_cache(fallback, cache),
@@ -320,11 +322,9 @@ impl MetadataResolver {
 
     #[must_use]
     pub fn with_primary_and_cache(primary_kind: MetadataProviderKind, cache_path: PathBuf) -> Self {
-        let fallback_kind = fallback_for(primary_kind);
         let cache = MetadataCache::new(cache_path);
         Self {
             primary_kind,
-            fallback_kind,
             allmanga: AllMangaMetadataProvider::with_cache(Client::new(), cache.clone()),
             anilist: AniListMetadataProvider::with_cache(Client::new(), cache.clone()),
             kitsu: KitsuMetadataProvider::with_cache(Client::new(), cache),
@@ -340,13 +340,7 @@ impl Default for MetadataResolver {
 
 impl MetadataProvider for MetadataResolver {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
-        match self.fetch_with(self.primary_kind, query) {
-            Ok(metadata) => Ok(metadata),
-            Err(primary_err) => match self.fetch_with(self.fallback_kind, query) {
-                Ok(metadata) => Ok(metadata),
-                Err(_) => Err(primary_err),
-            },
-        }
+        self.fetch_with(self.primary_kind, query)
     }
 }
 
@@ -363,12 +357,39 @@ impl MetadataResolver {
         match self.primary_kind {
             MetadataProviderKind::AllManga => match self.allmanga.fetch_by_id(id, query) {
                 Ok(metadata) => Ok(metadata),
-                Err(primary_err) => match self.fetch_with(self.fallback_kind, query) {
-                    Ok(metadata) => Ok(metadata),
-                    Err(_) => Err(primary_err),
-                },
+                Err(primary_err) => Err(primary_err),
             },
             _ => self.fetch_by_query(query),
+        }
+    }
+
+    /// Refreshes metadata by query, bypassing the cache.
+    ///
+    /// # Errors
+    ///
+    /// * `CoreError::MetadataNotFound` if the query cannot be resolved.
+    /// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
+    ///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
+    /// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
+    pub fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
+        self.refresh_with(self.primary_kind, query)
+    }
+
+    /// Refreshes metadata by provider identifier, bypassing the cache.
+    ///
+    /// # Errors
+    ///
+    /// * `CoreError::MetadataNotFound` if the identifier cannot be resolved.
+    /// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
+    ///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
+    /// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
+    pub fn refresh_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, CoreError> {
+        match self.primary_kind {
+            MetadataProviderKind::AllManga => match self.allmanga.refresh_by_id(id, query) {
+                Ok(metadata) => Ok(metadata),
+                Err(primary_err) => Err(primary_err),
+            },
+            _ => self.refresh_by_query(query),
         }
     }
 
@@ -383,13 +404,16 @@ impl MetadataResolver {
             MetadataProviderKind::Kitsu => self.kitsu.fetch_by_query(query),
         }
     }
-}
 
-fn fallback_for(primary: MetadataProviderKind) -> MetadataProviderKind {
-    match primary {
-        MetadataProviderKind::Kitsu => MetadataProviderKind::AniList,
-        MetadataProviderKind::AniList | MetadataProviderKind::AllManga => {
-            MetadataProviderKind::Kitsu
+    fn refresh_with(
+        &self,
+        kind: MetadataProviderKind,
+        query: &str,
+    ) -> Result<AnimeMetadata, CoreError> {
+        match kind {
+            MetadataProviderKind::AllManga => self.allmanga.refresh_by_query(query),
+            MetadataProviderKind::AniList => self.anilist.refresh_by_query(query),
+            MetadataProviderKind::Kitsu => self.kitsu.refresh_by_query(query),
         }
     }
 }

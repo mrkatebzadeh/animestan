@@ -236,9 +236,10 @@ struct DataState {
     fetch_generation: u64,
     episode_indicators: HashMap<String, EpisodeIndicators>,
     anime_progress: HashMap<String, AnimeProgress>,
-    metadata_cache: HashMap<String, MetadataSummary>,
+    metadata_store: HashMap<String, AnimeMetadata>,
     metadata_pending: HashSet<String>,
     metadata_failed: HashSet<String>,
+    episode_refresh_pending: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -308,6 +309,12 @@ struct UiState {
     show_keybindings: bool,
 }
 
+#[derive(Debug, Default)]
+struct MetadataBackgroundState {
+    pending: usize,
+    spinner_index: usize,
+}
+
 pub struct App {
     nav: NavState,
     filters: FilterState,
@@ -318,6 +325,7 @@ pub struct App {
     modal: ModalState,
     keybindings: KeybindingsState,
     ui: UiState,
+    metadata_background: MetadataBackgroundState,
     matcher: Matcher,
 }
 
