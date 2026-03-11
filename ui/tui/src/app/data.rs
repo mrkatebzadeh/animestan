@@ -355,6 +355,10 @@ fn merge_metadata(existing: &AnimeMetadata, incoming: &AnimeMetadata) -> AnimeMe
     } else {
         incoming.title.clone()
     };
+    let image_url = incoming
+        .image_url
+        .clone()
+        .or_else(|| existing.image_url.clone());
     let source_url = if incoming.source_url.trim().is_empty() {
         existing.source_url.clone()
     } else {
@@ -370,6 +374,7 @@ fn merge_metadata(existing: &AnimeMetadata, incoming: &AnimeMetadata) -> AnimeMe
         season,
         year,
         trailer_url,
+        image_url,
         source_url,
         source: incoming.source,
     }

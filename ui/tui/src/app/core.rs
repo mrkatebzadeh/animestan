@@ -16,7 +16,7 @@
 use super::{
     App, ConfirmExitChoice, DEFAULT_SEARCH_QUERY, DataState, FilterState, Focus, InputMode,
     KeybindingsState, Matcher, MetadataBackgroundState, ModalState, NavState, PanelMode,
-    PlaybackState, PlaybackStatus, QuickLaunchState, SearchState, UiState,
+    PlaybackState, PlaybackStatus, QuickLaunchState, SearchState, UiState, image::ImageUiState,
 };
 
 use crate::events;
@@ -58,6 +58,7 @@ impl App {
                 confirm_exit_choice: ConfirmExitChoice::Yes,
                 show_keybindings: false,
             },
+            image: ImageUiState::default(),
             metadata_background: MetadataBackgroundState::default(),
             matcher: Matcher::new(Config::DEFAULT),
         }

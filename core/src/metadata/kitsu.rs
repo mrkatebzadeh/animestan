@@ -122,6 +122,15 @@ struct KitsuAttributes {
     #[serde(rename = "youtubeVideoId")]
     youtube_video_id: Option<String>,
     slug: Option<String>,
+    #[serde(rename = "posterImage")]
+    poster_image: Option<KitsuPosterImage>,
+}
+
+#[derive(Deserialize)]
+struct KitsuPosterImage {
+    original: Option<String>,
+    large: Option<String>,
+    medium: Option<String>,
 }
 
 fn record_to_metadata(record: KitsuRecord, query: &str) -> AnimeMetadata {
@@ -145,6 +154,9 @@ fn record_to_metadata(record: KitsuRecord, query: &str) -> AnimeMetadata {
     let trailer_url = attributes
         .youtube_video_id
         .map(|id| format!("https://www.youtube.com/watch?v={id}"));
+    let image_url = attributes
+        .poster_image
+        .and_then(|image| image.original.or(image.large).or(image.medium));
     let source_url = attributes.slug.map_or_else(
         || format!("https://kitsu.io/anime/{}", record.id),
         |slug| format!("https://kitsu.io/anime/{slug}"),
@@ -159,6 +171,7 @@ fn record_to_metadata(record: KitsuRecord, query: &str) -> AnimeMetadata {
         season,
         year,
         trailer_url,
+        image_url,
         source_url,
         source: MetadataSource::Kitsu,
     }

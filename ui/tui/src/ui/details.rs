@@ -1,7 +1,7 @@
 use animestan_core::{
     AnimeMetadata, format_list, format_season_year, format_status_score, metadata_source_label,
 };
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
@@ -9,9 +9,14 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::app::App;
 use crate::theme::Theme;
 
-use super::border_style;
+use super::{border_style, preview::PreviewWidget};
 
-pub(super) fn render_anime_details_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+pub(super) fn render_anime_details_panel(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut App,
+    theme: &Theme,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -26,14 +31,40 @@ pub(super) fn render_anime_details_panel(frame: &mut Frame, area: Rect, app: &Ap
         return;
     }
 
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(inner);
+
+    let synopsis_area = columns[1];
     let mut lines = build_details_panel_lines(app, theme);
-    let max_lines = inner.height as usize;
+    let max_lines = synopsis_area.height as usize;
     if max_lines > 0 && lines.len() > max_lines {
         lines.truncate(max_lines);
         lines[max_lines - 1] = Line::from("...");
     }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, inner);
+    frame.render_widget(paragraph, synopsis_area);
+
+    let (image_id, can_display_images) = {
+        let metadata = app
+            .info_modal_metadata()
+            .or_else(|| app.cached_metadata_for_current_anime());
+        let image_id = if metadata.and_then(|data| data.image_url.as_ref()).is_some() {
+            app.current_anime_id().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        (image_id, app.can_display_images())
+    };
+
+    let preview = PreviewWidget {
+        id: image_id.as_str(),
+        title: "Cover",
+        can_display_images,
+        theme,
+    };
+    frame.render_stateful_widget(preview, columns[0], app.image_state_mut());
 }
 
 pub(super) fn build_info_modal_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {

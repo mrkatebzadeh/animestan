@@ -71,6 +71,8 @@ pub struct AnimeMetadata {
     pub season: Option<String>,
     pub year: Option<u16>,
     pub trailer_url: Option<String>,
+    #[serde(default)]
+    pub image_url: Option<String>,
     pub source_url: String,
     pub source: MetadataSource,
 }

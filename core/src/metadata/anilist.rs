@@ -24,7 +24,7 @@ use super::{
 };
 
 const ANILIST_URL: &str = "https://graphql.anilist.co";
-const ANILIST_QUERY: &str = "query ($search: String!) {\n  Media(search: $search, type: ANIME) {\n    title {\n      userPreferred\n      romaji\n      english\n    }\n    description\n    averageScore\n    genres\n    studios(isMain: true) {\n      nodes {\n        name\n      }\n    }\n    status\n    season\n    seasonYear\n    trailer {\n      site\n      id\n      url\n    }\n    siteUrl\n  }\n}\n";
+const ANILIST_QUERY: &str = "query ($search: String!) {\n  Media(search: $search, type: ANIME) {\n    title {\n      userPreferred\n      romaji\n      english\n    }\n    description\n    averageScore\n    genres\n    studios(isMain: true) {\n      nodes {\n        name\n      }\n    }\n    status\n    season\n    seasonYear\n    trailer {\n      site\n      id\n      url\n    }\n    coverImage {\n      extraLarge\n      large\n      medium\n    }\n    siteUrl\n  }\n}\n";
 
 impl MetadataProvider for AniListMetadataProvider {
     fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
@@ -133,6 +133,16 @@ struct AniListMedia {
     trailer: Option<AniListTrailer>,
     #[serde(rename = "siteUrl")]
     site_url: String,
+    #[serde(rename = "coverImage")]
+    cover_image: Option<AniListCoverImage>,
+}
+
+#[derive(Deserialize)]
+struct AniListCoverImage {
+    #[serde(rename = "extraLarge")]
+    extra_large: Option<String>,
+    large: Option<String>,
+    medium: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -177,6 +187,9 @@ fn media_to_metadata(media: AniListMedia, query: &str) -> AnimeMetadata {
         .season_year
         .and_then(|value| u16::try_from(value).ok());
     let trailer_url = build_trailer_url(media.trailer);
+    let image_url = media
+        .cover_image
+        .and_then(|image| image.extra_large.or(image.large).or(image.medium));
     let source_url = media.site_url;
     AnimeMetadata {
         title,
@@ -188,6 +201,7 @@ fn media_to_metadata(media: AniListMedia, query: &str) -> AnimeMetadata {
         season,
         year,
         trailer_url,
+        image_url,
         source_url,
         source: MetadataSource::AniList,
     }

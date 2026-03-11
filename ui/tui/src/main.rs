@@ -37,13 +37,18 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::future::{AbortHandle, Abortable};
+use image::DynamicImage;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui_image::Resize;
+use ratatui_image::picker::Picker;
+use reqwest::Client;
 use spdlog::prelude::*;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{
     UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel,
 };
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 
 use crate::app::{AnimeProgress, App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
@@ -59,6 +64,17 @@ struct EpisodeFetchResult {
     generation: u64,
     anime_id: String,
     result: CoreResult<Vec<Episode>>,
+}
+
+struct ImageLoadRequest {
+    id: String,
+    url: String,
+}
+
+struct ImageLoadResult {
+    id: String,
+    image: Option<DynamicImage>,
+    error: Option<String>,
 }
 
 struct EpisodeCache {
@@ -245,10 +261,14 @@ fn run_app(
     let mut active_playback: Option<AbortHandle> = None;
     let (metadata_result_tx, mut metadata_result_rx) = unbounded_channel::<MetadataFetchResult>();
     let (background_job_tx, mut background_job_rx) = unbounded_channel::<()>();
+    let (image_request_tx, mut image_request_rx) = unbounded_channel::<ImageLoadRequest>();
+    let (image_result_tx, mut image_result_rx) = unbounded_channel::<ImageLoadResult>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
     let mut active_list_metadata_fetch: Option<AbortHandle> = None;
 
     let mut app = App::new();
+    let picker = Picker::from_query_stdio().ok();
+    app.set_image_picker(picker);
     for (anime_id, metadata) in load_metadata_cache_files(config) {
         app.store_metadata(&anime_id, &metadata);
     }
@@ -303,6 +323,45 @@ fn run_app(
         )
     };
 
+    runtime.spawn({
+        let client = Client::new();
+        async move {
+            let mut join_set = JoinSet::new();
+            loop {
+                tokio::select! {
+                    Some(request) = image_request_rx.recv() => {
+                        let client = client.clone();
+                        join_set.spawn(async move {
+                            let mut result = ImageLoadResult {
+                                id: request.id,
+                                image: None,
+                                error: None,
+                            };
+                            let response = client.get(&request.url).send().await;
+                            match response {
+                                Ok(resp) => match resp.bytes().await {
+                                    Ok(bytes) => match image::load_from_memory(&bytes) {
+                                        Ok(image) => result.image = Some(image),
+                                        Err(err) => result.error = Some(err.to_string()),
+                                    },
+                                    Err(err) => result.error = Some(err.to_string()),
+                                },
+                                Err(err) => result.error = Some(err.to_string()),
+                            }
+                            result
+                        });
+                    }
+                    Some(result) = join_set.join_next() => {
+                        if let Ok(result) = result {
+                            let _ = image_result_tx.send(result);
+                        }
+                    }
+                    else => break,
+                }
+            }
+        }
+    });
+
     let mut events = EventHandler::new(Duration::from_millis(250));
 
     loop {
@@ -311,7 +370,10 @@ fn run_app(
 
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),
-            Event::Tick => app.advance_metadata_spinner(),
+            Event::Tick => {
+                app.advance_metadata_spinner();
+                app.image_state_mut().throbber_mut().calc_next();
+            }
         }
 
         if app.take_pending_bookmark_toggle() {
@@ -334,7 +396,14 @@ fn run_app(
         }
 
         handle_search(&mut app, client.as_ref());
-        handle_filters(&mut app, &tracker, config, &request_tx, &episode_cache);
+        handle_filters(
+            &mut app,
+            &tracker,
+            config,
+            &request_tx,
+            &episode_cache,
+            &image_request_tx,
+        );
         handle_metadata_fetch(
             &mut app,
             &metadata_resolver,
@@ -431,6 +500,14 @@ fn run_app(
                                             "Failed to persist metadata cache: {err}"
                                         ));
                                     }
+                                    if let Some(image_url) = metadata.image_url.as_deref() {
+                                        queue_image_load(
+                                            &mut app,
+                                            &image_request_tx,
+                                            &anime_id,
+                                            image_url,
+                                        );
+                                    }
                                 }
                                 app.set_info_modal_metadata(metadata);
                                 app.set_details(format!("Loaded metadata for {title}"));
@@ -460,6 +537,14 @@ fn run_app(
                                             "Failed to persist metadata cache: {err}"
                                         ));
                                     }
+                                    if let Some(image_url) = metadata.image_url.as_deref() {
+                                        queue_image_load(
+                                            &mut app,
+                                            &image_request_tx,
+                                            &anime_id,
+                                            image_url,
+                                        );
+                                    }
                                 }
                                 app.set_search_results_metadata(metadata);
                                 app.set_details(format!("Loaded metadata for {title}"));
@@ -484,6 +569,14 @@ fn run_app(
                                             "Failed to persist metadata cache: {err}"
                                         ));
                                     }
+                                    if let Some(image_url) = metadata.image_url.as_deref() {
+                                        queue_image_load(
+                                            &mut app,
+                                            &image_request_tx,
+                                            &anime_id,
+                                            image_url,
+                                        );
+                                    }
                                 }
                                 Err(_) => {
                                     app.set_metadata_failure(&anime_id);
@@ -503,6 +596,14 @@ fn run_app(
                                             "Failed to persist metadata cache: {err}"
                                         ));
                                     }
+                                    if let Some(image_url) = metadata.image_url.as_deref() {
+                                        queue_image_load(
+                                            &mut app,
+                                            &image_request_tx,
+                                            &anime_id,
+                                            image_url,
+                                        );
+                                    }
                                 }
                                 Err(_) => {
                                     app.set_metadata_failure(&anime_id);
@@ -518,6 +619,25 @@ fn run_app(
                     app.set_info_modal_error("Metadata fetch worker disconnected.");
                     break;
                 }
+            }
+        }
+
+        while let Ok(result) = image_result_rx.try_recv() {
+            app.clear_image_pending(&result.id);
+            if let Some(image) = result.image {
+                let area = app.image_state().area();
+                let protocol = if area.width > 0 && area.height > 0 {
+                    app.image_picker_mut()
+                        .and_then(|picker| picker.new_protocol(image, area, Resize::Fit(None)).ok())
+                } else {
+                    None
+                };
+                if let Some(protocol) = protocol {
+                    app.image_state_mut()
+                        .insert_manga(result.id.clone(), protocol);
+                }
+            } else if let Some(error) = result.error {
+                app.set_details(format!("Failed to load cover: {error}"));
             }
         }
 
@@ -601,12 +721,40 @@ fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
     }
 }
 
+fn queue_image_load(
+    app: &mut App,
+    image_request_tx: &UnboundedSender<ImageLoadRequest>,
+    anime_id: &str,
+    image_url: &str,
+) {
+    if !app.can_display_images() {
+        return;
+    }
+    if app.image_pending(anime_id) {
+        return;
+    }
+    if app.image_state().get_image_state(anime_id).is_some() {
+        return;
+    }
+    app.mark_image_pending(anime_id.to_string());
+    if image_request_tx
+        .send(ImageLoadRequest {
+            id: anime_id.to_string(),
+            url: image_url.to_string(),
+        })
+        .is_err()
+    {
+        app.clear_image_pending(anime_id);
+    }
+}
+
 fn handle_filters(
     app: &mut App,
     tracker: &Arc<Mutex<EpisodeTracker>>,
     config: &AppConfig,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
     episode_cache: &Arc<Mutex<EpisodeCache>>,
+    image_request_tx: &UnboundedSender<ImageLoadRequest>,
 ) {
     let mut apply_filter = false;
 
@@ -643,6 +791,12 @@ fn handle_filters(
                 } else {
                     app.set_details("Fetching episodes...");
                 }
+            }
+            let image_url = app
+                .cached_metadata_for_current_anime()
+                .and_then(|metadata| metadata.image_url.clone());
+            if let Some(image_url) = image_url {
+                queue_image_load(app, image_request_tx, &anime_id, &image_url);
             }
             app.request_info_metadata();
         } else {
