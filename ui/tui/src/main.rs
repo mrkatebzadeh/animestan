@@ -334,7 +334,7 @@ fn run_app(
         }
 
         handle_search(&mut app, client.as_ref());
-        handle_filters(&mut app, &tracker, &request_tx, &episode_cache);
+        handle_filters(&mut app, &tracker, config, &request_tx, &episode_cache);
         handle_metadata_fetch(
             &mut app,
             &metadata_resolver,
@@ -604,6 +604,7 @@ fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
 fn handle_filters(
     app: &mut App,
     tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
     episode_cache: &Arc<Mutex<EpisodeCache>>,
 ) {
@@ -620,6 +621,9 @@ fn handle_filters(
             if let Some(cached) = cached {
                 app.set_episodes(cached);
                 app.set_details("Loaded cached episodes; refreshing...");
+                if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                    app.set_details(format!("Failed to refresh indicators: {err}"));
+                }
             }
             let should_fetch = !app.episode_refresh_pending(&anime_id);
             if should_fetch {
