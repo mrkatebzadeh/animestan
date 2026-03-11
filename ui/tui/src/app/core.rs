@@ -22,6 +22,7 @@ use super::{
 use crate::events;
 use crossterm::event::KeyEvent;
 use nucleo::Config;
+use throbber_widgets_tui::ThrobberState;
 
 impl App {
     pub fn new() -> Self {
@@ -205,11 +206,9 @@ impl App {
             .saturating_sub(self.keybindings.viewport_lines)
     }
 
-    const METADATA_SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
     pub fn start_metadata_background_refresh(&mut self, jobs: usize) {
         self.metadata_background.pending = jobs;
-        self.metadata_background.spinner_index = 0;
+        self.metadata_background.throbber = ThrobberState::default();
     }
 
     pub fn finish_metadata_background_fetch(&mut self) {
@@ -222,19 +221,13 @@ impl App {
         self.metadata_background.pending > 0
     }
 
-    pub fn metadata_spinner_char(&self) -> char {
-        if self.background_refreshing() {
-            let idx = self.metadata_background.spinner_index % Self::METADATA_SPINNER_CHARS.len();
-            Self::METADATA_SPINNER_CHARS[idx]
-        } else {
-            '█'
-        }
+    pub fn metadata_throbber_mut(&mut self) -> &mut ThrobberState {
+        &mut self.metadata_background.throbber
     }
 
-    pub fn advance_metadata_spinner(&mut self) {
+    pub fn advance_metadata_throbber(&mut self) {
         if self.background_refreshing() {
-            self.metadata_background.spinner_index =
-                (self.metadata_background.spinner_index + 1) % Self::METADATA_SPINNER_CHARS.len();
+            self.metadata_background.throbber.calc_next();
         }
     }
 }

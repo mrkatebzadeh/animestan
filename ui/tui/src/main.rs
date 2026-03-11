@@ -403,7 +403,7 @@ fn run_app(
         match events.next()? {
             Event::Input(key_event) => app.on_key(key_event),
             Event::Tick => {
-                app.advance_metadata_spinner();
+                app.advance_metadata_throbber();
                 app.image_state_mut().throbber_mut().calc_next();
             }
         }
