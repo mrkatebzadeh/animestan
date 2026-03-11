@@ -26,7 +26,12 @@ pub(super) fn render_anime_details_panel(frame: &mut Frame, area: Rect, app: &Ap
         return;
     }
 
-    let lines = build_details_panel_lines(app, theme);
+    let mut lines = build_details_panel_lines(app, theme);
+    let max_lines = inner.height as usize;
+    if max_lines > 0 && lines.len() > max_lines {
+        lines.truncate(max_lines);
+        lines[max_lines - 1] = Line::from("...");
+    }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
     frame.render_widget(paragraph, inner);
 }
@@ -55,20 +60,37 @@ fn build_details_panel_lines<'a>(app: &'a App, theme: &Theme) -> Vec<Line<'a>> {
     let metadata = app
         .info_modal_metadata()
         .or_else(|| app.cached_metadata_for_current_anime());
-    let mut lines = metadata_section_lines(
-        metadata,
-        app.info_modal_error(),
-        app.info_modal_loading(),
-        theme,
-    );
-    if !app.info_modal_loading() {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "Press i to view full info modal.",
-            theme.non_interactive_style(),
-        )));
+    if let Some(metadata) = metadata {
+        let synopsis = metadata
+            .synopsis
+            .as_deref()
+            .map(str::trim)
+            .filter(|text: &&str| !text.is_empty())
+            .unwrap_or("Synopsis not available.");
+        return vec![Line::from(synopsis)];
     }
-    lines
+
+    if let Some(error) = app.info_modal_error() {
+        return vec![
+            Line::from(Span::styled(
+                "Failed to load metadata:",
+                theme.selected_item_style(),
+            )),
+            Line::from(error),
+        ];
+    }
+
+    if app.info_modal_loading() {
+        return vec![
+            Line::from(Span::styled(
+                "Loading anime metadata...",
+                theme.title_style(),
+            )),
+            Line::from("This may take a moment."),
+        ];
+    }
+
+    vec![Line::from("Synopsis not available.")]
 }
 
 pub(super) fn metadata_section_lines<'a>(
