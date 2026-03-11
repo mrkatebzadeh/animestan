@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "animestan-cli"
-version = "0.1.5-rc.2"
+version = "0.1.5-rc.3"
 dependencies = [
  "animestan-core",
  "anyhow",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "animestan-core"
-version = "0.1.5-rc.2"
+version = "0.1.5-rc.3"
 dependencies = [
  "anyhow",
  "directories-next",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "animestan-tests"
-version = "0.1.5-rc.2"
+version = "0.1.5-rc.3"
 dependencies = [
  "assert_cmd",
  "predicates",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "animestan-tui"
-version = "0.1.5-rc.2"
+version = "0.1.5-rc.3"
 dependencies = [
  "animestan-core",
  "anyhow",
