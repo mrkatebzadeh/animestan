@@ -72,9 +72,9 @@ jobs:
       - name: Build binaries
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target "${{ matrix.target }}" --bin animestan-cli --bin animestan-tui
+            cross build --release --target "${{ matrix.target }}" --bin animestan-cli --bin animestan
           else
-            cargo build --release --target "${{ matrix.target }}" --bin animestan-cli --bin animestan-tui
+            cargo build --release --target "${{ matrix.target }}" --bin animestan-cli --bin animestan
           fi
 
       - name: Archive artifacts
@@ -82,7 +82,7 @@ jobs:
           ARTIFACT_NAME="animestan-${{ matrix.target }}"
           DIST_DIR="dist"
           mkdir -p "${DIST_DIR}"
-          tar -czf "${DIST_DIR}/${ARTIFACT_NAME}.tar.gz" -C "target/${{ matrix.target }}/release" animestan-cli animestan-tui
+          tar -czf "${DIST_DIR}/${ARTIFACT_NAME}.tar.gz" -C "target/${{ matrix.target }}/release" animestan-cli animestan
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
