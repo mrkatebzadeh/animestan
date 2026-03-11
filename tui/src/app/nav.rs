@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{AnimeEntry, App, Focus, SearchModal};
+use super::{AnimeEntry, App, Focus};
 
 impl App {
     pub fn left_index(&self) -> usize {
@@ -46,9 +46,6 @@ impl App {
     }
 
     pub(super) fn current_anime(&self) -> Option<&AnimeEntry> {
-        if matches!(self.search.modal_visible, SearchModal::Visible) {
-            return self.current_search_result();
-        }
         self.visible_bookmark_entries()
             .get(self.nav.left_index)
             .map(|entry| &entry.anime)
