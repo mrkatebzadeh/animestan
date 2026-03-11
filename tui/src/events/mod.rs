@@ -89,7 +89,7 @@ pub fn keybindings() -> &'static [KeyBinding] {
         },
         KeyBinding {
             keys: "Tab",
-            description: "Cycle focus: Anime → Episode → Search",
+            description: "Cycle focus: Anime ↔ Episode",
             mode: InputMode::Normal,
         },
         KeyBinding {
