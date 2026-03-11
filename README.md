@@ -14,9 +14,9 @@ I’ve used ani-cli for a long time and loved how useful it is, but I kept missi
 2. Download the archive for your platform:
    - Linux x86_64 / aarch64
    - macOS x86_64 / aarch64
-3. Extract the archive and run the binary you want:
+   3. Extract the archive and run the binary you want:
    - `animestan-cli`
-   - `animestan-tui`
+   - `animestan`
 
 ### Build from source
 
@@ -30,7 +30,7 @@ The binaries will be in:
 
 ```
 target/release/animestan-cli
-target/release/animestan-tui
+target/release/animestan
 ```
 
 ## Requirements
@@ -115,5 +115,5 @@ cargo run --bin animestan-cli -- search "naruto"
 
 TUI:
 ```bash
-cargo run --bin animestan-tui
+cargo run --bin animestan
 ```

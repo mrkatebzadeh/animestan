@@ -51,6 +51,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "animestan"
+version = "0.1.5-rc.3"
+dependencies = [
+ "animestan-core",
+ "anyhow",
+ "clap",
+ "crossterm",
+ "futures",
+ "image",
+ "nucleo",
+ "ratatui",
+ "ratatui-image",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "spdlog-rs",
+ "throbber-widgets-tui",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "animestan-cli"
 version = "0.1.5-rc.3"
 dependencies = [
@@ -83,28 +105,6 @@ version = "0.1.5-rc.3"
 dependencies = [
  "assert_cmd",
  "predicates",
-]
-
-[[package]]
-name = "animestan-tui"
-version = "0.1.5-rc.3"
-dependencies = [
- "animestan-core",
- "anyhow",
- "clap",
- "crossterm",
- "futures",
- "image",
- "nucleo",
- "ratatui",
- "ratatui-image",
- "reqwest",
- "serde",
- "serde_json",
- "spdlog-rs",
- "throbber-widgets-tui",
- "tokio",
- "toml",
 ]
 
 [[package]]

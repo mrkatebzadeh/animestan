@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "ui/cli", "ui/tui", "tests"]
+members = ["core", "cli", "tui", "tests"]
 
 [workspace.package]
 edition = "2024"
@@ -12,4 +12,3 @@ unsafe_code = "warn"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
-
