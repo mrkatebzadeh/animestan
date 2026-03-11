@@ -1,5 +1,5 @@
 [package]
-name = "animestan-tui"
+name = "animestan"
 version = "0.1.5-rc.3"
 edition = "2024"
 rust-version = "1.85"
