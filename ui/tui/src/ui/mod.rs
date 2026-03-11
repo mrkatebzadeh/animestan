@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[0]);
 
-    let details_height = 9u16;
+    let details_height = 12u16;
     let left_column_split = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(5), Constraint::Length(details_height)])

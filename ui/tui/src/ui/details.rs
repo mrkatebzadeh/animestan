@@ -31,9 +31,10 @@ pub(super) fn render_anime_details_panel(
         return;
     }
 
+    let cover_width = 14u16;
     let columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .constraints([Constraint::Length(cover_width), Constraint::Min(0)])
         .split(inner);
 
     let synopsis_area = columns[1];
@@ -60,7 +61,7 @@ pub(super) fn render_anime_details_panel(
 
     let preview = PreviewWidget {
         id: image_id.as_str(),
-        title: "Cover",
+        title: "",
         can_display_images,
         theme,
     };
