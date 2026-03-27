@@ -22,6 +22,7 @@ use ratatui::prelude::Frame;
 use ratatui::style::Style;
 
 mod details;
+mod footer;
 mod heatmap;
 mod lists;
 mod modals;

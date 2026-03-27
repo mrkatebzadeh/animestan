@@ -91,6 +91,11 @@ impl App {
         self.playback.status = status;
     }
 
+    #[must_use]
+    pub fn playback_status(&self) -> PlaybackStatus {
+        self.playback.status
+    }
+
     pub fn should_quit(&self) -> bool {
         self.ui.should_quit
     }
@@ -221,8 +226,9 @@ impl App {
         self.metadata_background.pending > 0
     }
 
-    pub fn metadata_throbber_mut(&mut self) -> &mut ThrobberState {
-        &mut self.metadata_background.throbber
+    #[must_use]
+    pub fn metadata_throbber(&self) -> &ThrobberState {
+        &self.metadata_background.throbber
     }
 
     pub fn advance_metadata_throbber(&mut self) {
