@@ -3,6 +3,13 @@ name = "animestan"
 version = "0.1.5"
 edition = "2024"
 rust-version = "1.85"
+description = "TUI anime discovery, tracking, and playback tool."
+license = "GPL-3.0-only"
+repository = "https://github.com/mrkatebzadeh/animestan"
+homepage = "https://github.com/mrkatebzadeh/animestan"
+readme = "README.md"
+keywords = ["anime", "terminal", "tui", "ratatui", "playback", "tracking"]
+categories = ["command-line-utilities", "console", "terminal-user-interface"]
 
 [dependencies]
 animestan-core = { path = "../core" }
