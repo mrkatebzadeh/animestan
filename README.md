@@ -15,7 +15,7 @@
 
 Built with extensibility and usability in mind, Animestan helps you search for anime, browse episodes, play or download them, and keep track of your watching progress, all from your terminal.
 
-![Animestan TUI Screenshot](https://github.com/user-attachments/assets/e85d30e9-564c-40fa-bad5-196379dede2b)
+![Animestan TUI Screenshot](https://github.com/user-attachments/assets/2df9c9c7-632c-4f6f-bd57-ef005c53274c)
 
 ## Installation
 
