@@ -1,4 +1,4 @@
-<p align="center">
+<div align="center">
   <h1>ANIMESTAN</h1>
   <h4>CLI + TUI tool to search, watch, and keep track of animes</h4>
   <h5>Your terminal companion for anime discovery and tracking</h5>
@@ -7,7 +7,7 @@
     <img src="https://img.shields.io/codecov/c/github/mrkatebzadeh/animestan?style=flat-square" alt="Coverage" />
     <img src="https://img.shields.io/crates/v/animestan?style=flat-square" alt="Crates.io" />
   </p>
-</p>
+</div>
 
 ---
 
