@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{cmp::Reverse, collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spdlog::prelude::*;
@@ -241,7 +241,7 @@ impl EpisodeTracker {
                             .map(|state| (state.updated_at, episode.clone()))
                     })
                     .collect();
-                with_state.sort_by(|a, b| b.0.cmp(&a.0));
+                with_state.sort_by_key(|entry| Reverse(entry.0));
                 with_state.into_iter().map(|(_, episode)| episode).collect()
             }
         }
