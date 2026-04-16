@@ -86,21 +86,13 @@ fn handle_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
             app.move_to_middle();
             true
         }
-        KeyCode::Char('d' | 'D') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.half_page_down();
-                true
-            } else {
-                false
-            }
+        KeyCode::Char('d' | 'D') if key_event.modifiers.intersects(KeyModifiers::CONTROL) => {
+            app.half_page_down();
+            true
         }
-        KeyCode::Char('u' | 'U') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.half_page_up();
-                true
-            } else {
-                false
-            }
+        KeyCode::Char('u' | 'U') if key_event.modifiers.intersects(KeyModifiers::CONTROL) => {
+            app.half_page_up();
+            true
         }
         _ => false,
     }

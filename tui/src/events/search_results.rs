@@ -76,21 +76,13 @@ fn handle_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
             app.search_results_move_to_bottom();
             true
         }
-        KeyCode::Char('d' | 'D') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.search_results_half_page_down();
-                true
-            } else {
-                false
-            }
+        KeyCode::Char('d' | 'D') if key_event.modifiers.intersects(KeyModifiers::CONTROL) => {
+            app.search_results_half_page_down();
+            true
         }
-        KeyCode::Char('u' | 'U') => {
-            if key_event.modifiers.intersects(KeyModifiers::CONTROL) {
-                app.search_results_half_page_up();
-                true
-            } else {
-                false
-            }
+        KeyCode::Char('u' | 'U') if key_event.modifiers.intersects(KeyModifiers::CONTROL) => {
+            app.search_results_half_page_up();
+            true
         }
         _ => false,
     }

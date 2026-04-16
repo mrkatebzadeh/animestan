@@ -1156,7 +1156,7 @@ fn perform_episode_mark_action(
             if episodes.is_empty() {
                 return Err("No episodes loaded to mark.".to_string());
             }
-            episodes.sort_by(|a, b| a.number.cmp(&b.number));
+            episodes.sort_by_key(|episode| episode.number);
             let mut ids = Vec::new();
             for episode in episodes {
                 ids.push(episode.id.clone());

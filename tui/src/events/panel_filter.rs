@@ -25,15 +25,14 @@ pub(super) fn handle(app: &mut App, key_event: KeyEvent) {
             query.pop();
             app.update_panel_filter_query(query);
         }
-        KeyCode::Char(ch) => {
+        KeyCode::Char(ch)
             if !key_event
                 .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            {
-                let mut query = app.panel_filter_query().to_string();
-                query.push(ch);
-                app.update_panel_filter_query(query);
-            }
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            let mut query = app.panel_filter_query().to_string();
+            query.push(ch);
+            app.update_panel_filter_query(query);
         }
         _ => {}
     }

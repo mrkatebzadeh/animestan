@@ -86,11 +86,9 @@ pub(super) fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, t
         return;
     }
 
-    let fill_segments = if total == 0 {
-        0
-    } else {
-        (watched * bar_width + total / 2) / total
-    };
+    let fill_segments = (watched * bar_width + total / 2)
+        .checked_div(total)
+        .unwrap_or(0);
     let fill_segments = fill_segments.min(bar_width);
     let empty_segments = bar_width - fill_segments;
 
