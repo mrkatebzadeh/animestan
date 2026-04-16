@@ -46,14 +46,12 @@ use crate::client::allanime::{
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
 
 fn fixtures_fetch_enabled() -> bool {
-    env::var(FIXTURES_ENV)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    env::var(FIXTURES_ENV).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -415,7 +413,7 @@ impl<F: Fetcher> AnimeClient<F> {
             })
             .collect();
 
-        episodes.sort_by(|a, b| a.number.cmp(&b.number));
+        episodes.sort_by_key(|episode| episode.number);
         Ok(episodes)
     }
 
