@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use reqwest::Method;
 use reqwest::blocking::Client as BlockingHttpClient;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
@@ -37,9 +38,9 @@ mod allanime;
 use crate::client::allanime::{
     ALLANIME_EPISODE_EMBED_GQL, ALLANIME_EPISODES_GQL, ALLANIME_REFERER, ALLANIME_SEARCH_GQL,
     ALLANIME_TRANSLATION, ALLANIME_USER_AGENT, AllAnimeEpisodeEmbedResponse,
-    AllAnimeEpisodesResponse, AllAnimeSearchResponse, build_embed_url, build_graphql_url,
-    decode_source_url, parse_episode_number, select_source_url, select_stream_url,
-    split_episode_id,
+    AllAnimeEpisodesResponse, AllAnimeSearchResponse, AllAnimeSourceUrl, build_embed_url,
+    build_graphql_url, decode_source_url, maybe_decrypt_response_data, ordered_source_urls,
+    parse_episode_number, select_stream_url, split_episode_id,
 };
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
@@ -55,6 +56,40 @@ fn fixtures_fetch_enabled() -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug)]
+pub struct FetchRequest {
+    url: Url,
+    method: Method,
+    body: Option<Value>,
+}
+
+impl FetchRequest {
+    pub fn get(url: Url) -> Self {
+        Self {
+            url,
+            method: Method::GET,
+            body: None,
+        }
+    }
+
+    pub fn post(url: Url, body: Value) -> Self {
+        Self {
+            url,
+            method: Method::POST,
+            body: Some(body),
+        }
+    }
+
+    pub fn key(&self) -> String {
+        let mut key = format!("{}|{}", self.method.as_str(), self.url);
+        if let Some(body) = &self.body {
+            key.push('|');
+            key.push_str(&body.to_string());
+        }
+        key
+    }
+}
+
 pub trait Fetcher {
     /// Fetches the JSON payload located at `url`.
     ///
@@ -62,7 +97,7 @@ pub trait Fetcher {
     ///
     /// Returns an [`Error`] if the request cannot be fulfilled or the response
     /// body cannot be converted into JSON.
-    fn fetch_json(&self, url: &Url) -> CoreResult<Value>;
+    fn fetch_json(&self, request: &FetchRequest) -> CoreResult<Value>;
 }
 
 pub struct FixtureFetcher {
@@ -83,14 +118,15 @@ impl FixtureFetcher {
 }
 
 impl Fetcher for FixtureFetcher {
-    fn fetch_json(&self, url: &Url) -> CoreResult<Value> {
-        let value =
-            self.responses
-                .get(url.as_str())
-                .cloned()
-                .ok_or_else(|| Error::MissingFixture {
-                    url: url.to_string(),
-                })?;
+    fn fetch_json(&self, request: &FetchRequest) -> CoreResult<Value> {
+        let key = request.key();
+        let value = self
+            .responses
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| Error::MissingFixture {
+                url: request.url.to_string(),
+            })?;
         Ok(value)
     }
 }
@@ -115,19 +151,23 @@ impl HttpFetcher {
 }
 
 impl Fetcher for HttpFetcher {
-    fn fetch_json(&self, url: &Url) -> CoreResult<Value> {
-        let response =
-            self.client
-                .get(url.clone())
-                .send()
-                .map_err(|source| Error::HttpRequest {
-                    url: url.to_string(),
-                    source,
-                })?;
+    fn fetch_json(&self, request: &FetchRequest) -> CoreResult<Value> {
+        let mut builder = self
+            .client
+            .request(request.method.clone(), request.url.clone());
+
+        if let Some(body) = request.body.as_ref() {
+            builder = builder.json(body);
+        }
+
+        let response = builder.send().map_err(|source| Error::HttpRequest {
+            url: request.url.to_string(),
+            source,
+        })?;
 
         if !response.status().is_success() {
             return Err(Error::HttpStatus {
-                url: url.to_string(),
+                url: request.url.to_string(),
                 status: response.status().as_u16(),
             }
             .into());
@@ -136,7 +176,7 @@ impl Fetcher for HttpFetcher {
         let value = response
             .json::<Value>()
             .map_err(|source| Error::HttpBodyParse {
-                url: url.to_string(),
+                url: request.url.to_string(),
                 source,
             })?;
         Ok(value)
@@ -159,10 +199,10 @@ impl FetchBackend {
 }
 
 impl Fetcher for FetchBackend {
-    fn fetch_json(&self, url: &Url) -> CoreResult<Value> {
+    fn fetch_json(&self, request: &FetchRequest) -> CoreResult<Value> {
         match self {
-            Self::Fixtures(fetcher) => fetcher.fetch_json(url),
-            Self::Http(fetcher) => fetcher.fetch_json(url),
+            Self::Fixtures(fetcher) => fetcher.fetch_json(request),
+            Self::Http(fetcher) => fetcher.fetch_json(request),
         }
     }
 }
@@ -252,7 +292,8 @@ impl<F: Fetcher> AnimeClient<F> {
             self.search_allanime(query)?
         } else {
             let url = self.source.search.render(&[("query", query)])?;
-            let mut entries: Vec<AnimeEntry> = self.fetch_and_parse(&url)?;
+            let request = FetchRequest::get(url.clone());
+            let mut entries: Vec<AnimeEntry> = self.fetch_and_parse(&request)?;
             for entry in &mut entries {
                 entry.source_id.clone_from(&self.source.id);
             }
@@ -276,7 +317,8 @@ impl<F: Fetcher> AnimeClient<F> {
             self.list_episodes_allanime(anime_id)?
         } else {
             let url = self.source.episodes.render(&[("anime_id", anime_id)])?;
-            let mut episodes: Vec<Episode> = self.fetch_and_parse(&url)?;
+            let request = FetchRequest::get(url.clone());
+            let mut episodes: Vec<Episode> = self.fetch_and_parse(&request)?;
             for episode in &mut episodes {
                 episode.source_id.clone_from(&self.source.id);
             }
@@ -300,7 +342,8 @@ impl<F: Fetcher> AnimeClient<F> {
             self.resolve_stream_url_allanime(episode_id)?
         } else {
             let url = self.source.stream.render(&[("episode_id", episode_id)])?;
-            let payload: StreamPayload = self.fetch_and_parse(&url)?;
+            let request = FetchRequest::get(url.clone());
+            let payload: StreamPayload = self.fetch_and_parse(&request)?;
             let stream_url = Url::parse(&payload.url).map_err(|source| Error::StreamUrlParse {
                 url: payload.url.clone(),
                 source,
@@ -329,8 +372,8 @@ impl<F: Fetcher> AnimeClient<F> {
             "translationType": ALLANIME_TRANSLATION,
             "countryOrigin": "ALL",
         });
-        let url = build_graphql_url(ALLANIME_SEARCH_GQL, &variables);
-        let payload: AllAnimeSearchResponse = self.fetch_and_parse(&url)?;
+        let request = Self::post_graphql_request(ALLANIME_SEARCH_GQL, &variables);
+        let payload: AllAnimeSearchResponse = self.fetch_and_parse(&request)?;
 
         let entries = payload
             .data
@@ -349,8 +392,8 @@ impl<F: Fetcher> AnimeClient<F> {
 
     fn list_episodes_allanime(&self, anime_id: &str) -> CoreResult<Vec<Episode>> {
         let variables = json!({ "showId": anime_id });
-        let url = build_graphql_url(ALLANIME_EPISODES_GQL, &variables);
-        let payload: AllAnimeEpisodesResponse = self.fetch_and_parse(&url)?;
+        let request = Self::post_graphql_request(ALLANIME_EPISODES_GQL, &variables);
+        let payload: AllAnimeEpisodesResponse = self.fetch_and_parse(&request)?;
 
         let Some(show) = payload.data.show else {
             return Ok(Vec::new());
@@ -384,8 +427,14 @@ impl<F: Fetcher> AnimeClient<F> {
             "translationType": ALLANIME_TRANSLATION,
             "episodeString": &episode_string,
         });
-        let url = build_graphql_url(ALLANIME_EPISODE_EMBED_GQL, &variables);
-        let payload: AllAnimeEpisodeEmbedResponse = self.fetch_and_parse(&url)?;
+        let request = Self::post_graphql_request(ALLANIME_EPISODE_EMBED_GQL, &variables);
+        let value = self.fetcher.fetch_json(&request)?;
+        let value = maybe_decrypt_response_data(value)?;
+        let payload: AllAnimeEpisodeEmbedResponse =
+            serde_json::from_value(value).map_err(|source| Error::ResponseParse {
+                url: request.url.to_string(),
+                source,
+            })?;
 
         let episode = payload
             .data
@@ -394,11 +443,36 @@ impl<F: Fetcher> AnimeClient<F> {
                 message: "episode metadata missing".to_string(),
             })?;
 
-        let source =
-            select_source_url(&episode.source_urls).ok_or_else(|| Error::StreamResolution {
+        let sources = ordered_source_urls(&episode.source_urls);
+        if sources.is_empty() {
+            return Err(Error::StreamResolution {
                 message: "no source URLs returned".to_string(),
-            })?;
+            }
+            .into());
+        }
 
+        let mut last_error: Option<anyhow::Error> = None;
+        for source in sources {
+            match self.resolve_stream_from_allanime_source(episode_id, source) {
+                Ok(link) => return Ok(link),
+                Err(err) => last_error = Some(err),
+            }
+        }
+
+        let last_error_text =
+            last_error.map_or_else(|| "no specific error".to_string(), |err| err.to_string());
+
+        Err(Error::StreamResolution {
+            message: format!("all AllAnime source URLs failed; last error: {last_error_text}"),
+        }
+        .into())
+    }
+
+    fn resolve_stream_from_allanime_source(
+        &self,
+        episode_id: &str,
+        source: &AllAnimeSourceUrl,
+    ) -> CoreResult<StreamLink> {
         let decoded = decode_source_url(&source.source_url)?;
         if (decoded.starts_with("http://") || decoded.starts_with("https://"))
             && !decoded.contains("/clock")
@@ -414,8 +488,10 @@ impl<F: Fetcher> AnimeClient<F> {
                 source_id: self.source.id.clone(),
             });
         }
+
         let embed_url = build_embed_url(&decoded)?;
-        let payload = self.fetcher.fetch_json(&embed_url)?;
+        let embed_request = FetchRequest::get(embed_url);
+        let payload = self.fetcher.fetch_json(&embed_request)?;
         let stream_url = select_stream_url(&payload)?;
         let url = Url::parse(&stream_url).map_err(|source| Error::StreamUrlParse {
             url: stream_url.clone(),
@@ -437,13 +513,22 @@ impl<F: Fetcher> AnimeClient<F> {
         }
     }
 
-    fn fetch_and_parse<T>(&self, url: &Url) -> CoreResult<T>
+    fn post_graphql_request(query: &str, variables: &Value) -> FetchRequest {
+        let url = build_graphql_url(query, variables);
+        let body = json!({
+            "query": query,
+            "variables": variables,
+        });
+        FetchRequest::post(url, body)
+    }
+
+    fn fetch_and_parse<T>(&self, request: &FetchRequest) -> CoreResult<T>
     where
         T: DeserializeOwned,
     {
-        let value = self.fetcher.fetch_json(url)?;
+        let value = self.fetcher.fetch_json(request)?;
         let parsed = serde_json::from_value(value).map_err(|source| Error::ResponseParse {
-            url: url.to_string(),
+            url: request.url.to_string(),
             source,
         })?;
         Ok(parsed)

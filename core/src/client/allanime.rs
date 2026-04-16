@@ -13,6 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
+use base64::{Engine as _, engine::general_purpose};
+use sha2::{Digest, Sha256};
 use std::str;
 
 use serde::Deserialize;
@@ -112,14 +116,61 @@ struct StreamCandidate {
     resolution: Option<u32>,
 }
 
-pub(crate) fn build_graphql_url(query: &str, variables: &Value) -> Url {
-    let mut url = Url::parse(ALLANIME_API_ENDPOINT).expect("valid AllAnime API endpoint");
-    {
-        let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("variables", &variables.to_string());
-        pairs.append_pair("query", query);
+pub(crate) fn build_graphql_url(_query: &str, _variables: &Value) -> Url {
+    Url::parse(ALLANIME_API_ENDPOINT).expect("valid AllAnime API endpoint")
+}
+
+pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Value> {
+    const MIN_ENCRYPTED_LEN: usize = 12 + 16;
+
+    let Some(data_value) = response.get_mut("data") else {
+        return Ok(response);
+    };
+
+    let Some(tobeparsed) = data_value
+        .get("tobeparsed")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return Ok(response);
+    };
+
+    let decoded =
+        general_purpose::STANDARD
+            .decode(&tobeparsed)
+            .map_err(|_| Error::StreamResolution {
+                message: "failed to base64 decode AllAnime payload".to_string(),
+            })?;
+
+    if decoded.len() < MIN_ENCRYPTED_LEN {
+        return Err(Error::StreamResolution {
+            message: format!(
+                "encrypted AllAnime payload too short ({decoded_len} bytes)",
+                decoded_len = decoded.len()
+            ),
+        }
+        .into());
     }
-    url
+
+    let (iv_bytes, ciphertext) = decoded.split_at(12);
+    let key_bytes = Sha256::digest(b"SimtVuagFbGR2K7P");
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| Error::StreamResolution {
+        message: "invalid AES key length for AllAnime payload".to_string(),
+    })?;
+    let nonce = Nonce::from_slice(iv_bytes);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| Error::StreamResolution {
+            message: "failed to decrypt AllAnime payload".to_string(),
+        })?;
+
+    let decrypted_json =
+        serde_json::from_slice::<Value>(&plaintext).map_err(|_| Error::StreamResolution {
+            message: "failed to parse decrypted AllAnime payload".to_string(),
+        })?;
+
+    *data_value = decrypted_json;
+    Ok(response)
 }
 
 pub(crate) fn build_embed_url(decoded: &str) -> CoreResult<Url> {
@@ -165,6 +216,27 @@ pub(crate) fn select_source_url(sources: &[AllAnimeSourceUrl]) -> Option<&AllAni
                 .find(|source| source.source_name.as_deref() == Some("Default"))
         })
         .or_else(|| sources.first())
+}
+
+pub(crate) fn ordered_source_urls(sources: &[AllAnimeSourceUrl]) -> Vec<&AllAnimeSourceUrl> {
+    if sources.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ordered = Vec::with_capacity(sources.len());
+    if let Some(preferred) = select_source_url(sources) {
+        ordered.push(preferred);
+        let preferred_ptr = std::ptr::from_ref(preferred);
+        for source in sources {
+            if !std::ptr::eq(source, preferred_ptr) {
+                ordered.push(source);
+            }
+        }
+    } else {
+        ordered.extend(sources.iter());
+    }
+
+    ordered
 }
 
 pub(crate) fn split_episode_id(episode_id: &str) -> CoreResult<(String, String)> {
