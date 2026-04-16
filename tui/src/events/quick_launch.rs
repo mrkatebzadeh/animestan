@@ -29,13 +29,12 @@ pub(super) fn handle(app: &mut App, key_event: KeyEvent) {
         KeyCode::Up | KeyCode::Char('k') => {
             app.move_quick_launch_selection_up();
         }
-        KeyCode::Char(ch) => {
+        KeyCode::Char(ch)
             if !key_event
                 .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            {
-                app.append_quick_launch_char(ch);
-            }
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            app.append_quick_launch_char(ch);
         }
         _ => {}
     }
