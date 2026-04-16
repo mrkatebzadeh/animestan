@@ -16,7 +16,8 @@
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
-use serde_json::json;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use url::{Url, form_urlencoded::byte_serialize};
 
 use crate::{AppConfig, error::Error, source::ALLANIME_API_ENDPOINT};
@@ -114,32 +115,8 @@ impl AllMangaMetadataProvider {
             "translationType": "sub",
             "countryOrigin": "ALL",
         });
-        let url = build_graphql_url(ALLMANGA_SEARCH_QUERY, &variables)?;
-        let response =
-            self.client
-                .get(url.clone())
-                .send()
-                .map_err(|source| Error::HttpRequest {
-                    url: url.to_string(),
-                    source,
-                })?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Error::HttpStatus {
-                url: url.to_string(),
-                status: status.as_u16(),
-            });
-        }
-        let body = response.text().map_err(|source| Error::HttpBodyParse {
-            url: url.to_string(),
-            source,
-        })?;
-        let payload = serde_json::from_str::<AllMangaSearchResponse>(&body).map_err(|source| {
-            Error::ResponseParse {
-                url: url.to_string(),
-                source,
-            }
-        })?;
+        let payload: AllMangaSearchResponse =
+            self.execute_graphql_request(ALLMANGA_SEARCH_QUERY, &variables)?;
         let entry =
             payload
                 .data
@@ -155,32 +132,8 @@ impl AllMangaMetadataProvider {
 
     fn fetch_show_details(&self, show_id: &str) -> Result<AllMangaShow, Error> {
         let variables = json!({ "showId": show_id });
-        let url = build_graphql_url(ALLMANGA_DETAILS_QUERY, &variables)?;
-        let response =
-            self.client
-                .get(url.clone())
-                .send()
-                .map_err(|source| Error::HttpRequest {
-                    url: url.to_string(),
-                    source,
-                })?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Error::HttpStatus {
-                url: url.to_string(),
-                status: status.as_u16(),
-            });
-        }
-        let body = response.text().map_err(|source| Error::HttpBodyParse {
-            url: url.to_string(),
-            source,
-        })?;
-        let payload = serde_json::from_str::<AllMangaDetailsResponse>(&body).map_err(|source| {
-            Error::ResponseParse {
-                url: url.to_string(),
-                source,
-            }
-        })?;
+        let payload: AllMangaDetailsResponse =
+            self.execute_graphql_request(ALLMANGA_DETAILS_QUERY, &variables)?;
         payload.data.show.ok_or_else(|| Error::MetadataNotFound {
             query: show_id.to_string(),
         })
@@ -188,15 +141,29 @@ impl AllMangaMetadataProvider {
 
     fn fetch_show_season(&self, show_id: &str) -> Result<Option<AllMangaSeason>, Error> {
         let variables = json!({ "showId": show_id });
-        let url = build_graphql_url(ALLMANGA_SEASON_QUERY, &variables)?;
-        let response =
-            self.client
-                .get(url.clone())
-                .send()
-                .map_err(|source| Error::HttpRequest {
-                    url: url.to_string(),
-                    source,
-                })?;
+        let payload: AllMangaSeasonResponse =
+            self.execute_graphql_request(ALLMANGA_SEASON_QUERY, &variables)?;
+        Ok(payload.data.show.and_then(|show| show.season))
+    }
+
+    fn execute_graphql_request<T>(&self, query: &str, variables: &Value) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let url = build_graphql_url(query, variables)?;
+        let body = json!({
+            "query": query,
+            "variables": variables,
+        });
+        let response = self
+            .client
+            .post(url.clone())
+            .json(&body)
+            .send()
+            .map_err(|source| Error::HttpRequest {
+                url: url.to_string(),
+                source,
+            })?;
         let status = response.status();
         if !status.is_success() {
             return Err(Error::HttpStatus {
@@ -208,13 +175,10 @@ impl AllMangaMetadataProvider {
             url: url.to_string(),
             source,
         })?;
-        let payload = serde_json::from_str::<AllMangaSeasonResponse>(&body).map_err(|source| {
-            Error::ResponseParse {
-                url: url.to_string(),
-                source,
-            }
-        })?;
-        Ok(payload.data.show.and_then(|show| show.season))
+        serde_json::from_str(&body).map_err(|source| Error::ResponseParse {
+            url: url.to_string(),
+            source,
+        })
     }
 }
 
@@ -228,17 +192,11 @@ fn enrich_client(client: Client) -> Client {
         .unwrap_or(client)
 }
 
-fn build_graphql_url(query: &str, variables: &serde_json::Value) -> Result<Url, Error> {
-    let mut url = Url::parse(ALLANIME_API_ENDPOINT).map_err(|source| Error::InvalidUrl {
+fn build_graphql_url(_query: &str, _variables: &serde_json::Value) -> Result<Url, Error> {
+    Url::parse(ALLANIME_API_ENDPOINT).map_err(|source| Error::InvalidUrl {
         template: ALLANIME_API_ENDPOINT.to_string(),
         source,
-    })?;
-    {
-        let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("variables", &variables.to_string());
-        pairs.append_pair("query", query);
-    }
-    Ok(url)
+    })
 }
 
 #[derive(Debug, Deserialize, Default)]
