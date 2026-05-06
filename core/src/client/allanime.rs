@@ -150,11 +150,12 @@ pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Val
         return Ok(response);
     };
 
-    let decoded = general_purpose::STANDARD
-        .decode(&tobeparsed)
-        .map_err(|_| Error::StreamResolution {
-            message: "failed to base64 decode AllAnime payload".to_string(),
-        })?;
+    let decoded =
+        general_purpose::STANDARD
+            .decode(&tobeparsed)
+            .map_err(|_| Error::StreamResolution {
+                message: "failed to base64 decode AllAnime payload".to_string(),
+            })?;
 
     // Try the ani-cli format first (AES-256-CTR with a 12-byte IV + fixed counter suffix).
     if decoded.len() >= MIN_CTR_LEN {
