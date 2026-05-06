@@ -122,9 +122,11 @@ dependencies = [
 name = "animestan-core"
 version = "0.1.6"
 dependencies = [
+ "aes",
  "aes-gcm",
  "anyhow",
  "base64",
+ "ctr",
  "directories-next",
  "reqwest",
  "serde",
