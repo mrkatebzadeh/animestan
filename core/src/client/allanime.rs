@@ -13,9 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use aes::Aes256;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::{Engine as _, engine::general_purpose};
+use ctr::cipher::{KeyIvInit, StreamCipher};
 use sha2::{Digest, Sha256};
 use std::str;
 
@@ -29,6 +31,15 @@ pub(crate) const ALLANIME_TRANSLATION: &str = "sub";
 pub(crate) const ALLANIME_REFERER: &str = "https://allmanga.to";
 pub(crate) const ALLANIME_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0";
+
+// AllAnime's API currently requires requests to look like they came from a valid frontend.
+// ani-cli uses https://youtu-chan.com for this purpose.
+pub(crate) const ALLANIME_API_ORIGIN: &str = "https://youtu-chan.com";
+
+// Persisted query hash for `ALLANIME_EPISODE_EMBED_GQL`.
+// See: https://github.com/pystardust/ani-cli/commit/6803b8a15faafa41cb79271e9a4f7f9c70a53651
+pub(crate) const ALLANIME_EPISODE_EMBED_PERSISTED_HASH: &str =
+    "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
 const ALLANIME_EMBED_HOST: &str = "https://allanime.day";
 pub(crate) const ALLANIME_SEARCH_GQL: &str = "query ($search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { edges { _id name availableEpisodes __typename } }}";
 pub(crate) const ALLANIME_EPISODES_GQL: &str =
@@ -121,7 +132,11 @@ pub(crate) fn build_graphql_url(_query: &str, _variables: &Value) -> Url {
 }
 
 pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Value> {
-    const MIN_ENCRYPTED_LEN: usize = 12 + 16;
+    // Newer payload format (used by ani-cli):
+    // 1 byte prefix + 12 byte IV + ciphertext + 16 byte trailer.
+    const MIN_CTR_LEN: usize = 1 + 12 + 16;
+    // Older payload format we previously supported (AES-GCM):
+    const MIN_GCM_LEN: usize = 12 + 16;
 
     let Some(data_value) = response.get_mut("data") else {
         return Ok(response);
@@ -135,14 +150,33 @@ pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Val
         return Ok(response);
     };
 
-    let decoded =
-        general_purpose::STANDARD
-            .decode(&tobeparsed)
-            .map_err(|_| Error::StreamResolution {
-                message: "failed to base64 decode AllAnime payload".to_string(),
-            })?;
+    let decoded = general_purpose::STANDARD
+        .decode(&tobeparsed)
+        .map_err(|_| Error::StreamResolution {
+            message: "failed to base64 decode AllAnime payload".to_string(),
+        })?;
 
-    if decoded.len() < MIN_ENCRYPTED_LEN {
+    // Try the ani-cli format first (AES-256-CTR with a 12-byte IV + fixed counter suffix).
+    if decoded.len() >= MIN_CTR_LEN {
+        type Aes256Ctr = ctr::Ctr128BE<Aes256>;
+
+        let key_bytes = Sha256::digest(b"Xot36i3lK3:v1");
+        let mut iv = [0u8; 16];
+        iv[..12].copy_from_slice(&decoded[1..13]);
+        iv[12..].copy_from_slice(&[0, 0, 0, 2]);
+
+        let mut plaintext = decoded[13..decoded.len().saturating_sub(16)].to_vec();
+        let mut cipher = Aes256Ctr::new(key_bytes.as_slice().into(), (&iv).into());
+        cipher.apply_keystream(&mut plaintext);
+
+        if let Ok(decrypted_json) = serde_json::from_slice::<Value>(&plaintext) {
+            *data_value = decrypted_json;
+            return Ok(response);
+        }
+    }
+
+    // Fall back to the older AES-GCM approach (kept for compatibility with any older responses).
+    if decoded.len() < MIN_GCM_LEN {
         return Err(Error::StreamResolution {
             message: format!(
                 "encrypted AllAnime payload too short ({decoded_len} bytes)",
