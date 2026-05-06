@@ -1,6 +1,6 @@
 [package]
 name = "animestan-core"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 rust-version = "1.85"
 
@@ -16,6 +16,8 @@ toml = "0.8"
 url = { version = "2.5", features = ["serde"] }
 urlencoding = "2.1"
 aes-gcm = "0.10"
+aes = "0.8"
+ctr = "0.9"
 base64 = "0.22"
 sha2 = "0.10"
 
