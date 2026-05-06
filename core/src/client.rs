@@ -473,9 +473,7 @@ impl<F: Fetcher> AnimeClient<F> {
                 (parsed, persisted_request.url.to_string())
             }
             Err(err) => {
-                debug!(
-                    "persisted-query episode embed failed; falling back to POST: {err}"
-                );
+                debug!("persisted-query episode embed failed; falling back to POST: {err}");
                 let request = Self::post_graphql_request(ALLANIME_EPISODE_EMBED_GQL, &variables);
                 let value = self.fetcher.fetch_json(&request)?;
                 let value = maybe_decrypt_response_data(value)?;
