@@ -15,7 +15,7 @@
 
 use reqwest::Method;
 use reqwest::blocking::Client as BlockingHttpClient;
-use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -36,11 +36,12 @@ use crate::{
 mod allanime;
 
 use crate::client::allanime::{
-    ALLANIME_EPISODE_EMBED_GQL, ALLANIME_EPISODES_GQL, ALLANIME_REFERER, ALLANIME_SEARCH_GQL,
-    ALLANIME_TRANSLATION, ALLANIME_USER_AGENT, AllAnimeEpisodeEmbedResponse,
-    AllAnimeEpisodesResponse, AllAnimeSearchResponse, AllAnimeSourceUrl, build_embed_url,
-    build_graphql_url, decode_source_url, maybe_decrypt_response_data, ordered_source_urls,
-    parse_episode_number, select_stream_url, split_episode_id,
+    ALLANIME_API_ORIGIN, ALLANIME_EPISODE_EMBED_GQL, ALLANIME_EPISODE_EMBED_PERSISTED_HASH,
+    ALLANIME_EPISODES_GQL, ALLANIME_REFERER, ALLANIME_SEARCH_GQL, ALLANIME_TRANSLATION,
+    ALLANIME_USER_AGENT, AllAnimeEpisodeEmbedResponse, AllAnimeEpisodesResponse,
+    AllAnimeSearchResponse, AllAnimeSourceUrl, build_embed_url, build_graphql_url,
+    decode_source_url, maybe_decrypt_response_data, ordered_source_urls, parse_episode_number,
+    select_stream_url, split_episode_id,
 };
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
@@ -59,6 +60,7 @@ pub struct FetchRequest {
     url: Url,
     method: Method,
     body: Option<Value>,
+    headers: HeaderMap,
 }
 
 impl FetchRequest {
@@ -67,6 +69,7 @@ impl FetchRequest {
             url,
             method: Method::GET,
             body: None,
+            headers: HeaderMap::new(),
         }
     }
 
@@ -75,7 +78,13 @@ impl FetchRequest {
             url,
             method: Method::POST,
             body: Some(body),
+            headers: HeaderMap::new(),
         }
+    }
+
+    pub fn with_header(mut self, name: reqwest::header::HeaderName, value: HeaderValue) -> Self {
+        self.headers.insert(name, value);
+        self
     }
 
     pub fn key(&self) -> String {
@@ -153,6 +162,10 @@ impl Fetcher for HttpFetcher {
         let mut builder = self
             .client
             .request(request.method.clone(), request.url.clone());
+
+        if !request.headers.is_empty() {
+            builder = builder.headers(request.headers.clone());
+        }
 
         if let Some(body) = request.body.as_ref() {
             builder = builder.json(body);
@@ -425,20 +438,61 @@ impl<F: Fetcher> AnimeClient<F> {
             "translationType": ALLANIME_TRANSLATION,
             "episodeString": &episode_string,
         });
-        let request = Self::post_graphql_request(ALLANIME_EPISODE_EMBED_GQL, &variables);
-        let value = self.fetcher.fetch_json(&request)?;
-        let value = maybe_decrypt_response_data(value)?;
-        let payload: AllAnimeEpisodeEmbedResponse =
-            serde_json::from_value(value).map_err(|source| Error::ResponseParse {
-                url: request.url.to_string(),
-                source,
-            })?;
+
+        // Prefer the persisted-query GET request (ani-cli approach) to avoid the API returning
+        // NEED_CAPTCHA for the full GraphQL POST body.
+        let mut persisted_url = build_graphql_url(ALLANIME_EPISODE_EMBED_GQL, &variables);
+        let vars = serde_json::to_string(&variables).map_err(|source| Error::ResponseParse {
+            url: persisted_url.to_string(),
+            source,
+        })?;
+        let ext = serde_json::to_string(&json!({
+            "persistedQuery": {"version": 1, "sha256Hash": ALLANIME_EPISODE_EMBED_PERSISTED_HASH}
+        }))
+        .map_err(|source| Error::ResponseParse {
+            url: persisted_url.to_string(),
+            source,
+        })?;
+        {
+            let mut pairs = persisted_url.query_pairs_mut();
+            pairs.append_pair("variables", &vars);
+            pairs.append_pair("extensions", &ext);
+        }
+        let persisted_request = FetchRequest::get(persisted_url)
+            .with_header(REFERER, HeaderValue::from_static(ALLANIME_API_ORIGIN))
+            .with_header(ORIGIN, HeaderValue::from_static(ALLANIME_API_ORIGIN));
+
+        let (payload, request_url_for_errors) = match self.fetcher.fetch_json(&persisted_request) {
+            Ok(value) => {
+                let value = maybe_decrypt_response_data(value)?;
+                let parsed = serde_json::from_value::<AllAnimeEpisodeEmbedResponse>(value)
+                    .map_err(|source| Error::ResponseParse {
+                        url: persisted_request.url.to_string(),
+                        source,
+                    })?;
+                (parsed, persisted_request.url.to_string())
+            }
+            Err(err) => {
+                debug!(
+                    "persisted-query episode embed failed; falling back to POST: {err}"
+                );
+                let request = Self::post_graphql_request(ALLANIME_EPISODE_EMBED_GQL, &variables);
+                let value = self.fetcher.fetch_json(&request)?;
+                let value = maybe_decrypt_response_data(value)?;
+                let parsed = serde_json::from_value::<AllAnimeEpisodeEmbedResponse>(value)
+                    .map_err(|source| Error::ResponseParse {
+                        url: request.url.to_string(),
+                        source,
+                    })?;
+                (parsed, request.url.to_string())
+            }
+        };
 
         let episode = payload
             .data
             .episode
             .ok_or_else(|| Error::StreamResolution {
-                message: "episode metadata missing".to_string(),
+                message: format!("episode metadata missing (request: {request_url_for_errors})"),
             })?;
 
         let sources = ordered_source_urls(&episode.source_urls);
