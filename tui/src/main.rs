@@ -16,6 +16,7 @@
 mod actions;
 mod app;
 mod bootstrap;
+mod browse;
 mod cache;
 mod events;
 mod flow;
@@ -30,8 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, MetadataResolver,
-    init_logging,
+    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, MetadataResolver, init_logging,
 };
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -44,23 +44,23 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 use spdlog::prelude::*;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::unbounded_channel;
 
 use crate::actions::{handle_delete, handle_download, handle_episode_mark_actions};
 use crate::app::App;
 use crate::bootstrap::{
     BackgroundRefreshHandles, initialize_app_state, start_background_refreshes,
 };
-use crate::cache::{CoverCache, EpisodeCache, cached_episodes};
+use crate::browse::{handle_filters, handle_search};
+use crate::cache::{CoverCache, EpisodeCache};
 use crate::events::{Event, EventHandler};
 use crate::flow::{
-    apply_episode_filter, drain_episode_fetch_requests, drain_episode_fetch_results,
-    drain_playback_request_queue, drain_playback_results, handle_playback_requests,
-    refresh_episode_indicators, update_playback_elapsed,
+    drain_episode_fetch_requests, drain_episode_fetch_results, drain_playback_request_queue,
+    drain_playback_results, handle_playback_requests, update_playback_elapsed,
 };
 use crate::media::{
     ImageLoadRequest, ImageLoadResult, drain_image_results, drain_metadata_results,
-    handle_list_metadata_fetch, handle_metadata_fetch, queue_image_load, spawn_image_loader,
+    handle_list_metadata_fetch, handle_metadata_fetch, spawn_image_loader,
 };
 use crate::tasks::{
     EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchResult, PlaybackRequest, PlaybackResult,
@@ -277,89 +277,6 @@ fn run_app(
     }
 
     Ok(())
-}
-
-fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
-    if !app.take_pending_search() {
-        return;
-    }
-
-    if let Err(err) = app.search(client) {
-        app.set_details(format!("Search failed: {err}"));
-    }
-}
-
-fn handle_filters(
-    app: &mut App,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    config: &AppConfig,
-    request_tx: &UnboundedSender<EpisodeFetchRequest>,
-    episode_cache: &Arc<Mutex<EpisodeCache>>,
-    cover_cache: &mut CoverCache,
-    image_request_tx: &UnboundedSender<ImageLoadRequest>,
-) {
-    let mut apply_filter = false;
-
-    if app.take_anime_selection_changed() {
-        if let Some(anime_id) = app.current_anime_id() {
-            app.record_anime_history(&anime_id);
-            let cached = match cached_episodes(episode_cache, &anime_id) {
-                Ok(cached) => cached,
-                Err(err) => {
-                    app.set_details(format!("Failed to access cached episodes: {err}"));
-                    None
-                }
-            };
-            let has_cached = cached.is_some();
-            if let Some(cached) = cached {
-                app.set_episodes(cached);
-                app.set_details("Loaded cached episodes; refreshing...");
-                if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-                    app.set_details(format!("Failed to refresh indicators: {err}"));
-                }
-            }
-            let should_fetch = !app.episode_refresh_pending(&anime_id);
-            if should_fetch {
-                app.set_episodes_loading(true);
-                app.mark_episode_refresh_pending(anime_id.clone());
-                let generation = app.next_fetch_generation();
-                let request = EpisodeFetchRequest {
-                    generation,
-                    anime_id: anime_id.clone(),
-                };
-                if request_tx.send(request).is_err() {
-                    app.set_episodes_loading(false);
-                    app.clear_episode_refresh_pending(&anime_id);
-                    app.set_details("Episode fetch queue unavailable.");
-                } else if has_cached {
-                    app.set_details("Refreshing cached episodes...");
-                } else {
-                    app.set_details("Fetching episodes...");
-                }
-            }
-            let image_url = app
-                .cached_metadata_for_current_anime()
-                .and_then(|metadata| metadata.image_url.clone());
-            if let Some(image_url) = image_url {
-                queue_image_load(app, cover_cache, image_request_tx, &anime_id, &image_url);
-            }
-            app.request_info_metadata();
-        } else {
-            app.clear_episodes();
-            app.set_episodes_loading(false);
-            app.set_details("Select an anime to load episodes.");
-        }
-    }
-
-    if app.take_filter_changed() {
-        apply_filter = true;
-    }
-
-    if apply_filter {
-        if let Err(err) = apply_episode_filter(app, tracker) {
-            app.set_details(format!("Filter failed: {err}"));
-        }
-    }
 }
 
 #[derive(Parser)]
