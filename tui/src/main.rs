@@ -46,7 +46,9 @@ use ratatui_image::picker::Picker;
 use spdlog::prelude::*;
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::actions::{handle_delete, handle_download, handle_episode_mark_actions};
+use crate::actions::{
+    handle_delete, handle_download, handle_episode_mark_actions, handle_library_actions,
+};
 use crate::app::App;
 use crate::bootstrap::{
     BackgroundRefreshHandles, initialize_app_state, start_background_refreshes,
@@ -158,24 +160,7 @@ fn run_app(
             }
         }
 
-        if app.take_pending_bookmark_toggle() {
-            match app.toggle_bookmark(&mut favorites) {
-                Ok(()) => {
-                    let details = app.details().to_string();
-                    app.load_bookmarks(&favorites);
-                    app.set_details(details);
-                }
-                Err(err) => {
-                    app.set_details(format!("Bookmark toggle failed: {err}"));
-                }
-            }
-        }
-
-        if app.take_pending_search_results_add() {
-            if let Err(err) = app.add_current_search_result_to_bookmarks(&mut favorites) {
-                app.set_details(format!("Failed to add anime to panel: {err}"));
-            }
-        }
+        handle_library_actions(&mut app, &mut favorites);
 
         handle_search(&mut app, client.as_ref());
         handle_filters(

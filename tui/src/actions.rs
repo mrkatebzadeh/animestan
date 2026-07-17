@@ -16,13 +16,34 @@
 use std::sync::{Arc, Mutex};
 
 use animestan_core::{
-    AnimeClient, AppConfig, Episode, EpisodeTracker, FetchBackend, delete_episode,
+    AnimeClient, AppConfig, Episode, EpisodeTracker, FavoriteStore, FetchBackend, delete_episode,
     download_episode, episode_file_path, local_playback_url,
 };
 use spdlog::prelude::*;
 
 use crate::app::{App, EpisodeMarkAction, PlaybackStatus};
 use crate::flow::refresh_episode_indicators;
+
+pub(crate) fn handle_library_actions(app: &mut App, favorites: &mut FavoriteStore) {
+    if app.take_pending_bookmark_toggle() {
+        match app.toggle_bookmark(favorites) {
+            Ok(()) => {
+                let details = app.details().to_string();
+                app.load_bookmarks(favorites);
+                app.set_details(details);
+            }
+            Err(err) => {
+                app.set_details(format!("Bookmark toggle failed: {err}"));
+            }
+        }
+    }
+
+    if app.take_pending_search_results_add()
+        && let Err(err) = app.add_current_search_result_to_bookmarks(favorites)
+    {
+        app.set_details(format!("Failed to add anime to panel: {err}"));
+    }
+}
 
 pub(crate) fn handle_download(
     app: &mut App,
