@@ -15,14 +15,19 @@
 
 use std::sync::{Arc, Mutex};
 
-use animestan_core::{AnimeClient, AppConfig, EpisodeTracker, FetchBackend};
+use animestan_core::{AnimeClient, AppConfig, EpisodeTracker, FetchBackend, MetadataResolver};
+use futures::future::AbortHandle;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::App;
 use crate::cache::{CoverCache, EpisodeCache, cached_episodes};
 use crate::flow::{apply_episode_filter, refresh_episode_indicators};
 use crate::media::{ImageLoadRequest, queue_image_load};
-use crate::tasks::EpisodeFetchRequest;
+use crate::tasks::{
+    EpisodeFetchRequest, MetadataFetchRequest, MetadataFetchResult, MetadataTarget,
+    spawn_metadata_fetch_task,
+};
 
 pub(crate) fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
     if !app.take_pending_search() {
@@ -32,6 +37,35 @@ pub(crate) fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
     if let Err(err) = app.search(client) {
         app.set_details(format!("Search failed: {err}"));
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn handle_current_anime_refresh(
+    app: &mut App,
+    runtime: &Handle,
+    resolver: &Arc<MetadataResolver>,
+    metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
+    active_metadata_fetch: &mut Option<AbortHandle>,
+    request_tx: &UnboundedSender<EpisodeFetchRequest>,
+) {
+    let Some(refresh) = app.take_pending_anime_refresh() else {
+        return;
+    };
+
+    app.set_details(format!(
+        "Refreshing metadata and episodes for {}...",
+        refresh.title
+    ));
+
+    request_episode_refresh(app, request_tx, &refresh.anime_id);
+    request_metadata_refresh(
+        app,
+        runtime,
+        resolver,
+        metadata_result_tx,
+        active_metadata_fetch,
+        refresh,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -100,4 +134,53 @@ pub(crate) fn handle_filters(
     {
         app.set_details(format!("Filter failed: {err}"));
     }
+}
+
+fn request_episode_refresh(
+    app: &mut App,
+    request_tx: &UnboundedSender<EpisodeFetchRequest>,
+    anime_id: &str,
+) {
+    app.set_episodes_loading(true);
+    app.mark_episode_refresh_pending(anime_id.to_string());
+    let generation = app.next_fetch_generation();
+    let request = EpisodeFetchRequest {
+        generation,
+        anime_id: anime_id.to_string(),
+    };
+    if request_tx.send(request).is_err() {
+        app.set_episodes_loading(false);
+        app.clear_episode_refresh_pending(anime_id);
+        app.set_details("Episode fetch queue unavailable.");
+    }
+}
+
+fn request_metadata_refresh(
+    app: &mut App,
+    runtime: &Handle,
+    resolver: &Arc<MetadataResolver>,
+    metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
+    active_metadata_fetch: &mut Option<AbortHandle>,
+    refresh: crate::app::AnimeRefreshRequest,
+) {
+    if let Some(handle) = active_metadata_fetch.take() {
+        handle.abort();
+    }
+
+    let request = MetadataFetchRequest {
+        generation: app.next_manual_metadata_generation(),
+        query: refresh.title,
+        source_id: Some(refresh.anime_id.clone()),
+        anime_id: Some(refresh.anime_id),
+        target: MetadataTarget::CurrentRefresh,
+        force_refresh: true,
+    };
+
+    let abort_handle = spawn_metadata_fetch_task(
+        runtime,
+        Arc::clone(resolver),
+        request,
+        metadata_result_tx.clone(),
+    );
+    *active_metadata_fetch = Some(abort_handle);
 }

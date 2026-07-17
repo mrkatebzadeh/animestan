@@ -159,6 +159,12 @@ pub struct MetadataSummary {
     pub score: Option<f32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AnimeRefreshRequest {
+    pub(crate) anime_id: String,
+    pub(crate) title: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 enum PanelMode {
     #[default]
@@ -243,6 +249,8 @@ struct DataState {
     metadata_pending: HashSet<String>,
     metadata_failed: HashSet<String>,
     episode_refresh_pending: HashSet<String>,
+    pending_anime_refresh: Option<AnimeRefreshRequest>,
+    manual_metadata_generation: u64,
 }
 
 #[derive(Debug, Default)]

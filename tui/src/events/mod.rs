@@ -143,6 +143,11 @@ pub fn keybindings() -> &'static [KeyBinding] {
             mode: InputMode::Normal,
         },
         KeyBinding {
+            keys: "R",
+            description: "Refresh highlighted anime metadata and episodes",
+            mode: InputMode::Normal,
+        },
+        KeyBinding {
             keys: "f",
             description: "Cycle episode filters",
             mode: InputMode::Normal,

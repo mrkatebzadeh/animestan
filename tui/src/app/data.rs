@@ -14,8 +14,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use super::{
-    AnimeMetadata, AnimeProgress, App, Episode, EpisodeIndicators, FavoriteEntry, FilterActive,
-    FilterTarget, MetadataSummary, SearchModal,
+    AnimeMetadata, AnimeProgress, AnimeRefreshRequest, App, Episode, EpisodeIndicators,
+    FavoriteEntry, FilterActive, FilterTarget, MetadataSummary, SearchModal,
 };
 use std::collections::HashMap;
 
@@ -45,6 +45,15 @@ impl App {
 
     pub fn current_fetch_generation(&self) -> u64 {
         self.data.fetch_generation
+    }
+
+    pub(crate) fn next_manual_metadata_generation(&mut self) -> u64 {
+        self.data.manual_metadata_generation = self.data.manual_metadata_generation.wrapping_add(1);
+        self.data.manual_metadata_generation
+    }
+
+    pub(crate) fn current_manual_metadata_generation(&self) -> u64 {
+        self.data.manual_metadata_generation
     }
 
     pub fn unfiltered_episodes(&self) -> &[Episode] {
@@ -126,6 +135,22 @@ impl App {
 
     pub fn clear_episode_refresh_pending(&mut self, anime_id: &str) {
         self.data.episode_refresh_pending.remove(anime_id);
+    }
+
+    pub(crate) fn request_current_anime_refresh(&mut self) {
+        let Some(anime) = self.current_anime() else {
+            self.set_details("Highlight an anime to refresh.");
+            return;
+        };
+
+        self.data.pending_anime_refresh = Some(AnimeRefreshRequest {
+            anime_id: anime.id.clone(),
+            title: anime.title.clone(),
+        });
+    }
+
+    pub(crate) fn take_pending_anime_refresh(&mut self) -> Option<AnimeRefreshRequest> {
+        self.data.pending_anime_refresh.take()
     }
 
     pub fn cached_metadata(&self, anime_id: &str) -> Option<&AnimeMetadata> {
@@ -377,5 +402,46 @@ fn merge_metadata(existing: &AnimeMetadata, incoming: &AnimeMetadata) -> AnimeMe
         image_url,
         source_url,
         source: incoming.source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use animestan_core::AnimeEntry;
+
+    fn sample_entry(id: &str, title: &str) -> FavoriteEntry {
+        FavoriteEntry {
+            anime: AnimeEntry {
+                id: id.to_string(),
+                title: title.to_string(),
+                source_id: "allanime".to_string(),
+            },
+            added_at: 1,
+        }
+    }
+
+    #[test]
+    fn request_current_anime_refresh_queues_highlighted_anime() {
+        let mut app = App::new();
+        app.data.bookmark_entries = vec![sample_entry("naruto", "Naruto")];
+
+        app.request_current_anime_refresh();
+
+        let refresh = app
+            .take_pending_anime_refresh()
+            .expect("refresh request should be queued");
+        assert_eq!(refresh.anime_id, "naruto");
+        assert_eq!(refresh.title, "Naruto");
+    }
+
+    #[test]
+    fn request_current_anime_refresh_without_highlight_sets_message() {
+        let mut app = App::new();
+
+        app.request_current_anime_refresh();
+
+        assert!(app.take_pending_anime_refresh().is_none());
+        assert_eq!(app.details(), "Highlight an anime to refresh.");
     }
 }

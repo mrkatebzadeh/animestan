@@ -53,7 +53,7 @@ use crate::app::App;
 use crate::bootstrap::{
     BackgroundRefreshHandles, initialize_app_state, start_background_refreshes,
 };
-use crate::browse::{handle_filters, handle_search};
+use crate::browse::{handle_current_anime_refresh, handle_filters, handle_search};
 use crate::cache::{CoverCache, EpisodeCache};
 use crate::events::{Event, EventHandler};
 use crate::flow::{
@@ -171,6 +171,14 @@ fn run_app(
             &episode_cache,
             &mut cover_cache,
             &image_request_tx,
+        );
+        handle_current_anime_refresh(
+            &mut app,
+            &runtime_handle,
+            &metadata_resolver,
+            &metadata_result_tx,
+            &mut active_list_metadata_fetch,
+            &request_tx,
         );
         handle_metadata_fetch(
             &mut app,

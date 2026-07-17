@@ -46,6 +46,7 @@ pub(crate) enum MetadataTarget {
     InfoModal,
     SearchResults,
     List,
+    CurrentRefresh,
     Background,
 }
 

@@ -44,6 +44,7 @@ pub(super) fn handle(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('U') => app.request_mark_all_episodes(false),
         KeyCode::Char('K') => app.request_mark_up_to_current(),
         KeyCode::Char('f') => app.cycle_filter(),
+        KeyCode::Char('R') => app.request_current_anime_refresh(),
         KeyCode::Char('i') => {
             app.open_info_modal();
             app.set_details("Press Esc to close info modal.");
@@ -95,5 +96,47 @@ fn handle_navigation_shortcuts(app: &mut App, key_event: KeyEvent) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use animestan_core::{AnimeEntry, FavoriteStore};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app_with_bookmark() -> App {
+        let mut store = FavoriteStore::load(
+            std::env::temp_dir().join(format!("animestan-normal-test-{}.json", std::process::id())),
+        )
+        .expect("store should load");
+        store
+            .add(AnimeEntry {
+                id: "naruto".to_string(),
+                title: "Naruto".to_string(),
+                source_id: "allanime".to_string(),
+            })
+            .expect("bookmark should persist");
+
+        let mut app = App::new();
+        app.load_bookmarks(&store);
+        app
+    }
+
+    #[test]
+    fn pressing_shift_r_requests_highlighted_anime_refresh() {
+        let mut app = app_with_bookmark();
+
+        handle(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE),
+        );
+
+        let refresh = app
+            .take_pending_anime_refresh()
+            .expect("refresh request should be queued");
+        assert_eq!(refresh.anime_id, "naruto");
+        assert_eq!(refresh.title, "Naruto");
     }
 }

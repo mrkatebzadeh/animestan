@@ -165,13 +165,15 @@ pub(crate) fn handle_metadata_fetch(
             app.set_details(format!("Fetching metadata for {query_string}..."));
             (query_string, source_id.clone(), source_id)
         }
-        MetadataTarget::Background | MetadataTarget::List => return,
+        MetadataTarget::Background | MetadataTarget::List | MetadataTarget::CurrentRefresh => {
+            return;
+        }
     };
 
     let generation = match target {
         MetadataTarget::InfoModal => app.next_info_fetch_generation(),
         MetadataTarget::SearchResults => app.next_search_results_metadata_generation(),
-        MetadataTarget::List | MetadataTarget::Background => 0,
+        MetadataTarget::List | MetadataTarget::Background | MetadataTarget::CurrentRefresh => 0,
     };
 
     if let Some(handle) = active_fetch.take() {
@@ -246,6 +248,14 @@ pub(crate) fn drain_metadata_results(
                     fetch_result,
                 ),
                 MetadataTarget::List => handle_list_metadata_result(
+                    app,
+                    config,
+                    cover_cache,
+                    image_request_tx,
+                    fetch_result,
+                    active_list_metadata_fetch,
+                ),
+                MetadataTarget::CurrentRefresh => handle_current_refresh_metadata_result(
                     app,
                     config,
                     cover_cache,
@@ -393,6 +403,41 @@ fn handle_background_metadata_result(
         }
     }
     app.finish_metadata_background_fetch();
+}
+
+fn handle_current_refresh_metadata_result(
+    app: &mut App,
+    config: &AppConfig,
+    cover_cache: &mut CoverCache,
+    image_request_tx: &UnboundedSender<ImageLoadRequest>,
+    fetch_result: MetadataFetchResult,
+    active_list_metadata_fetch: &mut Option<AbortHandle>,
+) {
+    *active_list_metadata_fetch = None;
+    if fetch_result.generation != app.current_manual_metadata_generation() {
+        return;
+    }
+
+    if let Some(anime_id) = fetch_result.anime_id {
+        match fetch_result.result {
+            Ok(metadata) => {
+                let title = metadata.title.clone();
+                store_metadata_side_effects(
+                    app,
+                    config,
+                    cover_cache,
+                    image_request_tx,
+                    &anime_id,
+                    &metadata,
+                );
+                app.set_details(format!("Refreshed metadata for {title}"));
+            }
+            Err(err) => {
+                app.set_metadata_failure(&anime_id);
+                app.set_details(format!("Metadata refresh failed: {err}"));
+            }
+        }
+    }
 }
 
 pub(crate) fn drain_image_results(

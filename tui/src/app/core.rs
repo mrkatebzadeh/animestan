@@ -50,7 +50,7 @@ impl App {
             ui: UiState {
                 details_text: concat!(
                     "Press s to search, / to filter panels, w/u to mark current episodes, ",
-                    "W/U to mark all, K to mark through current, f for filters, ",
+                    "W/U to mark all, K to mark through current, R to refresh, f for filters, ",
                     "Space to select, d to download, D to delete, q to quit, Ctrl+M to mark search results."
                 )
                 .to_string(),
