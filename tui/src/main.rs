@@ -15,6 +15,7 @@
 
 mod actions;
 mod app;
+mod bootstrap;
 mod cache;
 mod events;
 mod flow;
@@ -47,10 +48,10 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use crate::actions::{handle_delete, handle_download, handle_episode_mark_actions};
 use crate::app::App;
-use crate::cache::{
-    CoverCache, EpisodeCache, cached_episodes, load_metadata_cache_files,
-    populate_anime_progress_from_cache,
+use crate::bootstrap::{
+    BackgroundRefreshHandles, initialize_app_state, start_background_refreshes,
 };
+use crate::cache::{CoverCache, EpisodeCache, cached_episodes};
 use crate::events::{Event, EventHandler};
 use crate::flow::{
     apply_episode_filter, drain_episode_fetch_requests, drain_episode_fetch_results,
@@ -63,7 +64,6 @@ use crate::media::{
 };
 use crate::tasks::{
     EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchResult, PlaybackRequest, PlaybackResult,
-    spawn_background_episode_refresh_tasks, spawn_background_metadata_refresh_tasks,
 };
 use crate::theme::Theme;
 
@@ -121,59 +121,26 @@ fn run_app(
     let mut app = App::new();
     let picker = Picker::from_query_stdio().ok();
     app.set_image_picker(picker);
-    for (anime_id, metadata) in load_metadata_cache_files(config) {
-        app.store_metadata(&anime_id, &metadata);
-    }
-    app.sync_bookmark_cache(&favorites);
-    if let Ok(cache_guard) = episode_cache.lock() {
-        populate_anime_progress_from_cache(&mut app, &tracker, &cache_guard);
-    }
-    initialize_app(&mut app, client.as_ref());
-    if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config) {
-        app.set_details(format!("Failed to refresh indicators: {err}"));
-    }
-
-    let background_metadata_targets: Vec<(String, String)> = app
-        .bookmark_entries()
-        .iter()
-        .map(|entry| (entry.anime.id.clone(), entry.anime.title.clone()))
-        .collect();
-    let background_episode_targets: Vec<String> = app
-        .bookmark_entries()
-        .iter()
-        .map(|entry| entry.anime.id.clone())
-        .collect();
-    let total_background_jobs =
-        background_metadata_targets.len() + background_episode_targets.len();
-    if total_background_jobs > 0 {
-        app.start_metadata_background_refresh(total_background_jobs);
-    }
-    if !background_episode_targets.is_empty() {
-        for anime_id in &background_episode_targets {
-            app.mark_episode_refresh_pending(anime_id.clone());
-        }
-    }
-    let background_metadata_handles = if background_metadata_targets.is_empty() {
-        Vec::new()
-    } else {
-        spawn_background_metadata_refresh_tasks(
-            &runtime_handle,
-            &metadata_resolver,
-            background_metadata_targets,
-            &metadata_result_tx,
-        )
-    };
-    let background_episode_handles = if background_episode_targets.is_empty() {
-        Vec::new()
-    } else {
-        spawn_background_episode_refresh_tasks(
-            &runtime_handle,
-            &client,
-            background_episode_targets,
-            &episode_cache,
-            background_job_tx.clone(),
-        )
-    };
+    initialize_app_state(
+        &mut app,
+        client.as_ref(),
+        &favorites,
+        &episode_cache,
+        &tracker,
+        config,
+    );
+    let BackgroundRefreshHandles {
+        metadata: background_metadata_handles,
+        episode: background_episode_handles,
+    } = start_background_refreshes(
+        &mut app,
+        &runtime_handle,
+        &metadata_resolver,
+        &client,
+        &episode_cache,
+        &background_job_tx,
+        &metadata_result_tx,
+    );
 
     spawn_image_loader(&runtime_handle, image_request_rx, image_result_tx);
 
@@ -310,14 +277,6 @@ fn run_app(
     }
 
     Ok(())
-}
-
-fn initialize_app(app: &mut App, client: &AnimeClient<FetchBackend>) {
-    if app.search_query().trim().is_empty() {
-        app.set_details("Press / to search for an anime.");
-    } else if let Err(err) = app.search(client) {
-        app.set_details(format!("Search failed: {err}"));
-    }
 }
 
 fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
