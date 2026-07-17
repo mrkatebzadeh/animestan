@@ -23,6 +23,7 @@ mod format;
 mod logging;
 mod metadata;
 mod models;
+mod playback;
 mod source;
 mod store;
 mod tracking;
@@ -45,5 +46,6 @@ pub use crate::metadata::{
     MetadataResolver, MetadataSource,
 };
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
+pub use crate::playback::{PlayerOutput, play_episode};
 pub use crate::tracking::{EpisodeProgress, EpisodeTracker};
 pub use anyhow::Result as AnyhowResult;
