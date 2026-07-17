@@ -13,25 +13,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+mod actions;
 mod app;
 mod cache;
 mod events;
+mod flow;
 mod media;
 mod playback;
 mod tasks;
 mod theme;
 mod ui;
 
-use std::collections::HashMap;
 use std::io::{self, Stdout};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AppConfig, Episode, EpisodeTracker, FavoriteStore, FetchBackend, MetadataResolver,
-    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
+    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, MetadataResolver,
+    init_logging,
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::execute;
 use crossterm::terminal::{
@@ -42,17 +43,20 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::picker::Picker;
 use spdlog::prelude::*;
-use tokio::runtime::Handle;
-use tokio::sync::mpsc::{
-    UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel,
-};
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-use crate::app::{App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
+use crate::actions::{handle_delete, handle_download, handle_episode_mark_actions};
+use crate::app::App;
 use crate::cache::{
-    CoverCache, EpisodeCache, cache_episodes, cached_episodes, load_metadata_cache_files,
+    CoverCache, EpisodeCache, cached_episodes, load_metadata_cache_files,
     populate_anime_progress_from_cache,
 };
 use crate::events::{Event, EventHandler};
+use crate::flow::{
+    apply_episode_filter, drain_episode_fetch_requests, drain_episode_fetch_results,
+    drain_playback_request_queue, drain_playback_results, handle_playback_requests,
+    refresh_episode_indicators, update_playback_elapsed,
+};
 use crate::media::{
     ImageLoadRequest, ImageLoadResult, drain_image_results, drain_metadata_results,
     handle_list_metadata_fetch, handle_metadata_fetch, queue_image_load, spawn_image_loader,
@@ -60,7 +64,6 @@ use crate::media::{
 use crate::tasks::{
     EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchResult, PlaybackRequest, PlaybackResult,
     spawn_background_episode_refresh_tasks, spawn_background_metadata_refresh_tasks,
-    spawn_episode_fetch_task, spawn_playback_task,
 };
 use crate::theme::Theme;
 
@@ -225,71 +228,16 @@ fn run_app(
             &mut active_metadata_fetch,
         );
 
-        loop {
-            match request_rx.try_recv() {
-                Ok(request) => {
-                    if let Some(handle) = active_fetch.take() {
-                        handle.abort();
-                    }
-                    let abort_handle = spawn_episode_fetch_task(
-                        &runtime_handle,
-                        Arc::clone(&client),
-                        request,
-                        result_tx.clone(),
-                    );
-                    active_fetch = Some(abort_handle);
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    app.set_details("Episode fetch queue disconnected.");
-                    app.set_episodes_loading(false);
-                    break;
-                }
-            }
-        }
+        drain_episode_fetch_requests(
+            &mut app,
+            &runtime_handle,
+            &client,
+            &mut request_rx,
+            &result_tx,
+            &mut active_fetch,
+        );
 
-        loop {
-            match result_rx.try_recv() {
-                Ok(fetch_result) => {
-                    if fetch_result.generation != app.current_fetch_generation() {
-                        continue;
-                    }
-
-                    match fetch_result.result {
-                        Ok(episodes) => {
-                            let count = episodes.len();
-                            let anime_id = fetch_result.anime_id.clone();
-                            app.set_episodes(episodes.clone());
-                            if let Err(err) = cache_episodes(&episode_cache, &anime_id, &episodes) {
-                                app.set_details(format!("Failed to cache episodes: {err}"));
-                            }
-                            app.set_details(format!("Loaded {count} episodes"));
-                            if app.current_filter().is_some() {
-                                if let Err(err) = apply_episode_filter(&mut app, &tracker) {
-                                    app.set_details(format!("Filter failed: {err}"));
-                                }
-                            }
-                            if let Err(err) = refresh_episode_indicators(&mut app, &tracker, config)
-                            {
-                                app.set_details(format!("Failed to refresh indicators: {err}"));
-                            }
-                            app.clear_episode_refresh_pending(&anime_id);
-                        }
-                        Err(err) => {
-                            app.set_episodes_loading(false);
-                            app.set_details(format!("Episode load failed: {err}"));
-                            app.clear_episode_refresh_pending(&fetch_result.anime_id);
-                        }
-                    }
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    app.set_details("Episode fetch worker disconnected.");
-                    app.set_episodes_loading(false);
-                    break;
-                }
-            }
-        }
+        drain_episode_fetch_results(&mut app, &tracker, config, &episode_cache, &mut result_rx);
 
         drain_metadata_results(
             &mut app,
@@ -455,419 +403,8 @@ fn handle_filters(
     }
 }
 
-fn handle_download(
-    app: &mut App,
-    config: &AppConfig,
-    client: &AnimeClient<FetchBackend>,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-) -> bool {
-    if !app.take_pending_download() {
-        return false;
-    }
-
-    let Some(episode_id) = app.current_episode_id() else {
-        app.set_details("Highlight an episode to download.");
-        return true;
-    };
-
-    info!("download requested from TUI for '{episode_id}'");
-    let episode_title = app.current_episode_title();
-
-    if local_playback_url(config, &episode_id).is_some() {
-        let path = episode_file_path(config, &episode_id);
-        app.set_details(format!("Episode already downloaded at {}", path.display()));
-        info!(
-            "episode '{episode_id}' already downloaded locally at {}",
-            path.display()
-        );
-        if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-            app.set_details(format!("Failed to refresh indicators: {err}"));
-        }
-        return true;
-    }
-
-    app.set_playback_status(PlaybackStatus::Downloading);
-    let stream = match client.resolve_stream_url(&episode_id) {
-        Ok(link) => link,
-        Err(err) => {
-            app.set_playback_status(PlaybackStatus::None);
-            app.set_details(format!("Failed to resolve stream: {err}"));
-            return true;
-        }
-    };
-
-    let download_result = download_episode(config, &episode_id, &stream.url);
-    app.set_playback_status(PlaybackStatus::None);
-
-    match download_result {
-        Ok(saved_path) => {
-            info!(
-                "downloaded episode '{episode_id}' to {}",
-                saved_path.display()
-            );
-            if let Some(title) = episode_title {
-                app.set_details(format!("Downloaded {title} to {}", saved_path.display()));
-            } else {
-                app.set_details(format!("Download saved to {}", saved_path.display()));
-            }
-            if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-                app.set_details(format!("Failed to refresh indicators: {err}"));
-            }
-        }
-        Err(err) => {
-            app.set_details(format!("Download failed: {err}"));
-        }
-    }
-
-    false
-}
-
-fn handle_delete(app: &mut App, config: &AppConfig, tracker: &Arc<Mutex<EpisodeTracker>>) -> bool {
-    if !app.take_pending_delete() {
-        return false;
-    }
-
-    let Some(episode_id) = app.current_episode_id() else {
-        app.set_details("Highlight an episode to delete its download.");
-        return true;
-    };
-
-    info!("delete requested from TUI for '{episode_id}'");
-    let episode_title = app.current_episode_title();
-    match delete_episode(config, &episode_id) {
-        Ok(true) => {
-            info!("deleted download for '{episode_id}'");
-            if let Some(title) = episode_title {
-                app.set_details(format!("Deleted download for {title}"));
-            } else {
-                app.set_details("Deleted download.");
-            }
-            if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-                app.set_details(format!("Failed to refresh indicators: {err}"));
-            }
-        }
-        Ok(false) => {
-            info!("no download found for '{episode_id}'");
-            app.set_details("No download found to delete.");
-        }
-        Err(err) => {
-            app.set_details(format!("Delete failed: {err}"));
-        }
-    }
-
-    false
-}
-
-fn handle_episode_mark_actions(
-    app: &mut App,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    config: &AppConfig,
-) {
-    let Some(action) = app.take_pending_episode_mark_action() else {
-        return;
-    };
-
-    let mark_result = {
-        let Ok(mut guard) = tracker.lock() else {
-            app.set_details("Episode tracker lock poisoned.");
-            return;
-        };
-        perform_episode_mark_action(app, &mut guard, action)
-    };
-
-    let message = match mark_result {
-        Ok(message) => message,
-        Err(err) => {
-            app.set_details(err);
-            return;
-        }
-    };
-
-    if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-        app.set_details(format!("Failed to refresh indicators: {err}"));
-    } else {
-        app.set_details(message);
-    }
-}
-
-fn perform_episode_mark_action(
-    app: &App,
-    tracker: &mut EpisodeTracker,
-    action: EpisodeMarkAction,
-) -> Result<String, String> {
-    match action {
-        EpisodeMarkAction::Current { watched } => {
-            let episode_id = app
-                .current_episode_id()
-                .ok_or_else(|| "Highlight an episode to mark it.".to_string())?;
-            let result = if watched {
-                tracker.mark_watched(&episode_id)
-            } else {
-                tracker.mark_unwatched(&episode_id)
-            };
-            result.map_err(|err| err.to_string())?;
-            let message = if watched {
-                "Marked current episode as watched."
-            } else {
-                "Marked current episode as unwatched."
-            };
-            Ok(message.to_string())
-        }
-        EpisodeMarkAction::All { watched } => {
-            let episodes = app.unfiltered_episodes();
-            if episodes.is_empty() {
-                return Err("No episodes loaded to mark.".to_string());
-            }
-            let ids: Vec<String> = episodes.iter().map(|episode| episode.id.clone()).collect();
-            tracker
-                .mark_many(&ids, watched)
-                .map_err(|err| err.to_string())?;
-            let message = if watched {
-                "Marked all loaded episodes as watched."
-            } else {
-                "Marked all loaded episodes as unwatched."
-            };
-            Ok(message.to_string())
-        }
-        EpisodeMarkAction::UpToCurrent => {
-            let current_id = app
-                .current_episode_id()
-                .ok_or_else(|| "Highlight an episode to set the range.".to_string())?;
-            let mut episodes: Vec<Episode> = app.unfiltered_episodes().to_vec();
-            if episodes.is_empty() {
-                return Err("No episodes loaded to mark.".to_string());
-            }
-            episodes.sort_by_key(|episode| episode.number);
-            let mut ids = Vec::new();
-            for episode in episodes {
-                ids.push(episode.id.clone());
-                if episode.id == current_id {
-                    break;
-                }
-            }
-            if ids.is_empty() || ids.last() != Some(&current_id) {
-                return Err("Current episode is not present in the loaded list.".to_string());
-            }
-            tracker
-                .mark_many(&ids, true)
-                .map_err(|err| err.to_string())?;
-            Ok("Marked episodes up to current as watched.".to_string())
-        }
-    }
-}
-
-fn handle_playback_requests(
-    app: &mut App,
-    config: &Arc<AppConfig>,
-    playback_request_tx: &UnboundedSender<PlaybackRequest>,
-) {
-    if !app.take_pending_play_async() {
-        return;
-    }
-
-    if app.playback_in_progress() {
-        app.set_details("Playback already running");
-        return;
-    }
-
-    let (episode_id, episode_title, anime_id) =
-        if let Some((episode_id, episode_title, anime_id)) = app.take_pending_playback_override() {
-            (episode_id, episode_title, anime_id)
-        } else {
-            let Some(episode_id) = app.current_episode_id() else {
-                app.set_details("Highlight an episode to play");
-                return;
-            };
-            let anime_id = app.current_anime_id();
-            let episode_title = app.current_episode_title();
-            (episode_id, episode_title, anime_id)
-        };
-    let using_local = local_playback_url(config, &episode_id).is_some();
-
-    if let Some(title) = &episode_title {
-        if using_local {
-            app.set_details(format!("Launching local playback for {title}"));
-        } else {
-            app.set_details(format!("Launching player for {title}"));
-        }
-    } else if using_local {
-        app.set_details("Launching local playback...");
-    } else {
-        app.set_details("Launching player...");
-    }
-
-    let request = PlaybackRequest {
-        episode_id: episode_id.clone(),
-        episode_title: episode_title.clone(),
-    };
-    let requested_title = request.episode_title.clone();
-
-    if playback_request_tx.send(request).is_err() {
-        app.set_details("Playback queue disconnected.");
-        app.set_current_playing_episode(None);
-        return;
-    }
-
-    app.record_played_episode(episode_id.clone(), anime_id, requested_title);
-    app.set_current_playback_titles(app.current_anime_title(), episode_title.clone());
-    app.set_current_playing_episode(Some(episode_id));
-    app.set_playback_in_progress(true);
-    app.set_playback_status(PlaybackStatus::Playing);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn drain_playback_request_queue(
-    app: &mut App,
-    runtime: &Handle,
-    client: &Arc<AnimeClient<FetchBackend>>,
-    config: &Arc<AppConfig>,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    request_rx: &mut UnboundedReceiver<PlaybackRequest>,
-    result_tx: &UnboundedSender<PlaybackResult>,
-    active_playback: &mut Option<AbortHandle>,
-) {
-    loop {
-        match request_rx.try_recv() {
-            Ok(request) => {
-                if let Some(handle) = active_playback.take() {
-                    handle.abort();
-                }
-                let abort_handle = spawn_playback_task(
-                    runtime,
-                    Arc::clone(client),
-                    Arc::clone(config),
-                    Arc::clone(tracker),
-                    request,
-                    result_tx.clone(),
-                );
-                *active_playback = Some(abort_handle);
-            }
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
-                app.set_details("Playback request queue disconnected.");
-                app.set_playback_status(PlaybackStatus::None);
-                app.set_playback_in_progress(false);
-                app.set_current_playing_episode(None);
-                break;
-            }
-        }
-    }
-}
-
-fn drain_playback_results(
-    app: &mut App,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    config: &Arc<AppConfig>,
-    result_rx: &mut UnboundedReceiver<PlaybackResult>,
-    active_playback: &mut Option<AbortHandle>,
-) {
-    loop {
-        match result_rx.try_recv() {
-            Ok(result) => {
-                *active_playback = None;
-                app.set_playback_status(PlaybackStatus::None);
-                app.set_playback_in_progress(false);
-                app.set_current_playing_episode(None);
-
-                let PlaybackResult {
-                    episode_title,
-                    outcome,
-                } = result;
-
-                match outcome {
-                    Ok(()) => {
-                        if let Some(title) = episode_title {
-                            app.set_details(format!("Finished playing {title}"));
-                        } else {
-                            app.set_details("Playback finished");
-                        }
-                    }
-                    Err(err) => {
-                        app.set_details(format!("Playback failed: {err}"));
-                    }
-                }
-
-                if let Err(err) = refresh_episode_indicators(app, tracker, config) {
-                    app.set_details(format!("Failed to refresh indicators: {err}"));
-                }
-            }
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) => {
-                app.set_details("Playback worker disconnected.");
-                app.set_playback_status(PlaybackStatus::None);
-                app.set_playback_in_progress(false);
-                app.set_current_playing_episode(None);
-                break;
-            }
-        }
-    }
-}
-
 #[derive(Parser)]
 struct Args {
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbosity: u8,
-}
-
-fn apply_episode_filter(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) -> Result<()> {
-    if let Some(filter) = app.current_filter() {
-        let filtered = {
-            let guard = tracker
-                .lock()
-                .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
-            guard.filter_episodes(app.unfiltered_episodes(), filter)
-        };
-        app.set_filtered_episodes(filtered);
-    } else {
-        app.clear_filtered_episodes();
-    }
-
-    Ok(())
-}
-
-fn refresh_episode_indicators(
-    app: &mut App,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    config: &AppConfig,
-) -> Result<()> {
-    let indicators = {
-        let guard = tracker
-            .lock()
-            .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
-        let mut indicators = HashMap::with_capacity(app.unfiltered_episodes().len());
-        for episode in app.unfiltered_episodes() {
-            let state = guard.state_for(&episode.id);
-            let watched = state.as_ref().is_some_and(|status| status.watched);
-            let in_progress = state.as_ref().is_some_and(|status| status.in_progress);
-            let downloaded = episode_file_path(config, &episode.id).exists();
-            indicators.insert(
-                episode.id.clone(),
-                EpisodeIndicators {
-                    watched,
-                    in_progress,
-                    downloaded,
-                },
-            );
-        }
-        indicators
-    };
-    app.set_episode_indicators(indicators);
-    app.record_selected_anime_progress();
-    Ok(())
-}
-
-fn update_playback_elapsed(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) {
-    if let Some(episode_id) = app.current_playing_episode_id() {
-        if let Ok(guard) = tracker.lock() {
-            let elapsed = guard
-                .progress_for(episode_id)
-                .and_then(|progress| progress.last_position_sec);
-            app.set_playback_elapsed(elapsed);
-        } else {
-            warn!("episode tracker lock poisoned while updating playback progress");
-            app.set_playback_elapsed(None);
-        }
-    } else {
-        app.set_playback_elapsed(None);
-    }
 }
