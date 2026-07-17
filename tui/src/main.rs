@@ -62,8 +62,8 @@ use crate::flow::{
     handle_playback_requests, update_playback_elapsed,
 };
 use crate::media::{
-    ImageLoadRequest, ImageLoadResult, drain_image_results, drain_metadata_results,
-    handle_list_metadata_fetch, handle_metadata_fetch, spawn_image_loader,
+    ActiveMetadataFetch, ImageLoadRequest, ImageLoadResult, drain_image_results,
+    drain_metadata_results, handle_list_metadata_fetch, handle_metadata_fetch, spawn_image_loader,
 };
 use crate::tasks::{
     BackgroundEpisodeRefreshResult, EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchResult,
@@ -120,7 +120,7 @@ fn run_app(
     let (image_request_tx, image_request_rx) = unbounded_channel::<ImageLoadRequest>();
     let (image_result_tx, mut image_result_rx) = unbounded_channel::<ImageLoadResult>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
-    let mut active_list_metadata_fetch: Option<AbortHandle> = None;
+    let mut active_list_metadata_fetch: Option<ActiveMetadataFetch> = None;
     let mut cover_cache = CoverCache::load(config);
 
     let mut app = App::new();

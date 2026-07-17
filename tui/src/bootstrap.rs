@@ -75,16 +75,11 @@ pub(crate) fn start_background_refreshes(
         .iter()
         .map(|entry| entry.anime.id.clone())
         .collect();
-    let total_background_jobs =
-        background_metadata_targets.len() + background_episode_targets.len();
-    if total_background_jobs > 0 {
-        app.start_metadata_background_refresh(total_background_jobs);
-    }
-    if !background_episode_targets.is_empty() {
-        for anime_id in &background_episode_targets {
-            app.mark_episode_refresh_pending(anime_id.clone());
-        }
-    }
+    prime_background_refresh_state(
+        app,
+        &background_metadata_targets,
+        &background_episode_targets,
+    );
 
     let metadata = if background_metadata_targets.is_empty() {
         Vec::new()
@@ -111,10 +106,105 @@ pub(crate) fn start_background_refreshes(
     BackgroundRefreshHandles { metadata, episode }
 }
 
+fn prime_background_refresh_state(
+    app: &mut App,
+    background_metadata_targets: &[(String, String)],
+    background_episode_targets: &[String],
+) {
+    let total_background_jobs =
+        background_metadata_targets.len() + background_episode_targets.len();
+    if total_background_jobs > 0 {
+        app.start_metadata_background_refresh(total_background_jobs);
+    }
+    for (anime_id, _) in background_metadata_targets {
+        app.mark_metadata_pending(anime_id.clone());
+    }
+    if !background_episode_targets.is_empty() {
+        for anime_id in background_episode_targets {
+            app.mark_episode_refresh_pending(anime_id.clone());
+        }
+    }
+}
+
 fn initialize_search_state(app: &mut App, client: &AnimeClient<FetchBackend>) {
     if app.search_query().trim().is_empty() {
         app.set_details("Press / to search for an anime.");
     } else if let Err(err) = app.search(client) {
         app.set_details(format!("Search failed: {err}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prime_background_refresh_state;
+    use crate::app::App;
+    use animestan_core::{AnimeEntry, FavoriteStore};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(name: &str) -> String {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should advance")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "animestan-bootstrap-{name}-{}-{stamp}.json",
+                std::process::id()
+            ))
+            .display()
+            .to_string()
+    }
+
+    fn test_config() -> animestan_core::AppConfig {
+        animestan_core::AppConfig {
+            favorites_path: Some(unique_temp_path("favorites")),
+            tracking_path: Some(unique_temp_path("tracking")),
+            metadata_cache_path: Some(unique_temp_path("metadata-cache")),
+            episodes_cache_path: Some(unique_temp_path("episodes-cache")),
+            ..Default::default()
+        }
+    }
+
+    fn sample_bookmarks() -> FavoriteStore {
+        let config = test_config();
+        let mut favorites =
+            FavoriteStore::load(config.favorites_path()).expect("favorites store should load");
+        favorites
+            .add(AnimeEntry {
+                id: "naruto".to_string(),
+                title: "Naruto".to_string(),
+                source_id: "allanime".to_string(),
+            })
+            .expect("favorite should persist");
+        favorites
+            .add(AnimeEntry {
+                id: "bleach".to_string(),
+                title: "Bleach".to_string(),
+                source_id: "allanime".to_string(),
+            })
+            .expect("favorite should persist");
+        favorites
+    }
+
+    #[test]
+    fn priming_background_refreshes_blocks_duplicate_list_metadata_fetches() {
+        let favorites = sample_bookmarks();
+        let mut app = App::new();
+        app.load_bookmarks(&favorites);
+        let _ = app.take_anime_selection_changed();
+        let metadata_targets: Vec<(String, String)> = app
+            .bookmark_entries()
+            .iter()
+            .map(|entry| (entry.anime.id.clone(), entry.anime.title.clone()))
+            .collect();
+        let episode_targets: Vec<String> = app
+            .bookmark_entries()
+            .iter()
+            .map(|entry| entry.anime.id.clone())
+            .collect();
+
+        prime_background_refresh_state(&mut app, &metadata_targets, &episode_targets);
+
+        assert!(app.next_metadata_fetch_candidate().is_none());
     }
 }

@@ -137,6 +137,14 @@ impl App {
         self.data.episode_refresh_pending.remove(anime_id);
     }
 
+    pub(crate) fn mark_metadata_pending(&mut self, anime_id: String) {
+        self.data.metadata_pending.insert(anime_id);
+    }
+
+    pub(crate) fn clear_metadata_pending(&mut self, anime_id: &str) {
+        self.data.metadata_pending.remove(anime_id);
+    }
+
     pub(crate) fn request_current_anime_refresh(&mut self) {
         let Some(anime) = self.current_anime() else {
             self.set_details("Highlight an anime to refresh.");

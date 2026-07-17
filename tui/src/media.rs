@@ -30,6 +30,12 @@ use crate::tasks::{
     MetadataFetchRequest, MetadataFetchResult, MetadataTarget, spawn_metadata_fetch_task,
 };
 
+pub(crate) struct ActiveMetadataFetch {
+    pub(crate) anime_id: Option<String>,
+    pub(crate) target: MetadataTarget,
+    pub(crate) handle: AbortHandle,
+}
+
 pub(crate) struct ImageLoadRequest {
     pub(crate) id: String,
     pub(crate) url: String,
@@ -198,7 +204,7 @@ pub(crate) fn handle_list_metadata_fetch(
     resolver: &Arc<MetadataResolver>,
     runtime: &Handle,
     result_tx: &UnboundedSender<MetadataFetchResult>,
-    active_fetch: &mut Option<AbortHandle>,
+    active_fetch: &mut Option<ActiveMetadataFetch>,
 ) {
     if active_fetch.is_some() {
         return;
@@ -207,11 +213,12 @@ pub(crate) fn handle_list_metadata_fetch(
     let Some((anime_id, title)) = app.next_metadata_fetch_candidate() else {
         return;
     };
+    let fetch_anime_id = anime_id.clone();
 
     let request = MetadataFetchRequest {
         generation: 0,
         query: title,
-        source_id: Some(anime_id.clone()),
+        source_id: Some(fetch_anime_id.clone()),
         anime_id: Some(anime_id),
         target: MetadataTarget::List,
         force_refresh: false,
@@ -219,7 +226,11 @@ pub(crate) fn handle_list_metadata_fetch(
 
     let abort_handle =
         spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone());
-    *active_fetch = Some(abort_handle);
+    *active_fetch = Some(ActiveMetadataFetch {
+        anime_id: Some(fetch_anime_id),
+        target: MetadataTarget::List,
+        handle: abort_handle,
+    });
 }
 
 pub(crate) fn drain_metadata_results(
@@ -228,7 +239,7 @@ pub(crate) fn drain_metadata_results(
     cover_cache: &mut CoverCache,
     image_request_tx: &UnboundedSender<ImageLoadRequest>,
     result_rx: &mut UnboundedReceiver<MetadataFetchResult>,
-    active_list_metadata_fetch: &mut Option<AbortHandle>,
+    active_list_metadata_fetch: &mut Option<ActiveMetadataFetch>,
 ) {
     loop {
         match result_rx.try_recv() {
@@ -356,7 +367,7 @@ fn handle_list_metadata_result(
     cover_cache: &mut CoverCache,
     image_request_tx: &UnboundedSender<ImageLoadRequest>,
     fetch_result: MetadataFetchResult,
-    active_list_metadata_fetch: &mut Option<AbortHandle>,
+    active_list_metadata_fetch: &mut Option<ActiveMetadataFetch>,
 ) {
     *active_list_metadata_fetch = None;
     if let Some(anime_id) = fetch_result.anime_id {
@@ -411,12 +422,12 @@ fn handle_current_refresh_metadata_result(
     cover_cache: &mut CoverCache,
     image_request_tx: &UnboundedSender<ImageLoadRequest>,
     fetch_result: MetadataFetchResult,
-    active_list_metadata_fetch: &mut Option<AbortHandle>,
+    active_list_metadata_fetch: &mut Option<ActiveMetadataFetch>,
 ) {
-    *active_list_metadata_fetch = None;
     if fetch_result.generation != app.current_manual_metadata_generation() {
         return;
     }
+    *active_list_metadata_fetch = None;
 
     if let Some(anime_id) = fetch_result.anime_id {
         match fetch_result.result {
@@ -491,5 +502,73 @@ fn store_metadata_side_effects(
     }
     if let Some(image_url) = metadata.image_url.as_deref() {
         queue_image_load(app, cover_cache, image_request_tx, anime_id, image_url);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ActiveMetadataFetch, AppConfig, CoverCache, ImageLoadRequest, MetadataFetchResult,
+        MetadataTarget, handle_current_refresh_metadata_result,
+    };
+    use crate::app::App;
+    use anyhow::anyhow;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc::unbounded_channel;
+
+    fn unique_temp_path(name: &str) -> String {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should advance")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "animestan-media-{name}-{}-{stamp}.json",
+                std::process::id()
+            ))
+            .display()
+            .to_string()
+    }
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            favorites_path: Some(unique_temp_path("favorites")),
+            tracking_path: Some(unique_temp_path("tracking")),
+            metadata_cache_path: Some(unique_temp_path("metadata-cache")),
+            episodes_cache_path: Some(unique_temp_path("episodes-cache")),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stale_current_refresh_result_keeps_newer_refresh_handle_active() {
+        let config = test_config();
+        let mut app = App::new();
+        let _ = app.next_manual_metadata_generation();
+        let mut cover_cache = CoverCache::load(&config);
+        let (image_request_tx, _image_request_rx) = unbounded_channel::<ImageLoadRequest>();
+        let (abort_handle, _abort_registration) = futures::future::AbortHandle::new_pair();
+        let mut active_manual_refresh = Some(ActiveMetadataFetch {
+            anime_id: Some("naruto".to_string()),
+            target: MetadataTarget::CurrentRefresh,
+            handle: abort_handle,
+        });
+        let stale_result = MetadataFetchResult {
+            generation: 0,
+            target: MetadataTarget::CurrentRefresh,
+            anime_id: Some("naruto".to_string()),
+            result: Err(anyhow!("stale refresh")),
+        };
+
+        handle_current_refresh_metadata_result(
+            &mut app,
+            &config,
+            &mut cover_cache,
+            &image_request_tx,
+            stale_result,
+            &mut active_manual_refresh,
+        );
+
+        assert!(active_manual_refresh.is_some());
     }
 }

@@ -245,14 +245,7 @@ pub(crate) fn spawn_background_metadata_refresh_tasks(
     entries
         .into_iter()
         .map(|(anime_id, query)| {
-            let request = MetadataFetchRequest {
-                generation: 0,
-                query,
-                source_id: None,
-                anime_id: Some(anime_id.clone()),
-                target: MetadataTarget::Background,
-                force_refresh: true,
-            };
+            let request = background_metadata_refresh_request(anime_id, query);
             spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone())
         })
         .collect()
@@ -338,4 +331,35 @@ fn mark_episode_started(tracker: &Arc<Mutex<EpisodeTracker>>, episode_id: &str) 
         .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
     guard.mark_started(episode_id)?;
     Ok(())
+}
+
+fn background_metadata_refresh_request(anime_id: String, query: String) -> MetadataFetchRequest {
+    MetadataFetchRequest {
+        generation: 0,
+        query,
+        source_id: Some(anime_id.clone()),
+        anime_id: Some(anime_id),
+        target: MetadataTarget::Background,
+        force_refresh: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MetadataTarget, background_metadata_refresh_request};
+
+    #[test]
+    fn background_metadata_refresh_uses_bookmark_id_as_source_id() {
+        let anime_id = String::from("show-123");
+        let query = String::from("Naruto");
+
+        let request = background_metadata_refresh_request(anime_id.clone(), query.clone());
+
+        assert_eq!(request.generation, 0);
+        assert_eq!(request.query, query);
+        assert_eq!(request.source_id, Some(anime_id.clone()));
+        assert_eq!(request.anime_id, Some(anime_id));
+        assert_eq!(request.target, MetadataTarget::Background);
+        assert!(request.force_refresh);
+    }
 }

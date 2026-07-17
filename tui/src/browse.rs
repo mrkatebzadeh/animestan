@@ -16,14 +16,13 @@
 use std::sync::{Arc, Mutex};
 
 use animestan_core::{AnimeClient, AppConfig, EpisodeTracker, FetchBackend, MetadataResolver};
-use futures::future::AbortHandle;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::App;
 use crate::cache::{CoverCache, EpisodeCache, cached_episodes};
 use crate::flow::{apply_episode_filter, refresh_episode_indicators};
-use crate::media::{ImageLoadRequest, queue_image_load};
+use crate::media::{ActiveMetadataFetch, ImageLoadRequest, queue_image_load};
 use crate::tasks::{
     EpisodeFetchRequest, MetadataFetchRequest, MetadataFetchResult, MetadataTarget,
     spawn_metadata_fetch_task,
@@ -45,7 +44,7 @@ pub(crate) fn handle_current_anime_refresh(
     runtime: &Handle,
     resolver: &Arc<MetadataResolver>,
     metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
-    active_metadata_fetch: &mut Option<AbortHandle>,
+    active_metadata_fetch: &mut Option<ActiveMetadataFetch>,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
 ) {
     let Some(refresh) = app.take_pending_anime_refresh() else {
@@ -160,18 +159,24 @@ fn request_metadata_refresh(
     runtime: &Handle,
     resolver: &Arc<MetadataResolver>,
     metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
-    active_metadata_fetch: &mut Option<AbortHandle>,
+    active_metadata_fetch: &mut Option<ActiveMetadataFetch>,
     refresh: crate::app::AnimeRefreshRequest,
 ) {
-    if let Some(handle) = active_metadata_fetch.take() {
-        handle.abort();
+    if let Some(active_fetch) = active_metadata_fetch.take() {
+        if matches!(active_fetch.target, MetadataTarget::List)
+            && let Some(anime_id) = active_fetch.anime_id.as_deref()
+        {
+            app.clear_metadata_pending(anime_id);
+        }
+        active_fetch.handle.abort();
     }
+    let anime_id = refresh.anime_id;
 
     let request = MetadataFetchRequest {
         generation: app.next_manual_metadata_generation(),
         query: refresh.title,
-        source_id: Some(refresh.anime_id.clone()),
-        anime_id: Some(refresh.anime_id),
+        source_id: Some(anime_id.clone()),
+        anime_id: Some(anime_id.clone()),
         target: MetadataTarget::CurrentRefresh,
         force_refresh: true,
     };
@@ -182,5 +187,130 @@ fn request_metadata_refresh(
         request,
         metadata_result_tx.clone(),
     );
-    *active_metadata_fetch = Some(abort_handle);
+    *active_metadata_fetch = Some(ActiveMetadataFetch {
+        anime_id: Some(anime_id),
+        target: MetadataTarget::CurrentRefresh,
+        handle: abort_handle,
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::request_metadata_refresh;
+    use crate::app::{AnimeRefreshRequest, App};
+    use crate::media::ActiveMetadataFetch;
+    use crate::tasks::MetadataTarget;
+    use animestan_core::{
+        AnimeEntry, AnimeMetadata, FavoriteStore, MetadataResolver, MetadataSource,
+    };
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::runtime::Builder;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    fn unique_temp_path(name: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should advance")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "animestan-browse-{name}-{}-{stamp}.json",
+            std::process::id()
+        ))
+    }
+
+    fn app_with_two_bookmarks() -> App {
+        let mut store =
+            FavoriteStore::load(unique_temp_path("favorites")).expect("store should load");
+        store
+            .add(AnimeEntry {
+                id: "naruto".to_string(),
+                title: "Naruto".to_string(),
+                source_id: "allanime".to_string(),
+            })
+            .expect("bookmark should persist");
+        store
+            .add(AnimeEntry {
+                id: "bleach".to_string(),
+                title: "Bleach".to_string(),
+                source_id: "allanime".to_string(),
+            })
+            .expect("bookmark should persist");
+
+        let mut app = App::new();
+        app.load_bookmarks(&store);
+        let _ = app.take_anime_selection_changed();
+        app
+    }
+
+    fn sample_metadata(title: &str) -> AnimeMetadata {
+        AnimeMetadata {
+            title: title.to_string(),
+            synopsis: None,
+            score: None,
+            genres: Vec::new(),
+            studios: Vec::new(),
+            status: None,
+            season: None,
+            year: None,
+            trailer_url: None,
+            image_url: None,
+            source_url: format!("https://example.com/{title}"),
+            source: MetadataSource::AllManga,
+        }
+    }
+
+    #[test]
+    fn manual_refresh_requeues_aborted_list_metadata_fetch() {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime should build");
+        let resolver = Arc::new(MetadataResolver::default());
+        let mut app = app_with_two_bookmarks();
+        let first_candidate = app
+            .next_metadata_fetch_candidate()
+            .expect("first list metadata candidate should exist");
+        let aborted_anime_id = first_candidate.0.clone();
+        app.move_down();
+        let _ = app.take_anime_selection_changed();
+        let refresh_anime_id = app
+            .current_anime_id()
+            .expect("second bookmark should exist");
+        let refresh_title = app
+            .current_anime_title()
+            .expect("second bookmark should have a title");
+        assert_ne!(refresh_anime_id, aborted_anime_id);
+        let (result_tx, _result_rx) = unbounded_channel();
+        let (abort_handle, _abort_registration) = futures::future::AbortHandle::new_pair();
+        let mut active_metadata_fetch = Some(ActiveMetadataFetch {
+            anime_id: Some(aborted_anime_id.clone()),
+            target: MetadataTarget::List,
+            handle: abort_handle,
+        });
+
+        request_metadata_refresh(
+            &mut app,
+            runtime.handle(),
+            &resolver,
+            &result_tx,
+            &mut active_metadata_fetch,
+            AnimeRefreshRequest {
+                anime_id: refresh_anime_id.clone(),
+                title: refresh_title.clone(),
+            },
+        );
+
+        let _ = active_metadata_fetch.take();
+        app.store_metadata(&refresh_anime_id, &sample_metadata(&refresh_title));
+
+        let retry_candidate = app.next_metadata_fetch_candidate();
+
+        assert_eq!(
+            retry_candidate
+                .as_ref()
+                .map(|candidate| candidate.0.as_str()),
+            Some(aborted_anime_id.as_str())
+        );
+    }
 }
