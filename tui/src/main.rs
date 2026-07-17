@@ -14,6 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 mod app;
+mod cache;
 mod events;
 mod playback;
 mod tasks;
@@ -22,14 +23,12 @@ mod ui;
 
 use std::collections::HashMap;
 use std::io::{self, Stdout};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AnimeMetadata, AppConfig, Episode, EpisodeTracker, FavoriteStore, FetchBackend,
-    MetadataResolver, delete_episode, download_episode, episode_file_path, init_logging,
-    local_playback_url,
+    AnimeClient, AppConfig, Episode, EpisodeTracker, FavoriteStore, FetchBackend, MetadataResolver,
+    delete_episode, download_episode, episode_file_path, init_logging, local_playback_url,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -38,7 +37,7 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::future::AbortHandle;
-use image::{DynamicImage, ImageFormat};
+use image::DynamicImage;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui_image::Resize;
@@ -51,7 +50,11 @@ use tokio::sync::mpsc::{
 };
 use tokio::task::JoinSet;
 
-use crate::app::{AnimeProgress, App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
+use crate::app::{App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
+use crate::cache::{
+    CoverCache, EpisodeCache, cache_episodes, cached_episodes, load_metadata_cache_files,
+    populate_anime_progress_from_cache, save_metadata_cache_file,
+};
 use crate::events::{Event, EventHandler};
 use crate::tasks::{
     EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchRequest, MetadataFetchResult,
@@ -70,141 +73,6 @@ struct ImageLoadResult {
     id: String,
     image: Option<DynamicImage>,
     error: Option<String>,
-}
-
-struct EpisodeCache {
-    dir: PathBuf,
-}
-
-struct CoverCache {
-    dir: PathBuf,
-}
-
-impl EpisodeCache {
-    fn load(config: &AppConfig) -> Self {
-        let dir = config.episodes_cache_path().with_file_name("episodes");
-        Self { dir }
-    }
-
-    fn get(&self, anime_id: &str) -> Option<Vec<Episode>> {
-        let path = self.dir.join(format!("{anime_id}.json"));
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|contents| serde_json::from_str::<Vec<Episode>>(&contents).ok())
-    }
-
-    fn insert(&mut self, anime_id: &str, episodes: &[Episode]) -> Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        let payload = serde_json::to_string_pretty(episodes)?;
-        let path = self.dir.join(format!("{anime_id}.json"));
-        std::fs::write(path, payload)?;
-        Ok(())
-    }
-}
-
-impl CoverCache {
-    fn load(config: &AppConfig) -> Self {
-        let dir = config.covers_dir();
-        Self { dir }
-    }
-
-    fn path_for(&self, anime_id: &str) -> PathBuf {
-        self.dir.join(format!("{anime_id}.png"))
-    }
-
-    fn get(&self, anime_id: &str) -> Result<Option<DynamicImage>> {
-        let path = self.path_for(anime_id);
-        if !path.is_file() {
-            return Ok(None);
-        }
-        let image = image::open(path)?;
-        Ok(Some(image))
-    }
-
-    fn insert(&self, anime_id: &str, image: &DynamicImage) -> Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        let path = self.path_for(anime_id);
-        image.save_with_format(path, ImageFormat::Png)?;
-        Ok(())
-    }
-}
-
-fn metadata_cache_dir(config: &AppConfig) -> PathBuf {
-    config.metadata_cache_path().with_file_name("metadata")
-}
-
-fn metadata_cache_file(config: &AppConfig, anime_id: &str) -> PathBuf {
-    metadata_cache_dir(config).join(format!("{anime_id}.json"))
-}
-
-fn load_metadata_cache_files(config: &AppConfig) -> HashMap<String, AnimeMetadata> {
-    let mut entries = HashMap::new();
-    let dir = metadata_cache_dir(config);
-    let Ok(read_dir) = std::fs::read_dir(&dir) else {
-        return entries;
-    };
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if let Ok(metadata) = serde_json::from_str::<AnimeMetadata>(&contents) {
-                entries.insert(stem.to_string(), metadata);
-            }
-        }
-    }
-    entries
-}
-
-fn save_metadata_cache_file(
-    config: &AppConfig,
-    anime_id: &str,
-    metadata: &AnimeMetadata,
-) -> Result<()> {
-    let dir = metadata_cache_dir(config);
-    std::fs::create_dir_all(&dir)?;
-    let path = metadata_cache_file(config, anime_id);
-    let payload = serde_json::to_string_pretty(metadata)?;
-    std::fs::write(path, payload)?;
-    Ok(())
-}
-
-fn populate_anime_progress_from_cache(
-    app: &mut App,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    cache: &EpisodeCache,
-) {
-    if let Ok(guard) = tracker.lock() {
-        let bookmark_ids: Vec<String> = app
-            .bookmark_entries()
-            .iter()
-            .map(|entry| entry.anime.id.clone())
-            .collect();
-        for anime_id in bookmark_ids {
-            if let Some(episodes) = cache.get(&anime_id) {
-                let watched = episodes
-                    .iter()
-                    .filter(|episode| {
-                        guard
-                            .state_for(&episode.id)
-                            .as_ref()
-                            .is_some_and(|state| state.watched)
-                    })
-                    .count();
-                app.set_anime_progress(
-                    anime_id.clone(),
-                    AnimeProgress {
-                        watched,
-                        total: episodes.len(),
-                    },
-                );
-            }
-        }
-    }
 }
 
 fn main() -> Result<()> {
@@ -440,9 +308,7 @@ fn run_app(
                             let count = episodes.len();
                             let anime_id = fetch_result.anime_id.clone();
                             app.set_episodes(episodes.clone());
-                            if let Err(err) =
-                                episode_cache.lock().unwrap().insert(&anime_id, &episodes)
-                            {
+                            if let Err(err) = cache_episodes(&episode_cache, &anime_id, &episodes) {
                                 app.set_details(format!("Failed to cache episodes: {err}"));
                             }
                             app.set_details(format!("Loaded {count} episodes"));
@@ -785,9 +651,12 @@ fn handle_filters(
     if app.take_anime_selection_changed() {
         if let Some(anime_id) = app.current_anime_id() {
             app.record_anime_history(&anime_id);
-            let cached = {
-                let cache = episode_cache.lock().unwrap();
-                cache.get(&anime_id)
+            let cached = match cached_episodes(episode_cache, &anime_id) {
+                Ok(cached) => cached,
+                Err(err) => {
+                    app.set_details(format!("Failed to access cached episodes: {err}"));
+                    None
+                }
             };
             let has_cached = cached.is_some();
             if let Some(cached) = cached {

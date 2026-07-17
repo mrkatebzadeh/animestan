@@ -27,7 +27,8 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 
-use crate::{EpisodeCache, playback};
+use crate::cache::{EpisodeCache, cache_episodes};
+use crate::playback;
 
 pub(crate) struct EpisodeFetchRequest {
     pub(crate) generation: u64,
@@ -191,10 +192,29 @@ pub(crate) fn spawn_background_episode_refresh_tasks(
                         let blocking_result =
                             tokio::task::spawn_blocking(move || client.list_episodes(&fetch_id))
                                 .await;
-                        if let Ok(Ok(episodes)) = blocking_result {
-                            let _ = cache.lock().unwrap().insert(&anime_id, &episodes);
-                            let _ = job_tx.send(());
+                        match blocking_result {
+                            Ok(Ok(episodes)) => {
+                                if let Err(err) = cache_episodes(&cache, &anime_id, &episodes) {
+                                    warn!(
+                                        "failed to cache background episodes for '{}': {}",
+                                        anime_id, err
+                                    );
+                                }
+                            }
+                            Ok(Err(err)) => {
+                                warn!(
+                                    "background episode refresh failed for '{}': {}",
+                                    anime_id, err
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "background episode refresh join failed for '{}': {}",
+                                    anime_id, err
+                                );
+                            }
                         }
+                        let _ = job_tx.send(());
                     },
                     abort_registration,
                 );
