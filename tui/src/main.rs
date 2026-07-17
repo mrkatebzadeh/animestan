@@ -16,6 +16,7 @@
 mod app;
 mod events;
 mod playback;
+mod tasks;
 mod theme;
 mod ui;
 
@@ -26,9 +27,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AnimeMetadata, AppConfig, CoreResult, Episode, EpisodeTracker, FavoriteStore,
-    FetchBackend, MetadataProvider, MetadataResolver, delete_episode, download_episode,
-    episode_file_path, init_logging, local_playback_url,
+    AnimeClient, AnimeMetadata, AppConfig, Episode, EpisodeTracker, FavoriteStore, FetchBackend,
+    MetadataResolver, delete_episode, download_episode, episode_file_path, init_logging,
+    local_playback_url,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -36,7 +37,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use futures::future::{AbortHandle, Abortable};
+use futures::future::AbortHandle;
 use image::{DynamicImage, ImageFormat};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -49,22 +50,16 @@ use tokio::sync::mpsc::{
     UnboundedReceiver, UnboundedSender, error::TryRecvError, unbounded_channel,
 };
 use tokio::task::JoinSet;
-use tokio::time::sleep;
 
 use crate::app::{AnimeProgress, App, EpisodeIndicators, EpisodeMarkAction, PlaybackStatus};
 use crate::events::{Event, EventHandler};
+use crate::tasks::{
+    EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchRequest, MetadataFetchResult,
+    MetadataTarget, PlaybackRequest, PlaybackResult, spawn_background_episode_refresh_tasks,
+    spawn_background_metadata_refresh_tasks, spawn_episode_fetch_task, spawn_metadata_fetch_task,
+    spawn_playback_task,
+};
 use crate::theme::Theme;
-
-struct EpisodeFetchRequest {
-    generation: u64,
-    anime_id: String,
-}
-
-struct EpisodeFetchResult {
-    generation: u64,
-    anime_id: String,
-    result: CoreResult<Vec<Episode>>,
-}
 
 struct ImageLoadRequest {
     id: String,
@@ -210,41 +205,6 @@ fn populate_anime_progress_from_cache(
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MetadataTarget {
-    InfoModal,
-    SearchResults,
-    List,
-    Background,
-}
-
-struct MetadataFetchRequest {
-    generation: u64,
-    query: String,
-    source_id: Option<String>,
-    anime_id: Option<String>,
-    target: MetadataTarget,
-    force_refresh: bool,
-}
-
-struct MetadataFetchResult {
-    generation: u64,
-    target: MetadataTarget,
-    anime_id: Option<String>,
-    result: Result<AnimeMetadata, anyhow::Error>,
-}
-
-#[derive(Clone)]
-struct PlaybackRequest {
-    episode_id: String,
-    episode_title: Option<String>,
-}
-
-struct PlaybackResult {
-    episode_title: Option<String>,
-    outcome: Result<()>,
 }
 
 fn main() -> Result<()> {
@@ -1344,14 +1304,6 @@ fn apply_episode_filter(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) -> 
     Ok(())
 }
 
-fn mark_episode_started(tracker: &Arc<Mutex<EpisodeTracker>>, episode_id: &str) -> Result<()> {
-    let mut guard = tracker
-        .lock()
-        .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
-    guard.mark_started(episode_id)?;
-    Ok(())
-}
-
 fn refresh_episode_indicators(
     app: &mut App,
     tracker: &Arc<Mutex<EpisodeTracker>>,
@@ -1396,233 +1348,5 @@ fn update_playback_elapsed(app: &mut App, tracker: &Arc<Mutex<EpisodeTracker>>) 
         }
     } else {
         app.set_playback_elapsed(None);
-    }
-}
-
-fn spawn_episode_fetch_task(
-    runtime: &Handle,
-    client: Arc<AnimeClient<FetchBackend>>,
-    request: EpisodeFetchRequest,
-    result_tx: UnboundedSender<EpisodeFetchResult>,
-) -> AbortHandle {
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let EpisodeFetchRequest {
-        generation,
-        anime_id,
-    } = request;
-
-    runtime.spawn({
-        let fetch_id = anime_id.clone();
-        let fut = Abortable::new(
-            async move {
-                sleep(Duration::from_millis(200)).await;
-                let blocking_result =
-                    tokio::task::spawn_blocking(move || client.list_episodes(&fetch_id)).await;
-                let result = match blocking_result {
-                    Ok(res) => res,
-                    Err(err) => Err(anyhow!("episode fetch join failed: {err}")),
-                };
-                let _ = result_tx.send(EpisodeFetchResult {
-                    generation,
-                    anime_id,
-                    result,
-                });
-            },
-            abort_registration,
-        );
-        async move {
-            let _ = fut.await;
-        }
-    });
-
-    abort_handle
-}
-
-fn spawn_metadata_fetch_task(
-    runtime: &Handle,
-    resolver: Arc<MetadataResolver>,
-    request: MetadataFetchRequest,
-    result_tx: UnboundedSender<MetadataFetchResult>,
-) -> AbortHandle {
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let MetadataFetchRequest {
-        generation,
-        query,
-        source_id,
-        anime_id,
-        target,
-        force_refresh,
-    } = request;
-
-    runtime.spawn({
-        let fut = Abortable::new(
-            async move {
-                let blocking_result = tokio::task::spawn_blocking(move || {
-                    if force_refresh {
-                        if let Some(id) = source_id.as_deref() {
-                            resolver.refresh_by_id(id, &query)
-                        } else {
-                            resolver.refresh_by_query(&query)
-                        }
-                    } else if let Some(id) = source_id.as_deref() {
-                        resolver.fetch_by_id(id, &query)
-                    } else {
-                        resolver.fetch_by_query(&query)
-                    }
-                })
-                .await;
-                let result = match blocking_result {
-                    Ok(inner) => inner.map_err(|err| anyhow!("metadata fetch failed: {err}")),
-                    Err(err) => Err(anyhow!("metadata fetch join failed: {err}")),
-                };
-                let _ = result_tx.send(MetadataFetchResult {
-                    generation,
-                    target,
-                    anime_id,
-                    result,
-                });
-            },
-            abort_registration,
-        );
-        async move {
-            let _ = fut.await;
-        }
-    });
-
-    abort_handle
-}
-
-#[allow(clippy::needless_pass_by_value)]
-fn spawn_background_episode_refresh_tasks(
-    runtime: &Handle,
-    client: &Arc<AnimeClient<FetchBackend>>,
-    anime_ids: Vec<String>,
-    cache: &Arc<Mutex<EpisodeCache>>,
-    background_job_tx: UnboundedSender<()>,
-) -> Vec<AbortHandle> {
-    anime_ids
-        .into_iter()
-        .filter(|anime_id| !anime_id.is_empty())
-        .map(|anime_id| {
-            let (abort_handle, abort_registration) = AbortHandle::new_pair();
-            let client = Arc::clone(client);
-            let cache = Arc::clone(cache);
-            let fetch_id = anime_id.clone();
-            let job_tx = background_job_tx.clone();
-            runtime.spawn({
-                let fut = Abortable::new(
-                    async move {
-                        let blocking_result =
-                            tokio::task::spawn_blocking(move || client.list_episodes(&fetch_id))
-                                .await;
-                        if let Ok(Ok(episodes)) = blocking_result {
-                            let _ = cache.lock().unwrap().insert(&anime_id, &episodes);
-                            let _ = job_tx.send(());
-                        }
-                    },
-                    abort_registration,
-                );
-                async move {
-                    let _ = fut.await;
-                }
-            });
-            abort_handle
-        })
-        .collect()
-}
-
-fn spawn_background_metadata_refresh_tasks(
-    runtime: &Handle,
-    resolver: &Arc<MetadataResolver>,
-    entries: Vec<(String, String)>,
-    result_tx: &UnboundedSender<MetadataFetchResult>,
-) -> Vec<AbortHandle> {
-    entries
-        .into_iter()
-        .map(|(anime_id, query)| {
-            let request = MetadataFetchRequest {
-                generation: 0,
-                query,
-                source_id: None,
-                anime_id: Some(anime_id.clone()),
-                target: MetadataTarget::Background,
-                force_refresh: true,
-            };
-            spawn_metadata_fetch_task(runtime, Arc::clone(resolver), request, result_tx.clone())
-        })
-        .collect()
-}
-
-fn spawn_playback_task(
-    runtime: &Handle,
-    client: Arc<AnimeClient<FetchBackend>>,
-    config: Arc<AppConfig>,
-    tracker: Arc<Mutex<EpisodeTracker>>,
-    request: PlaybackRequest,
-    result_tx: UnboundedSender<PlaybackResult>,
-) -> AbortHandle {
-    let (abort_handle, abort_registration) = AbortHandle::new_pair();
-    let fallback_title = request.episode_title.clone();
-
-    runtime.spawn({
-        let fut = Abortable::new(
-            async move {
-                let blocking_result = tokio::task::spawn_blocking(move || {
-                    run_playback_job(&config, &tracker, &client, request)
-                })
-                .await;
-
-                let playback_result = match blocking_result {
-                    Ok(result) => result,
-                    Err(err) => PlaybackResult {
-                        episode_title: fallback_title,
-                        outcome: Err(anyhow!("playback join failed: {err}")),
-                    },
-                };
-
-                let _ = result_tx.send(playback_result);
-            },
-            abort_registration,
-        );
-        async move {
-            let _ = fut.await;
-        }
-    });
-
-    abort_handle
-}
-
-fn run_playback_job(
-    config: &Arc<AppConfig>,
-    tracker: &Arc<Mutex<EpisodeTracker>>,
-    client: &Arc<AnimeClient<FetchBackend>>,
-    request: PlaybackRequest,
-) -> PlaybackResult {
-    let PlaybackRequest {
-        episode_id,
-        episode_title,
-    } = request;
-
-    let outcome: Result<()> = (|| {
-        let (target_url, using_local) = if let Some(url) = local_playback_url(config, &episode_id) {
-            (url.to_string(), true)
-        } else {
-            let stream = client.resolve_stream_url(&episode_id)?;
-            (stream.url.to_string(), false)
-        };
-
-        info!(
-            "playback requested for '{episode_id}' using {} source",
-            if using_local { "local" } else { "remote" }
-        );
-
-        mark_episode_started(tracker, &episode_id)?;
-        playback::play_episode(config, tracker, &episode_id, target_url.as_str())?;
-        Ok(())
-    })();
-
-    PlaybackResult {
-        episode_title,
-        outcome,
     }
 }
