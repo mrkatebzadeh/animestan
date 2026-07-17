@@ -26,7 +26,7 @@ use crate::app::App;
 use crate::cache::{EpisodeCache, load_metadata_cache_files, populate_anime_progress_from_cache};
 use crate::flow::refresh_episode_indicators;
 use crate::tasks::{
-    MetadataFetchResult, spawn_background_episode_refresh_tasks,
+    BackgroundEpisodeRefreshResult, MetadataFetchResult, spawn_background_episode_refresh_tasks,
     spawn_background_metadata_refresh_tasks,
 };
 
@@ -62,7 +62,7 @@ pub(crate) fn start_background_refreshes(
     resolver: &Arc<MetadataResolver>,
     client: &Arc<AnimeClient<FetchBackend>>,
     episode_cache: &Arc<Mutex<EpisodeCache>>,
-    background_job_tx: &UnboundedSender<()>,
+    background_job_tx: &UnboundedSender<BackgroundEpisodeRefreshResult>,
     metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
 ) -> BackgroundRefreshHandles {
     let background_metadata_targets: Vec<(String, String)> = app

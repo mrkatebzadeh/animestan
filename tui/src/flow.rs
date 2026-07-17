@@ -27,8 +27,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError}
 use crate::app::{App, EpisodeIndicators, PlaybackStatus};
 use crate::cache::{EpisodeCache, cache_episodes};
 use crate::tasks::{
-    EpisodeFetchRequest, EpisodeFetchResult, PlaybackRequest, PlaybackResult,
-    spawn_episode_fetch_task, spawn_playback_task,
+    BackgroundEpisodeRefreshResult, EpisodeFetchRequest, EpisodeFetchResult, PlaybackRequest,
+    PlaybackResult, spawn_episode_fetch_task, spawn_playback_task,
 };
 
 pub(crate) fn drain_episode_fetch_requests(
@@ -107,6 +107,47 @@ pub(crate) fn drain_episode_fetch_results(
             Err(TryRecvError::Disconnected) => {
                 app.set_details("Episode fetch worker disconnected.");
                 app.set_episodes_loading(false);
+                break;
+            }
+        }
+    }
+}
+
+pub(crate) fn drain_background_episode_refresh_results(
+    app: &mut App,
+    tracker: &Arc<Mutex<EpisodeTracker>>,
+    config: &AppConfig,
+    result_rx: &mut UnboundedReceiver<BackgroundEpisodeRefreshResult>,
+) {
+    loop {
+        match result_rx.try_recv() {
+            Ok(refresh_result) => {
+                app.finish_metadata_background_fetch();
+                let anime_id = refresh_result.anime_id;
+                let is_current = app.current_anime_id().as_deref() == Some(anime_id.as_str());
+                app.clear_episode_refresh_pending(&anime_id);
+
+                match refresh_result.result {
+                    Ok(episodes) if is_current => {
+                        app.set_episodes(episodes);
+                        if app.current_filter().is_some()
+                            && let Err(err) = apply_episode_filter(app, tracker)
+                        {
+                            app.set_details(format!("Filter failed: {err}"));
+                        }
+                        if let Err(err) = refresh_episode_indicators(app, tracker, config) {
+                            app.set_details(format!("Failed to refresh indicators: {err}"));
+                        }
+                    }
+                    Err(err) if is_current && app.unfiltered_episodes().is_empty() => {
+                        app.set_details(format!("Episode refresh failed: {err}"));
+                    }
+                    _ => {}
+                }
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                app.set_details("Background episode refresh worker disconnected.");
                 break;
             }
         }
@@ -322,5 +363,111 @@ pub(crate) fn update_playback_elapsed(app: &mut App, tracker: &Arc<Mutex<Episode
         }
     } else {
         app.set_playback_elapsed(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use animestan_core::{AnimeEntry, Episode, FavoriteStore};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use crate::tasks::BackgroundEpisodeRefreshResult;
+
+    fn unique_temp_path(name: &str) -> String {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should advance")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "animestan-{name}-{}-{stamp}.json",
+                std::process::id()
+            ))
+            .display()
+            .to_string()
+    }
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            favorites_path: Some(unique_temp_path("favorites")),
+            tracking_path: Some(unique_temp_path("tracking")),
+            metadata_cache_path: Some(unique_temp_path("metadata-cache")),
+            episodes_cache_path: Some(unique_temp_path("episodes-cache")),
+            ..Default::default()
+        }
+    }
+
+    fn setup_app(config: &AppConfig) -> (App, Arc<Mutex<EpisodeTracker>>) {
+        let mut favorites =
+            FavoriteStore::load(config.favorites_path()).expect("favorites store should load");
+        favorites
+            .add(AnimeEntry {
+                id: "naruto".to_string(),
+                title: "Naruto".to_string(),
+                source_id: "allanime".to_string(),
+            })
+            .expect("favorite should persist");
+
+        let tracker = Arc::new(Mutex::new(
+            EpisodeTracker::load_default(config).expect("tracker should load"),
+        ));
+        let mut app = App::new();
+        app.load_bookmarks(&favorites);
+        let _ = app.take_anime_selection_changed();
+        (app, tracker)
+    }
+
+    fn sample_episode(number: u32) -> Episode {
+        Episode {
+            id: format!("naruto:{number}"),
+            number,
+            title: format!("Episode {number}"),
+            anime_id: "naruto".to_string(),
+            source_id: "allanime".to_string(),
+            synopsis: None,
+            duration_secs: None,
+            air_date: None,
+        }
+    }
+
+    #[test]
+    fn background_refresh_updates_current_selection_and_clears_pending() {
+        let config = test_config();
+        let (mut app, tracker) = setup_app(&config);
+        let (tx, mut rx) = unbounded_channel();
+        app.mark_episode_refresh_pending("naruto".to_string());
+        app.start_metadata_background_refresh(1);
+        tx.send(BackgroundEpisodeRefreshResult {
+            anime_id: "naruto".to_string(),
+            result: Ok(vec![sample_episode(1), sample_episode(2)]),
+        })
+        .expect("background result should queue");
+
+        drain_background_episode_refresh_results(&mut app, &tracker, &config, &mut rx);
+
+        assert_eq!(app.episodes().len(), 2);
+        assert!(!app.episode_refresh_pending("naruto"));
+        assert!(!app.background_refreshing());
+    }
+
+    #[test]
+    fn background_refresh_failure_still_clears_pending() {
+        let config = test_config();
+        let (mut app, tracker) = setup_app(&config);
+        let (tx, mut rx) = unbounded_channel();
+        app.mark_episode_refresh_pending("naruto".to_string());
+        app.start_metadata_background_refresh(1);
+        tx.send(BackgroundEpisodeRefreshResult {
+            anime_id: "naruto".to_string(),
+            result: Err(anyhow!("boom")),
+        })
+        .expect("background result should queue");
+
+        drain_background_episode_refresh_results(&mut app, &tracker, &config, &mut rx);
+
+        assert!(!app.episode_refresh_pending("naruto"));
+        assert!(!app.background_refreshing());
     }
 }

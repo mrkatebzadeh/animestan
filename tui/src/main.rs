@@ -57,15 +57,17 @@ use crate::browse::{handle_current_anime_refresh, handle_filters, handle_search}
 use crate::cache::{CoverCache, EpisodeCache};
 use crate::events::{Event, EventHandler};
 use crate::flow::{
-    drain_episode_fetch_requests, drain_episode_fetch_results, drain_playback_request_queue,
-    drain_playback_results, handle_playback_requests, update_playback_elapsed,
+    drain_background_episode_refresh_results, drain_episode_fetch_requests,
+    drain_episode_fetch_results, drain_playback_request_queue, drain_playback_results,
+    handle_playback_requests, update_playback_elapsed,
 };
 use crate::media::{
     ImageLoadRequest, ImageLoadResult, drain_image_results, drain_metadata_results,
     handle_list_metadata_fetch, handle_metadata_fetch, spawn_image_loader,
 };
 use crate::tasks::{
-    EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchResult, PlaybackRequest, PlaybackResult,
+    BackgroundEpisodeRefreshResult, EpisodeFetchRequest, EpisodeFetchResult, MetadataFetchResult,
+    PlaybackRequest, PlaybackResult,
 };
 use crate::theme::Theme;
 
@@ -113,7 +115,8 @@ fn run_app(
     let (playback_result_tx, mut playback_result_rx) = unbounded_channel::<PlaybackResult>();
     let mut active_playback: Option<AbortHandle> = None;
     let (metadata_result_tx, mut metadata_result_rx) = unbounded_channel::<MetadataFetchResult>();
-    let (background_job_tx, mut background_job_rx) = unbounded_channel::<()>();
+    let (background_job_tx, mut background_job_rx) =
+        unbounded_channel::<BackgroundEpisodeRefreshResult>();
     let (image_request_tx, image_request_rx) = unbounded_channel::<ImageLoadRequest>();
     let (image_result_tx, mut image_result_rx) = unbounded_channel::<ImageLoadResult>();
     let mut active_metadata_fetch: Option<AbortHandle> = None;
@@ -210,9 +213,12 @@ fn run_app(
 
         drain_image_results(&mut app, &mut cover_cache, &mut image_result_rx);
 
-        while background_job_rx.try_recv().is_ok() {
-            app.finish_metadata_background_fetch();
-        }
+        drain_background_episode_refresh_results(
+            &mut app,
+            &tracker,
+            config,
+            &mut background_job_rx,
+        );
 
         handle_list_metadata_fetch(
             &mut app,

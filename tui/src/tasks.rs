@@ -41,6 +41,11 @@ pub(crate) struct EpisodeFetchResult {
     pub(crate) result: CoreResult<Vec<Episode>>,
 }
 
+pub(crate) struct BackgroundEpisodeRefreshResult {
+    pub(crate) anime_id: String,
+    pub(crate) result: CoreResult<Vec<Episode>>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MetadataTarget {
     InfoModal,
@@ -176,7 +181,7 @@ pub(crate) fn spawn_background_episode_refresh_tasks(
     client: &Arc<AnimeClient<FetchBackend>>,
     anime_ids: Vec<String>,
     cache: &Arc<Mutex<EpisodeCache>>,
-    background_job_tx: UnboundedSender<()>,
+    background_job_tx: UnboundedSender<BackgroundEpisodeRefreshResult>,
 ) -> Vec<AbortHandle> {
     anime_ids
         .into_iter()
@@ -193,7 +198,7 @@ pub(crate) fn spawn_background_episode_refresh_tasks(
                         let blocking_result =
                             tokio::task::spawn_blocking(move || client.list_episodes(&fetch_id))
                                 .await;
-                        match blocking_result {
+                        let result = match blocking_result {
                             Ok(Ok(episodes)) => {
                                 if let Err(err) = cache_episodes(&cache, &anime_id, &episodes) {
                                     warn!(
@@ -201,21 +206,24 @@ pub(crate) fn spawn_background_episode_refresh_tasks(
                                         anime_id, err
                                     );
                                 }
+                                Ok(episodes)
                             }
                             Ok(Err(err)) => {
                                 warn!(
                                     "background episode refresh failed for '{}': {}",
                                     anime_id, err
                                 );
+                                Err(err)
                             }
                             Err(err) => {
                                 warn!(
                                     "background episode refresh join failed for '{}': {}",
                                     anime_id, err
                                 );
+                                Err(anyhow!("background episode refresh join failed: {err}"))
                             }
-                        }
-                        let _ = job_tx.send(());
+                        };
+                        let _ = job_tx.send(BackgroundEpisodeRefreshResult { anime_id, result });
                     },
                     abort_registration,
                 );
