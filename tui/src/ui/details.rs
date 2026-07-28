@@ -160,7 +160,7 @@ pub(super) fn metadata_section_lines<'a>(
         )));
         lines.push(Line::from(format!(
             "Source: {} ({})",
-            &metadata.source_url,
+            metadata.source_url,
             metadata_source_label(metadata.source)
         )));
         lines.push(Line::default());
