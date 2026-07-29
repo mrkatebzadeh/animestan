@@ -77,7 +77,7 @@ fn play_episode_inner(
     command.args(&extra_args);
 
     if is_mpv(&binary) && needs_allanime_referer(stream_url) {
-        command.arg("--referrer=https://allmanga.to");
+        command.arg("--referrer=https://mkissa.to");
     }
 
     configure_stdio(&mut command, output);
@@ -142,7 +142,7 @@ fn play_episode_inner(
     command.args(&extra_args);
 
     if is_mpv(&binary) && needs_allanime_referer(stream_url) {
-        command.arg("--referrer=https://allmanga.to");
+        command.arg("--referrer=https://mkissa.to");
     }
 
     configure_stdio(&mut command, output);

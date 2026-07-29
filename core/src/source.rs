@@ -17,7 +17,7 @@ use crate::{CoreResult, error::Error, models::SourceId};
 use serde::Deserialize;
 use url::Url;
 
-pub const ALLANIME_API_ENDPOINT: &str = "https://api.allanime.day/api";
+pub const ALLANIME_API_ENDPOINT: &str = "https://api.mkissa.net/api";
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct SourceCatalog {

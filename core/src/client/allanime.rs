@@ -13,13 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use aes::Aes256;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::{Engine as _, engine::general_purpose};
-use ctr::cipher::{KeyIvInit, StreamCipher};
+use reqwest::blocking::Client as BlockingHttpClient;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER, USER_AGENT};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::str;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -28,23 +30,48 @@ use url::Url;
 use crate::{CoreResult, error::Error, source::ALLANIME_API_ENDPOINT};
 
 pub(crate) const ALLANIME_TRANSLATION: &str = "sub";
-pub(crate) const ALLANIME_REFERER: &str = "https://allmanga.to";
+pub(crate) const ALLANIME_REFERER: &str = "https://mkissa.to";
 pub(crate) const ALLANIME_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0";
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/150.0";
 
-// AllAnime's API currently requires requests to look like they came from a valid frontend.
-// ani-cli uses https://youtu-chan.com for this purpose.
-pub(crate) const ALLANIME_API_ORIGIN: &str = "https://youtu-chan.com";
+// AllAnime's bootstrap endpoint currently requires requests to look like they came from the mkissa frontend.
+pub(crate) const ALLANIME_API_ORIGIN: &str = "https://mkissa.to";
 
 // Persisted query hash for `ALLANIME_EPISODE_EMBED_GQL`.
-// See: https://github.com/pystardust/ani-cli/commit/6803b8a15faafa41cb79271e9a4f7f9c70a53651
+// ani-cli master currently uses this hash for the episode source query.
 pub(crate) const ALLANIME_EPISODE_EMBED_PERSISTED_HASH: &str =
-    "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+    "f4662f4b7510b26795dd53ef824a0bf1740fbbc5d1273fab18222ac831bca8d0";
+const ALLANIME_BUILD_MASK_BLOBS: [&str; 4] = [
+    "12eJyE2wzfY=",
+    "nWIlTqF9f5E=",
+    "7f6CmXtAgpY=",
+    "oR/792BJ+Sc=",
+];
+const ALLANIME_BOOTSTRAP_BUCKET_MS: u64 = 3 * 24 * 60 * 60 * 1000;
+const ALLANIME_BOOTSTRAP_GRACE_MS: u64 = 24 * 60 * 60 * 1000;
+const ALLANIME_BOOTSTRAP_URL: &str = "https://api.mkissa.net/client-crypto/v1/bootstrap";
 const ALLANIME_EMBED_HOST: &str = "https://allanime.day";
 pub(crate) const ALLANIME_SEARCH_GQL: &str = "query ($search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { edges { _id name availableEpisodes __typename } }}";
 pub(crate) const ALLANIME_EPISODES_GQL: &str =
     "query ($showId: String!) { show( _id: $showId ) { _id availableEpisodesDetail }}";
 pub(crate) const ALLANIME_EPISODE_EMBED_GQL: &str = "query ($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode( showId: $showId translationType: $translationType episodeString: $episodeString ) { episodeString sourceUrls }}";
+
+#[derive(Debug, Clone)]
+pub(crate) struct AllAnimeKeyMaterial {
+    pub(crate) build_id: String,
+    pub(crate) content_lane: String,
+    pub(crate) epoch: u64,
+    pub(crate) key: [u8; 32],
+}
+
+#[derive(Debug, Deserialize)]
+struct AllAnimeBootstrapResponse {
+    epoch: u64,
+    #[serde(rename = "partB")]
+    part_b: String,
+    #[serde(default)]
+    k: Option<String>,
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct AllAnimeSearchResponse {
@@ -131,12 +158,356 @@ pub(crate) fn build_graphql_url(_query: &str, _variables: &Value) -> Url {
     Url::parse(ALLANIME_API_ENDPOINT).expect("valid AllAnime API endpoint")
 }
 
-pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Value> {
-    // Newer payload format (used by ani-cli):
-    // 1 byte prefix + 12 byte IV + ciphertext + 16 byte trailer.
-    const MIN_CTR_LEN: usize = 1 + 12 + 16;
-    // Older payload format we previously supported (AES-GCM):
-    const MIN_GCM_LEN: usize = 12 + 16;
+pub(crate) fn build_aa_req(
+    query_hash: &str,
+    build_id: &str,
+    epoch: u64,
+    content_lane: &str,
+    key: &[u8; 32],
+    now_ms: u64,
+) -> CoreResult<String> {
+    let ts = (now_ms / 300_000) * 300_000;
+    let iv_digest = Sha256::digest(format!("{epoch}:{query_hash}:{ts}").as_bytes());
+    let plaintext = format!(
+        "{{\"v\":1,\"ts\":{ts},\"epoch\":{epoch},\"buildId\":\"{build_id}\",\"qh\":\"{query_hash}\",\"k\":\"{content_lane}\"}}"
+    );
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| Error::StreamResolution {
+        message: "invalid AllAnime request key length".to_string(),
+    })?;
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&iv_digest[..12]), plaintext.as_bytes())
+        .map_err(|_| Error::StreamResolution {
+            message: "failed to encrypt AllAnime aaReq".to_string(),
+        })?;
+
+    let mut payload = Vec::with_capacity(1 + 12 + ciphertext.len());
+    payload.push(1);
+    payload.extend_from_slice(&iv_digest[..12]);
+    payload.extend_from_slice(&ciphertext);
+    Ok(general_purpose::STANDARD.encode(payload))
+}
+
+pub(crate) fn fetch_allanime_key_material() -> CoreResult<AllAnimeKeyMaterial> {
+    let client = allanime_http_client()?;
+    // ponytail: fixed to the current mkissa build tuple; refresh when the site rotates it.
+    let build_id = "75".to_string();
+    let content_lane = "k7".to_string();
+    let build_key = generate_allanime_build_key(&build_id)?;
+
+    let bootstrap_response =
+        fetch_allanime_bootstrap(&client, &build_id, &content_lane, &build_key)?;
+    let key = derive_allanime_key(&bootstrap_response.part_b, &build_key)?;
+
+    Ok(AllAnimeKeyMaterial {
+        build_id,
+        content_lane,
+        epoch: bootstrap_response.epoch,
+        key,
+    })
+}
+
+fn allanime_http_client() -> CoreResult<BlockingHttpClient> {
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static(ALLANIME_USER_AGENT));
+    headers.insert(REFERER, HeaderValue::from_static(ALLANIME_REFERER));
+    Ok(BlockingHttpClient::builder()
+        .default_headers(headers)
+        .build()
+        .map_err(Error::HttpClient)?)
+}
+
+fn generate_allanime_build_key(build_id: &str) -> CoreResult<[u8; 32]> {
+    if build_id.is_empty() {
+        return Err(Error::StreamResolution {
+            message: "empty AllAnime build ID".to_string(),
+        }
+        .into());
+    }
+
+    let mut out = [0u8; 32];
+    let mut cursor = 0usize;
+
+    for (block, b64) in ALLANIME_BUILD_MASK_BLOBS.iter().enumerate() {
+        let decoded =
+            general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|_| Error::StreamResolution {
+                    message: "failed to decode AllAnime build mask blob".to_string(),
+                })?;
+
+        if decoded.len() != 8 {
+            return Err(Error::StreamResolution {
+                message: format!(
+                    "unexpected AllAnime build mask blob length ({})",
+                    decoded.len()
+                ),
+            }
+            .into());
+        }
+
+        for (byte, embedded) in decoded.iter().enumerate() {
+            let index = block * 8 + byte;
+            let build_byte = build_id.as_bytes()[index % build_id.len()];
+            let build_mask_byte =
+                build_byte ^ u8::try_from(((index * 17) + 31) & 0xff).expect("masked build byte");
+            let tweak =
+                u8::try_from(((block * 41) + (byte * 7)) & 0xff).expect("masked tweak byte");
+            out[cursor] = embedded ^ build_mask_byte ^ tweak;
+            cursor += 1;
+        }
+    }
+
+    Ok(out)
+}
+
+#[allow(clippy::too_many_lines)]
+fn fetch_allanime_bootstrap(
+    client: &BlockingHttpClient,
+    build_id: &str,
+    content_lane: &str,
+    build_key: &[u8; 32],
+) -> CoreResult<AllAnimeBootstrapResponse> {
+    let referer_host = Url::parse(ALLANIME_REFERER)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| "mkissa.to".to_string());
+    let key_group = allanime_key_group(&referer_host);
+    let now_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|source| Error::StreamResolution {
+                message: format!("system clock before unix epoch: {source}"),
+            })?
+            .as_millis(),
+    )
+    .map_err(|_| Error::StreamResolution {
+        message: "system clock too far in the future".to_string(),
+    })?;
+
+    let mut bootstrap_url =
+        Url::parse(ALLANIME_BOOTSTRAP_URL).map_err(|source| Error::InvalidUrl {
+            template: ALLANIME_BOOTSTRAP_URL.to_string(),
+            source,
+        })?;
+    {
+        let mut pairs = bootstrap_url.query_pairs_mut();
+        pairs.append_pair("buildId", build_id);
+        pairs.append_pair("k", content_lane);
+    }
+
+    let mut last_error = None;
+    for epoch in bootstrap_epoch_candidates(now_ms) {
+        let x_aa_boot = build_allanime_boot_token(
+            build_key,
+            build_id,
+            epoch,
+            key_group,
+            &referer_host,
+            content_lane,
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-build-id"),
+            HeaderValue::from_str(build_id).map_err(|source| Error::StreamResolution {
+                message: format!("invalid AllAnime build ID: {source}"),
+            })?,
+        );
+        headers.insert(
+            HeaderName::from_static("x-aa-boot"),
+            HeaderValue::from_str(&x_aa_boot).map_err(|source| Error::StreamResolution {
+                message: format!("invalid AllAnime bootstrap token: {source}"),
+            })?,
+        );
+        headers.insert(REFERER, HeaderValue::from_static(ALLANIME_REFERER));
+        headers.insert(ORIGIN, HeaderValue::from_static(ALLANIME_API_ORIGIN));
+
+        let response = client.get(bootstrap_url.clone()).headers(headers).send();
+        let response = match response {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                last_error = Some(
+                    Error::HttpStatus {
+                        url: bootstrap_url.to_string(),
+                        status: response.status().as_u16(),
+                    }
+                    .into(),
+                );
+                continue;
+            }
+            Err(source) => {
+                last_error = Some(
+                    Error::HttpRequest {
+                        url: bootstrap_url.to_string(),
+                        source,
+                    }
+                    .into(),
+                );
+                continue;
+            }
+        };
+
+        let value = response
+            .json::<Value>()
+            .map_err(|source| Error::HttpBodyParse {
+                url: bootstrap_url.to_string(),
+                source,
+            })?;
+
+        let bootstrap_response = serde_json::from_value::<AllAnimeBootstrapResponse>(value)
+            .map_err(|source| Error::ResponseParse {
+                url: bootstrap_url.to_string(),
+                source,
+            })?;
+
+        if let Some(lane) = bootstrap_response.k.as_deref()
+            && lane != content_lane
+        {
+            last_error = Some(
+                Error::StreamResolution {
+                    message: format!(
+                        "AllAnime bootstrap lane mismatch: expected {content_lane}, got {lane}"
+                    ),
+                }
+                .into(),
+            );
+            continue;
+        }
+
+        return Ok(bootstrap_response);
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        Error::StreamResolution {
+            message: "epoch bootstrap unavailable".to_string(),
+        }
+        .into()
+    }))
+}
+
+fn bootstrap_epoch_candidates(now_ms: u64) -> Vec<u64> {
+    let qh = now_ms / ALLANIME_BOOTSTRAP_BUCKET_MS;
+    let bs = if now_ms % ALLANIME_BOOTSTRAP_BUCKET_MS < ALLANIME_BOOTSTRAP_GRACE_MS && qh > 0 {
+        qh - 1
+    } else {
+        qh
+    };
+
+    if bs == qh { vec![qh] } else { vec![bs, qh] }
+}
+
+fn allanime_key_group(host: &str) -> &'static str {
+    let host = host.trim().trim_start_matches("www.").to_ascii_lowercase();
+    if host == "mkissa.to" || host == "localhost" || host == "127.0.0.1" {
+        "mkissa"
+    } else if host.contains("youtu-chan.com") {
+        "youtu-chan.com"
+    } else {
+        "mirror"
+    }
+}
+
+fn build_allanime_boot_token(
+    build_key: &[u8; 32],
+    build_id: &str,
+    epoch: u64,
+    key_group: &str,
+    referer_host: &str,
+    content_lane: &str,
+) -> String {
+    let first = hmac_sha256(build_key, format!("aa-boot:{build_id}").as_bytes());
+    let payload = format!("{build_id}:{key_group}:{referer_host}:{epoch}:{content_lane}");
+    bytes_to_hex(&hmac_sha256(&first, payload.as_bytes()))
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    const BLOCK_SIZE: usize = 64;
+    let mut block = [0u8; BLOCK_SIZE];
+    if key.len() > BLOCK_SIZE {
+        let digest = Sha256::digest(key);
+        block[..digest.len()].copy_from_slice(&digest);
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut inner_pad = [0x36u8; BLOCK_SIZE];
+    let mut outer_pad = [0x5cu8; BLOCK_SIZE];
+    for idx in 0..BLOCK_SIZE {
+        inner_pad[idx] ^= block[idx];
+        outer_pad[idx] ^= block[idx];
+    }
+
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(data);
+    let inner = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner);
+    let output = outer.finalize();
+
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&output);
+    bytes
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut out, "{byte:02x}").expect("write to string");
+    }
+    out
+}
+
+fn derive_allanime_key(part_b: &str, build_key: &[u8; 32]) -> CoreResult<[u8; 32]> {
+    let decoded =
+        general_purpose::STANDARD
+            .decode(part_b)
+            .map_err(|_| Error::StreamResolution {
+                message: "failed to base64 decode AllAnime partB".to_string(),
+            })?;
+
+    if decoded.len() < build_key.len() {
+        return Err(Error::StreamResolution {
+            message: format!("invalid AllAnime partB length ({} bytes)", decoded.len()),
+        }
+        .into());
+    }
+
+    let mut key = [0u8; 32];
+    for i in 0..32 {
+        key[i] = build_key[i] ^ decoded[i];
+    }
+    Ok(key)
+}
+
+#[cfg(test)]
+fn hex_to_bytes(hex: &str) -> CoreResult<[u8; 32]> {
+    if hex.len() != 64 {
+        return Err(Error::StreamResolution {
+            message: format!("invalid AllAnime mask length ({})", hex.len()),
+        }
+        .into());
+    }
+
+    let mut out = [0u8; 32];
+    for (slot, chunk) in out.iter_mut().zip(hex.as_bytes().chunks(2)) {
+        let pair = std::str::from_utf8(chunk).map_err(|_| Error::StreamResolution {
+            message: "AllAnime mask is not valid UTF-8".to_string(),
+        })?;
+        *slot = u8::from_str_radix(pair, 16).map_err(|_| Error::StreamResolution {
+            message: format!("invalid AllAnime mask byte {pair}"),
+        })?;
+    }
+    Ok(out)
+}
+
+pub(crate) fn maybe_decrypt_response_data(
+    mut response: Value,
+    key: &[u8; 32],
+) -> CoreResult<Value> {
+    const MIN_LEN: usize = 1 + 12 + 16;
 
     let Some(data_value) = response.get_mut("data") else {
         return Ok(response);
@@ -157,27 +528,7 @@ pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Val
                 message: "failed to base64 decode AllAnime payload".to_string(),
             })?;
 
-    // Try the ani-cli format first (AES-256-CTR with a 12-byte IV + fixed counter suffix).
-    if decoded.len() >= MIN_CTR_LEN {
-        type Aes256Ctr = ctr::Ctr128BE<Aes256>;
-
-        let key_bytes = Sha256::digest(b"Xot36i3lK3:v1");
-        let mut iv = [0u8; 16];
-        iv[..12].copy_from_slice(&decoded[1..13]);
-        iv[12..].copy_from_slice(&[0, 0, 0, 2]);
-
-        let mut plaintext = decoded[13..decoded.len().saturating_sub(16)].to_vec();
-        let mut cipher = Aes256Ctr::new(key_bytes.as_slice().into(), (&iv).into());
-        cipher.apply_keystream(&mut plaintext);
-
-        if let Ok(decrypted_json) = serde_json::from_slice::<Value>(&plaintext) {
-            *data_value = decrypted_json;
-            return Ok(response);
-        }
-    }
-
-    // Fall back to the older AES-GCM approach (kept for compatibility with any older responses).
-    if decoded.len() < MIN_GCM_LEN {
+    if decoded.len() < MIN_LEN {
         return Err(Error::StreamResolution {
             message: format!(
                 "encrypted AllAnime payload too short ({decoded_len} bytes)",
@@ -187,14 +538,20 @@ pub(crate) fn maybe_decrypt_response_data(mut response: Value) -> CoreResult<Val
         .into());
     }
 
-    let (iv_bytes, ciphertext) = decoded.split_at(12);
-    let key_bytes = Sha256::digest(b"SimtVuagFbGR2K7P");
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| Error::StreamResolution {
+    let version = decoded[0];
+    if version != 1 {
+        return Err(Error::StreamResolution {
+            message: format!("unsupported AllAnime encryption version {version}"),
+        }
+        .into());
+    }
+
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| Error::StreamResolution {
         message: "invalid AES key length for AllAnime payload".to_string(),
     })?;
-    let nonce = Nonce::from_slice(iv_bytes);
+    let nonce = Nonce::from_slice(&decoded[1..13]);
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(nonce, &decoded[13..])
         .map_err(|_| Error::StreamResolution {
             message: "failed to decrypt AllAnime payload".to_string(),
         })?;
@@ -501,4 +858,96 @@ fn parse_resolution(text: &str) -> Option<u32> {
 pub(crate) fn parse_episode_number(label: &str) -> u32 {
     let segment = label.split('.').next().unwrap_or(label);
     segment.parse().unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn build_allanime_boot_token_matches_live_mkissa_response() {
+        let build_key = generate_allanime_build_key("74").expect("build key");
+
+        let token = build_allanime_boot_token(&build_key, "74", 6887, "mkissa", "mkissa.to", "k7");
+
+        assert_eq!(
+            token,
+            "e2689d1ad932ab40b7b2f1adabc3e3c858d4907528021d2d6ae9dad8089d6533"
+        );
+    }
+
+    #[test]
+    fn build_aa_req_round_trips_the_payload() {
+        let key = hex_to_bytes("c9df59c795466fc271f8e48af65e7390860ac465acf6d2cb6a17670c8e5505b0")
+            .expect("key hex");
+        let aa_req = build_aa_req(
+            ALLANIME_EPISODE_EMBED_PERSISTED_HASH,
+            "74",
+            6887,
+            "k7",
+            &key,
+            1_800_000_000_000,
+        )
+        .expect("aaReq");
+
+        let decoded = general_purpose::STANDARD.decode(aa_req).expect("base64");
+        assert_eq!(decoded[0], 1);
+        let expected_iv = Sha256::digest(
+            format!(
+                "{}:{}:{}",
+                6887, ALLANIME_EPISODE_EMBED_PERSISTED_HASH, 1_800_000_000_000u64
+            )
+            .as_bytes(),
+        );
+        assert_eq!(&decoded[1..13], &expected_iv[..12]);
+
+        let cipher = Aes256Gcm::new_from_slice(&key).expect("cipher");
+        let plaintext = cipher
+            .decrypt(Nonce::from_slice(&decoded[1..13]), &decoded[13..])
+            .expect("plaintext");
+        assert_eq!(
+            String::from_utf8(plaintext).expect("utf8"),
+            r#"{"v":1,"ts":1800000000000,"epoch":6887,"buildId":"74","qh":"f4662f4b7510b26795dd53ef824a0bf1740fbbc5d1273fab18222ac831bca8d0","k":"k7"}"#
+        );
+    }
+
+    #[test]
+    fn maybe_decrypt_response_data_uses_derived_key() {
+        let key = hex_to_bytes("c9df59c795466fc271f8e48af65e7390860ac465acf6d2cb6a17670c8e5505b0")
+            .expect("key hex");
+        let nonce = *b"0123456789ab";
+        let plaintext = json!({
+            "episode": {
+                "sourceUrls": [
+                    {
+                        "sourceUrl": "https://stream.example/test.m3u8",
+                        "sourceName": "Default"
+                    }
+                ]
+            }
+        });
+
+        let cipher = Aes256Gcm::new_from_slice(&key).expect("cipher");
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce), plaintext.to_string().as_bytes())
+            .expect("ciphertext");
+
+        let mut payload = Vec::with_capacity(1 + 12 + ciphertext.len());
+        payload.push(1);
+        payload.extend_from_slice(&nonce);
+        payload.extend_from_slice(&ciphertext);
+
+        let response = json!({
+            "data": {
+                "tobeparsed": general_purpose::STANDARD.encode(payload)
+            }
+        });
+
+        let decrypted = maybe_decrypt_response_data(response, &key).expect("decrypt");
+        assert_eq!(
+            decrypted["data"]["episode"]["sourceUrls"][0]["sourceUrl"],
+            "https://stream.example/test.m3u8"
+        );
+    }
 }
