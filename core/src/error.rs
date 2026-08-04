@@ -66,6 +66,15 @@ pub enum Error {
         #[source]
         source: reqwest::Error,
     },
+    #[error("curl request to '{url}' using '{executable}' failed: {source}")]
+    CurlRequest {
+        url: String,
+        executable: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("invalid header '{name}' for curl request to '{url}'")]
+    CurlHeader { url: String, name: String },
     #[error("unexpected http status {status} for '{url}'")]
     HttpStatus { url: String, status: u16 },
     #[error("AniDB request was blocked by Cloudflare at '{url}'")]

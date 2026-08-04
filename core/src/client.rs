@@ -23,6 +23,10 @@ use serde_json::Value;
 use spdlog::prelude::*;
 use std::collections::HashMap;
 use std::env;
+use std::ffi::{OsStr, OsString};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use url::Url;
 
 use crate::{
@@ -37,6 +41,19 @@ use crate::{
 pub(crate) mod anidb;
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
+const CURL_EXECUTABLES: [&str; 5] = [
+    "curl_firefox135",
+    "curl_chrome136",
+    "curl_chrome116",
+    "curl_ff117",
+    "curl",
+];
+#[cfg(target_os = "macos")]
+const CURL_CIPHERS: &str = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305";
+#[cfg(target_os = "macos")]
+const CURL_TLS13_CIPHERS: &str =
+    "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256";
+const CURL_STATUS_FORMAT: &str = "%{stderr}%{http_code}";
 
 fn fixtures_fetch_enabled() -> bool {
     env::var(FIXTURES_ENV).is_ok_and(|value| {
@@ -131,6 +148,7 @@ impl Fetcher for FixtureFetcher {
 
 pub struct HttpFetcher {
     client: BlockingHttpClient,
+    curl_executable: Option<PathBuf>,
 }
 
 impl HttpFetcher {
@@ -140,12 +158,27 @@ impl HttpFetcher {
             .build()
             .map_err(Error::HttpClient)?;
 
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            curl_executable: select_curl_executable(),
+        })
     }
 }
 
 impl Fetcher for HttpFetcher {
     fn fetch(&self, request: &FetchRequest) -> CoreResult<String> {
+        if request.method == Method::GET {
+            if let Some(executable) = self.curl_executable.as_deref() {
+                return Self::fetch_with_curl(request, executable);
+            }
+        }
+
+        self.fetch_with_reqwest(request)
+    }
+}
+
+impl HttpFetcher {
+    fn fetch_with_reqwest(&self, request: &FetchRequest) -> CoreResult<String> {
         let mut builder = self
             .client
             .request(request.method.clone(), request.url.clone());
@@ -174,6 +207,132 @@ impl Fetcher for HttpFetcher {
 
         Ok(body)
     }
+
+    fn fetch_with_curl(request: &FetchRequest, executable: &Path) -> CoreResult<String> {
+        let args = curl_command_args(request)?;
+        let output = Command::new(executable)
+            .args(args)
+            .output()
+            .map_err(|source| Error::CurlRequest {
+                url: request.url.to_string(),
+                executable: executable.display().to_string(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            let details = String::from_utf8_lossy(&output.stderr);
+            let message = if details.trim().is_empty() {
+                format!("process exited with {}", output.status)
+            } else {
+                format!("process exited with {}: {}", output.status, details.trim())
+            };
+            return Err(Error::CurlRequest {
+                url: request.url.to_string(),
+                executable: executable.display().to_string(),
+                source: io::Error::other(message),
+            }
+            .into());
+        }
+
+        let (status, body) =
+            parse_curl_response(&output.stdout, &output.stderr).map_err(|source| {
+                Error::CurlRequest {
+                    url: request.url.to_string(),
+                    executable: executable.display().to_string(),
+                    source,
+                }
+            })?;
+        if !(200..=299).contains(&status) {
+            return Err(http_status_error(&request.url, status, &body).into());
+        }
+
+        Ok(body)
+    }
+}
+
+fn select_curl_executable() -> Option<PathBuf> {
+    env::var_os("PATH")
+        .as_deref()
+        .and_then(|path| select_curl_executable_with(path, is_executable_file))
+}
+
+fn select_curl_executable_with<F>(path: &OsStr, is_available: F) -> Option<PathBuf>
+where
+    F: Fn(&Path) -> bool,
+{
+    CURL_EXECUTABLES.iter().find_map(|name| {
+        env::split_paths(path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| is_available(candidate))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        path.metadata()
+            .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn curl_command_args(request: &FetchRequest) -> CoreResult<Vec<OsString>> {
+    let mut args = vec![
+        OsString::from("-sL"),
+        OsString::from("-A"),
+        OsString::from(anidb::USER_AGENT_VALUE),
+        OsString::from("--max-time"),
+        OsString::from("10"),
+    ];
+
+    #[cfg(target_os = "macos")]
+    {
+        args.extend([
+            OsString::from("--ciphers"),
+            OsString::from(CURL_CIPHERS),
+            OsString::from("--tls13-ciphers"),
+            OsString::from(CURL_TLS13_CIPHERS),
+        ]);
+    }
+
+    if is_anidb_url(&request.url) {
+        for (name, value) in &request.headers {
+            let value = value.to_str().map_err(|_| Error::CurlHeader {
+                url: request.url.to_string(),
+                name: name.to_string(),
+            })?;
+            args.push(OsString::from("-H"));
+            args.push(OsString::from(format!("{name}: {value}")));
+        }
+    }
+
+    args.push(OsString::from("--write-out"));
+    args.push(OsString::from(CURL_STATUS_FORMAT));
+    args.push(OsString::from(request.url.to_string()));
+    Ok(args)
+}
+
+fn parse_curl_response(stdout: &[u8], stderr: &[u8]) -> io::Result<(u16, String)> {
+    let status = std::str::from_utf8(stderr)
+        .map_err(io::Error::other)?
+        .trim()
+        .parse::<u16>()
+        .map_err(io::Error::other)?;
+    if !(100..=599).contains(&status) {
+        return Err(io::Error::other(format!("invalid HTTP status {status}")));
+    }
+
+    let body = String::from_utf8(stdout.to_vec()).map_err(io::Error::other)?;
+    Ok((status, body))
 }
 
 pub(crate) fn http_status_error(url: &Url, status: u16, body: &str) -> Error {
@@ -516,6 +675,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::time::Duration;
 
@@ -623,6 +783,89 @@ mod tests {
             Some(anidb::BASE_URL)
         );
         assert!(headers.get(ORIGIN).is_none());
+    }
+
+    #[test]
+    fn curl_executable_selection_prefers_browser_impersonator() {
+        let path = env::join_paths([Path::new("/first"), Path::new("/second")]).unwrap();
+        let selected = super::select_curl_executable_with(&path, |candidate| {
+            candidate == Path::new("/second/curl_firefox135")
+                || candidate == Path::new("/first/curl")
+        });
+
+        assert_eq!(selected, Some(PathBuf::from("/second/curl_firefox135")));
+    }
+
+    #[test]
+    fn curl_command_args_preserve_anidb_headers() {
+        let request = FetchRequest::get(Url::parse("https://anidb.app/browse?q=naruto").unwrap())
+            .with_header(
+                USER_AGENT,
+                HeaderValue::from_static(anidb::USER_AGENT_VALUE),
+            )
+            .with_header(REFERER, HeaderValue::from_static(anidb::BASE_URL));
+        let args = super::curl_command_args(&request)
+            .expect("curl arguments")
+            .into_iter()
+            .map(|arg| arg.into_string().expect("utf-8 curl argument"))
+            .collect::<Vec<_>>();
+        let user_agent_header = format!("user-agent: {}", anidb::USER_AGENT_VALUE);
+        let referer_header = format!("referer: {}", anidb::BASE_URL);
+
+        assert_eq!(
+            args[0..5],
+            ["-sL", "-A", anidb::USER_AGENT_VALUE, "--max-time", "10"]
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-H".to_string(), user_agent_header.clone()])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-H".to_string(), referer_header.clone()])
+        );
+        assert_eq!(args.last(), Some(&request.url.to_string()));
+
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--ciphers".to_string(), super::CURL_CIPHERS.to_string()])
+            );
+            assert!(args.windows(2).any(|pair| pair
+                == [
+                    "--tls13-ciphers".to_string(),
+                    super::CURL_TLS13_CIPHERS.to_string()
+                ]));
+        }
+    }
+
+    #[test]
+    fn curl_command_args_omit_anidb_headers_for_external_urls() {
+        let request = FetchRequest::get(Url::parse("https://stream.example/master.m3u8").unwrap())
+            .with_header(
+                USER_AGENT,
+                HeaderValue::from_static(anidb::USER_AGENT_VALUE),
+            )
+            .with_header(REFERER, HeaderValue::from_static(anidb::BASE_URL));
+        let args = super::curl_command_args(&request).expect("curl arguments");
+
+        assert!(!args.iter().any(|arg| arg == "-H"));
+    }
+
+    #[test]
+    fn curl_response_status_is_separate_from_body() {
+        let (status, body) =
+            super::parse_curl_response(b"<title>Just a moment...</title>\n200\n", b"403")
+                .expect("curl response");
+        let url = Url::parse("https://anidb.app/browse?q=naruto").unwrap();
+
+        assert_eq!(status, 403);
+        assert_eq!(body, "<title>Just a moment...</title>\n200\n".to_string());
+        assert!(matches!(
+            super::http_status_error(&url, status, &body),
+            Error::ProviderBlocked { .. }
+        ));
     }
 
     #[test]
