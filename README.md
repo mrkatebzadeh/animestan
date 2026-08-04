@@ -141,7 +141,6 @@ If the config file does not exist, Animestan creates one with default settings o
 | Key                 | Description                                                                    |
 | ------------------- | ------------------------------------------------------------------------------ |
 | `source_id`           | Anime source to use (default: Allanime)                                        |
-| `metadata_source`     | Metadata source for anime details (default: AllManga)                          |
 | `metadata_cache_path` | Path to cached metadata (relative or absolute)                                 |
 | `episodes_cache_path` | Path to cached episode lists (relative or absolute)                            |
 | `player`              | Media player command (default: `mpv`)                                            |

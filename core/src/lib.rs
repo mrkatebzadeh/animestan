@@ -42,8 +42,7 @@ pub use crate::format::{
 };
 pub use crate::logging::init_logging;
 pub use crate::metadata::{
-    AniListMetadataProvider, AnimeMetadata, KitsuMetadataProvider, MetadataProvider,
-    MetadataResolver, MetadataSource,
+    AniDbMetadataProvider, AnimeMetadata, MetadataProvider, MetadataResolver, MetadataSource,
 };
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::playback::{PlayerOutput, play_episode};

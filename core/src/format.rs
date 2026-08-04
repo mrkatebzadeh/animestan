@@ -47,8 +47,6 @@ pub fn format_season_year(season: Option<&str>, year: Option<u16>) -> String {
 #[must_use]
 pub fn metadata_source_label(source: MetadataSource) -> &'static str {
     match source {
-        MetadataSource::AllManga => "AllManga",
-        MetadataSource::AniList => "AniList",
-        MetadataSource::Kitsu => "Kitsu",
+        MetadataSource::AniDb => "AniDB",
     }
 }

@@ -256,7 +256,7 @@ mod tests {
             trailer_url: None,
             image_url: None,
             source_url: format!("https://example.com/{title}"),
-            source: MetadataSource::AllManga,
+            source: MetadataSource::AniDb,
         }
     }
 

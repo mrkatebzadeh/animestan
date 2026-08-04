@@ -27,8 +27,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub source_id: Option<String>,
     #[serde(default)]
-    pub metadata_source: Option<String>,
-    #[serde(default)]
     pub metadata_cache_path: Option<String>,
     #[serde(default)]
     pub episodes_cache_path: Option<String>,
@@ -124,9 +122,6 @@ impl AppConfig {
 
 # Anime source to use (default: Allanime)
 # source_id = "allanime"
-
-# Metadata source for anime details (default: AllManga)
-# metadata_source = "allmanga"
 
 # Path to cached metadata (relative to config dir or absolute)
 # metadata_cache_path = "metadata_cache.json"
@@ -362,7 +357,7 @@ mod tests {
     #[test]
     fn config_parses_streaming_mode() {
         let config = AppConfig::parse(
-            "mode = \"dub\"\nquality = \"720p\"",
+            "metadata_source = \"anilist\"\nmode = \"dub\"\nquality = \"720p\"",
             PathBuf::from("test.toml"),
         )
         .expect("test configuration should parse");
