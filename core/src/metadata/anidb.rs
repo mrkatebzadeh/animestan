@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 
 use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use reqwest::header::{REFERER, USER_AGENT};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use url::Url;
@@ -48,14 +48,25 @@ pub(super) fn parse_detail(html: &str, anime_id: &str) -> Result<AnimeMetadata, 
     let trailer_selector =
         Selector::parse(r#"a[href*="youtube.com/watch"]"#).expect("valid selector");
 
-    let source_url = document
-        .select(&canonical_selector)
-        .find_map(|link| {
-            link.value()
-                .attr("href")
-                .filter(|href| !href.trim().is_empty())
-        })
-        .map(str::to_owned);
+    let source_url = document.select(&canonical_selector).find_map(|link| {
+        let href = link.value().attr("href")?;
+        let url = Url::parse(href).ok()?;
+        if url.host_str() != Some("anidb.app") {
+            return None;
+        }
+        let canonical_id = url.path().strip_prefix("/anime/")?;
+        let (slug, numeric_id) = canonical_id.rsplit_once('-')?;
+        if slug.is_empty()
+            || numeric_id.is_empty()
+            || !numeric_id
+                .chars()
+                .all(|character| character.is_ascii_digit())
+            || canonical_id != anime_id
+        {
+            return None;
+        }
+        Some(href.to_owned())
+    });
     let json_ld = document.select(&json_ld_selector).find_map(|script| {
         serde_json::from_str::<JsonLd>(&script.inner_html())
             .ok()
@@ -153,10 +164,7 @@ impl AniDbMetadataProvider {
     }
 
     pub(super) fn with_cache(client: Client, cache: MetadataCache) -> Self {
-        Self {
-            client: enrich_client(client),
-            cache,
-        }
+        Self { client, cache }
     }
 
     /// # Errors
@@ -211,18 +219,25 @@ impl AniDbMetadataProvider {
     fn fetch_detail(&self, id: &str, query: &str) -> Result<AnimeMetadata, Error> {
         let url = detail_url(id)?;
         let body = self.fetch_url(&url)?;
-        parse_detail(&body, query)
+        parse_detail(&body, id).map_err(|error| match error {
+            Error::MetadataNotFound { .. } => Error::MetadataNotFound {
+                query: query.to_string(),
+            },
+            error => error,
+        })
     }
 
     fn fetch_url(&self, url: &Url) -> Result<String, Error> {
-        let response =
-            self.client
-                .get(url.clone())
-                .send()
-                .map_err(|source| Error::HttpRequest {
-                    url: url.to_string(),
-                    source,
-                })?;
+        let response = self
+            .client
+            .get(url.clone())
+            .header(USER_AGENT, anidb_client::USER_AGENT_VALUE)
+            .header(REFERER, anidb_client::BASE_URL)
+            .send()
+            .map_err(|source| Error::HttpRequest {
+                url: url.to_string(),
+                source,
+            })?;
         let status = response.status();
         if !status.is_success() {
             return Err(Error::HttpStatus {
@@ -256,23 +271,18 @@ fn detail_url(id: &str) -> Result<Url, Error> {
     Ok(url)
 }
 
-fn enrich_client(client: Client) -> Client {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static(anidb_client::USER_AGENT_VALUE),
-    );
-    headers.insert(REFERER, HeaderValue::from_static(anidb_client::BASE_URL));
-    Client::builder()
-        .default_headers(headers)
-        .build()
-        .unwrap_or(client)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::parse_detail;
-    use crate::metadata::MetadataSource;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    use reqwest::blocking::Client;
+    use reqwest::header::{HeaderMap, HeaderValue};
+    use url::Url;
+
+    use super::{AniDbMetadataProvider, parse_detail};
+    use crate::metadata::{MetadataCache, MetadataSource};
 
     const DETAIL_HTML: &str = r#"
 <html><head>
@@ -300,6 +310,18 @@ mod tests {
         assert_eq!(metadata.status.as_deref(), Some("Finished Airing"));
         assert_eq!(metadata.season.as_deref(), Some("Winter"));
         assert_eq!(metadata.year, Some(2023));
+        assert_eq!(
+            metadata.trailer_url.as_deref(),
+            Some("https://www.youtube.com/watch?v=trailer")
+        );
+        assert_eq!(
+            metadata.image_url.as_deref(),
+            Some("https://cdn.example/20.jpg")
+        );
+        assert_eq!(
+            metadata.source_url,
+            "https://anidb.app/anime/ippon-again-20"
+        );
         assert_eq!(metadata.source, MetadataSource::AniDb);
     }
 
@@ -334,5 +356,69 @@ mod tests {
             error,
             crate::error::Error::MetadataNotFound { query } if query == "missing-1"
         ));
+    }
+
+    #[test]
+    fn rejects_invalid_canonical_urls() {
+        for canonical in [
+            "/anime/example-1",
+            "https://example.com/anime/example-1",
+            "https://anidb.app/anime/other-1",
+            "https://anidb.app/anime/example-no-id",
+            "https://anidb.app/browse/example-1",
+        ] {
+            let html = format!(
+                r#"<link rel="canonical" href="{canonical}">
+                <script type="application/ld+json">{{"name":"Example"}}</script>"#
+            );
+            let error = parse_detail(&html, "example-1").expect_err(canonical);
+
+            assert!(matches!(
+                error,
+                crate::error::Error::MetadataNotFound { query } if query == "example-1"
+            ));
+        }
+    }
+
+    #[test]
+    fn preserves_injected_client_defaults() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let read = stream.read(&mut buffer).expect("read request");
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .expect("write response");
+            String::from_utf8(request)
+                .expect("request is UTF-8")
+                .to_lowercase()
+        });
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-client-setting", HeaderValue::from_static("preserved"));
+        let client = Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("build client");
+        let provider = AniDbMetadataProvider::with_cache(
+            client,
+            MetadataCache::new("unused-cache.json".into()),
+        );
+        let url = Url::parse(&format!("http://{address}/")).expect("test URL");
+
+        assert_eq!(provider.fetch_url(&url).expect("request succeeds"), "ok");
+        let request = server.join().expect("server thread");
+        assert!(request.contains("x-client-setting: preserved"));
+        assert!(request.contains("user-agent: mozilla/5.0"));
+        assert!(request.contains("referer: https://anidb.app"));
     }
 }
