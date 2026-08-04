@@ -46,6 +46,70 @@ pub struct AppConfig {
     pub favorites_path: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StreamingMode {
+    Sub,
+    Dub,
+}
+
+impl StreamingMode {
+    pub(crate) fn parse(value: Option<&str>) -> CoreResult<Self> {
+        match value.unwrap_or("sub").trim().to_ascii_lowercase().as_str() {
+            "sub" => Ok(Self::Sub),
+            "dub" => Ok(Self::Dub),
+            value => Err(Error::InvalidConfigValue {
+                key: "mode",
+                value: value.to_string(),
+                expected: "sub or dub",
+            }
+            .into()),
+        }
+    }
+
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::Sub => "jpn",
+            Self::Dub => "eng",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QualityPreference {
+    Best,
+    Worst,
+    Height(u16),
+}
+
+impl QualityPreference {
+    pub(crate) fn parse(value: Option<&str>) -> CoreResult<Self> {
+        let value = value.unwrap_or("best").trim();
+        let invalid = || Error::InvalidConfigValue {
+            key: "quality",
+            value: value.to_string(),
+            expected: "best, worst, or a positive height followed by p",
+        };
+
+        match value {
+            "best" => Ok(Self::Best),
+            "worst" => Ok(Self::Worst),
+            _ => {
+                let Some(height) = value.strip_suffix('p') else {
+                    return Err(invalid().into());
+                };
+                if height.is_empty() || !height.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(invalid().into());
+                }
+                let height = height.parse::<u16>().map_err(|_| invalid())?;
+                if height == 0 {
+                    return Err(invalid().into());
+                }
+                Ok(Self::Height(height))
+            }
+        }
+    }
+}
+
 impl AppConfig {
     #[must_use]
     pub fn default_path() -> PathBuf {
@@ -275,7 +339,7 @@ impl AppConfig {
 mod tests {
     use std::path::PathBuf;
 
-    use super::AppConfig;
+    use super::{AppConfig, QualityPreference, StreamingMode};
 
     #[test]
     fn defaults_namespace_anidb_state() {
@@ -304,6 +368,28 @@ mod tests {
         .expect("test configuration should parse");
         assert_eq!(config.mode.as_deref(), Some("dub"));
         assert_eq!(config.quality.as_deref(), Some("720p"));
+    }
+
+    #[test]
+    fn parses_configured_mode_and_quality() {
+        assert_eq!(StreamingMode::parse(Some("dub")).unwrap().code(), "eng");
+        assert_eq!(
+            QualityPreference::parse(Some("720p")).unwrap(),
+            QualityPreference::Height(720)
+        );
+        assert!(StreamingMode::parse(Some("french")).is_err());
+        assert!(QualityPreference::parse(Some("hd")).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_quality_boundaries() {
+        assert!(QualityPreference::parse(Some("0p")).is_err());
+        assert!(QualityPreference::parse(Some("65536p")).is_err());
+        assert!(QualityPreference::parse(Some("7 20p")).is_err());
+        assert_eq!(
+            QualityPreference::parse(None).unwrap(),
+            QualityPreference::Best
+        );
     }
 
     #[test]

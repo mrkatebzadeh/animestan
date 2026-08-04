@@ -1,4 +1,7 @@
 {
   "GET|https://anidb.app/browse?q=naruto": "<a href=\"/anime/naruto-3686\" title=\"Naruto\"><img alt=\"Naruto\"></a><a href=\"/anime/boruto-naruto-next-generations-4647\" title=\"Boruto &amp; Naruto\"><img alt=\"Boruto &amp; Naruto\"></a>",
-  "GET|https://anidb.app/api/frontend/anime/3686/episodes": "{\"episodes\":[{\"id\":6090,\"number\":4,\"number2\":null,\"filler\":false},{\"id\":6087,\"number\":1,\"number2\":null,\"filler\":false}]}"
+  "GET|https://anidb.app/api/frontend/anime/3686/episodes": "{\"episodes\":[{\"id\":6090,\"number\":4,\"number2\":null,\"filler\":false},{\"id\":6087,\"number\":1,\"number2\":null,\"filler\":false}]}",
+  "GET|https://anidb.app/api/frontend/episode/6087/languages": "{\"languages\":[{\"code\":\"jpn\",\"name\":\"Japanese\",\"embed_url\":\"https://anidb.app/embed/naruto-sub\"}]}",
+  "GET|https://anidb.app/embed/naruto-sub": "<script>player.setup({file: 'https://stream.example/naruto/master.m3u8'});</script>",
+  "GET|https://stream.example/naruto/master.m3u8": "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n720/index.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\n1080/index.m3u8\n"
 }

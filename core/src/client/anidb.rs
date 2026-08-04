@@ -15,10 +15,13 @@
 
 use scraper::{Html, Selector};
 use serde::Deserialize;
-use std::collections::HashSet;
+use spdlog::prelude::*;
+use std::{cmp::Reverse, collections::HashSet};
+use url::Url;
 
 use crate::{
     CoreResult,
+    config::{QualityPreference, StreamingMode},
     error::Error,
     models::{AnimeEntry, Episode},
 };
@@ -39,6 +42,23 @@ struct EpisodeRecord {
     _number2: Option<u32>,
     #[serde(rename = "filler")]
     _filler: bool,
+}
+
+#[derive(Deserialize)]
+struct LanguagesResponse {
+    languages: Vec<LanguageRecord>,
+}
+
+#[derive(Deserialize)]
+struct LanguageRecord {
+    code: String,
+    embed_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HlsVariant {
+    pub(crate) height: u16,
+    pub(crate) url: Url,
 }
 
 pub(crate) fn anime_numeric_id(anime_id: &str) -> CoreResult<&str> {
@@ -144,9 +164,119 @@ fn anime_path_segment(href: &str) -> Option<&str> {
     None
 }
 
+pub(crate) fn parse_languages(body: &str, mode: StreamingMode) -> CoreResult<Url> {
+    let response: LanguagesResponse =
+        serde_json::from_str(body).map_err(|source| Error::ResponseParse {
+            url: format!("{BASE_URL}/api/frontend/episode/languages"),
+            source,
+        })?;
+    let language = response
+        .languages
+        .into_iter()
+        .find(|language| language.code == mode.code())
+        .ok_or_else(|| Error::StreamResolution {
+            message: format!("no {} language stream was returned", mode.code()),
+        })?;
+    Url::parse(&language.embed_url)
+        .map_err(|source| Error::StreamUrlParse {
+            url: language.embed_url,
+            source,
+        })
+        .map_err(Into::into)
+}
+
+pub(crate) fn extract_master_url(embed: &str) -> CoreResult<Url> {
+    let marker = "file: '";
+    let start = embed.find(marker).ok_or_else(|| Error::StreamResolution {
+        message: "embed response did not contain a master playlist".to_string(),
+    })? + marker.len();
+    let end = embed[start..]
+        .find('\'')
+        .map_or(embed.len(), |offset| start + offset);
+    if end == embed.len() {
+        return Err(Error::StreamResolution {
+            message: "embed response contained an unterminated master playlist".to_string(),
+        }
+        .into());
+    }
+    let url = &embed[start..end];
+    Url::parse(url)
+        .map_err(|source| Error::StreamUrlParse {
+            url: url.to_string(),
+            source,
+        })
+        .map_err(Into::into)
+}
+
+pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<Vec<HlsVariant>> {
+    let mut variants = Vec::new();
+    let mut lines = body.lines();
+
+    while let Some(line) = lines.next() {
+        let Some(height) = stream_height(line) else {
+            continue;
+        };
+        let Some(uri) = lines
+            .by_ref()
+            .find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        else {
+            break;
+        };
+        let uri = uri.trim();
+        let url = master_url
+            .join(uri)
+            .map_err(|source| Error::StreamUrlParse {
+                url: uri.to_string(),
+                source,
+            })?;
+        variants.push(HlsVariant { height, url });
+    }
+
+    if variants.is_empty() {
+        return Err(Error::StreamResolution {
+            message: "master playlist did not contain any variants".to_string(),
+        }
+        .into());
+    }
+    variants.sort_by_key(|variant| Reverse(variant.height));
+    Ok(variants)
+}
+
+fn stream_height(line: &str) -> Option<u16> {
+    let resolution = line.split_once("RESOLUTION=")?.1;
+    let (_, height) = resolution.split_once('x')?;
+    height.split(',').next()?.parse().ok()
+}
+
+pub(crate) fn select_variant(
+    variants: &[HlsVariant],
+    quality: QualityPreference,
+) -> CoreResult<&HlsVariant> {
+    let best = variants.first().ok_or_else(|| Error::StreamResolution {
+        message: "no HLS variants available".to_string(),
+    })?;
+    match quality {
+        QualityPreference::Best => Ok(best),
+        QualityPreference::Worst => Ok(variants.last().unwrap_or(best)),
+        QualityPreference::Height(height) => {
+            if let Some(variant) = variants.iter().find(|variant| variant.height == height) {
+                Ok(variant)
+            } else {
+                warn!("requested {height}p variant was not found; using best available variant");
+                Ok(best)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{anime_numeric_id, parse_episodes, parse_search};
+    use super::{
+        anime_numeric_id, extract_master_url, parse_episodes, parse_languages,
+        parse_master_playlist, parse_search, select_variant,
+    };
+    use crate::config::{QualityPreference, StreamingMode};
+    use url::Url;
 
     #[test]
     fn parses_and_deduplicates_browse_cards() {
@@ -194,5 +324,64 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("/api/frontend/anime/3686/episodes"));
         assert!(!message.contains("/api/frontend/anime/naruto-3686/episodes"));
+    }
+
+    #[test]
+    fn selects_requested_language_without_fallback() {
+        let body = r#"{"languages":[{"code":"jpn","name":"Japanese","embed_url":"https://anidb.app/embed/sub"},{"code":"eng","name":"English","embed_url":"https://anidb.app/embed/dub"}]}"#;
+        assert_eq!(
+            parse_languages(body, StreamingMode::Dub).unwrap().as_str(),
+            "https://anidb.app/embed/dub"
+        );
+        assert!(parse_languages(body, StreamingMode::Sub).is_ok());
+        assert!(
+            parse_languages(
+                r#"{"languages":[{"code":"jpn","embed_url":"https://anidb.app/embed/sub"}]}"#,
+                StreamingMode::Dub
+            )
+            .is_err()
+        );
+        assert!(parse_languages(r#"{"languages":[]}"#, StreamingMode::Sub).is_err());
+    }
+
+    #[test]
+    fn resolves_relative_hls_variants_and_quality() {
+        let master = Url::parse("https://cdn.example/path/master.m3u8").unwrap();
+        let body = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n720/index.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\nhttps://video.example/1080.m3u8\n";
+        let variants = parse_master_playlist(body, &master).unwrap();
+        assert_eq!(
+            select_variant(&variants, QualityPreference::Best)
+                .unwrap()
+                .height,
+            1080
+        );
+        assert_eq!(
+            select_variant(&variants, QualityPreference::Worst)
+                .unwrap()
+                .height,
+            720
+        );
+        assert_eq!(
+            select_variant(&variants, QualityPreference::Height(720))
+                .unwrap()
+                .url
+                .as_str(),
+            "https://cdn.example/path/720/index.m3u8"
+        );
+        assert_eq!(
+            select_variant(&variants, QualityPreference::Height(480))
+                .unwrap()
+                .height,
+            1080
+        );
+    }
+
+    #[test]
+    fn extracts_first_master_playlist() {
+        let embed = "<script>player.setup({file: 'https://cdn.example/master.m3u8'});</script>";
+        assert_eq!(
+            extract_master_url(embed).unwrap().as_str(),
+            "https://cdn.example/master.m3u8"
+        );
     }
 }

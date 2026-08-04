@@ -27,7 +27,7 @@ use url::Url;
 
 use crate::{
     CoreResult,
-    config::AppConfig,
+    config::{AppConfig, QualityPreference, StreamingMode},
     error::Error,
     fixtures,
     models::{AnimeEntry, Episode, StreamLink},
@@ -215,6 +215,8 @@ impl Fetcher for FetchBackend {
 pub struct AnimeClient<F: Fetcher> {
     source: SourceDefinition,
     fetcher: F,
+    mode: StreamingMode,
+    quality: QualityPreference,
 }
 
 impl AnimeClient<FixtureFetcher> {
@@ -228,7 +230,12 @@ impl AnimeClient<FixtureFetcher> {
         let catalog = fixtures::load_catalog()?;
         let source = catalog.default_source()?;
         let fetcher = FixtureFetcher::new()?;
-        Ok(Self { source, fetcher })
+        Ok(Self {
+            source,
+            fetcher,
+            mode: StreamingMode::Sub,
+            quality: QualityPreference::Best,
+        })
     }
 }
 
@@ -252,15 +259,27 @@ impl AnimeClient<FetchBackend> {
     /// HTTP client cannot be constructed.
     pub fn from_config(config: &AppConfig) -> CoreResult<Self> {
         let use_fixtures = config.use_fixtures.unwrap_or_else(fixtures_fetch_enabled);
+        let mode = StreamingMode::parse(config.mode.as_deref())?;
+        let quality = QualityPreference::parse(config.quality.as_deref())?;
 
         if use_fixtures {
             let source = Self::select_fixture_source(config)?;
             let fetcher = FetchBackend::fixtures()?;
-            Ok(Self { source, fetcher })
+            Ok(Self {
+                source,
+                fetcher,
+                mode,
+                quality,
+            })
         } else {
             let source = SourceDefinition::anidb();
             let fetcher = FetchBackend::http()?;
-            Ok(Self { source, fetcher })
+            Ok(Self {
+                source,
+                fetcher,
+                mode,
+                quality,
+            })
         }
     }
 
@@ -281,7 +300,12 @@ impl AnimeClient<FetchBackend> {
 
 impl<F: Fetcher> AnimeClient<F> {
     pub fn new(source: SourceDefinition, fetcher: F) -> Self {
-        Self { source, fetcher }
+        Self {
+            source,
+            fetcher,
+            mode: StreamingMode::Sub,
+            quality: QualityPreference::Best,
+        }
     }
 
     /// Fetches anime entries that match the provided `query`.
@@ -349,6 +373,8 @@ impl<F: Fetcher> AnimeClient<F> {
 
         let link = if self.uses_allanime() {
             self.resolve_stream_url_allanime(episode_id)?
+        } else if self.uses_anidb() {
+            self.resolve_stream_url_anidb(episode_id)?
         } else {
             let url = self.source.stream.render(&[("episode_id", episode_id)])?;
             let request = self.get_request(url);
@@ -367,6 +393,22 @@ impl<F: Fetcher> AnimeClient<F> {
 
         debug!("resolved stream for '{episode_id}' to {}", link.url);
         Ok(link)
+    }
+
+    fn resolve_stream_url_anidb(&self, episode_id: &str) -> CoreResult<StreamLink> {
+        let languages_url = self.source.stream.render(&[("episode_id", episode_id)])?;
+        let languages = self.fetcher.fetch(&self.get_request(languages_url))?;
+        let embed_url = anidb::parse_languages(&languages, self.mode)?;
+        let embed = self.fetcher.fetch(&self.get_request(embed_url))?;
+        let master_url = anidb::extract_master_url(&embed)?;
+        let master = self.fetcher.fetch(&self.get_request(master_url.clone()))?;
+        let variants = anidb::parse_master_playlist(&master, &master_url)?;
+        let selected = anidb::select_variant(&variants, self.quality)?;
+        Ok(StreamLink {
+            url: selected.url.clone(),
+            episode_id: episode_id.to_string(),
+            source_id: self.source.id.clone(),
+        })
     }
 
     fn search_anidb(&self, query: &str) -> CoreResult<Vec<AnimeEntry>> {
@@ -704,6 +746,31 @@ mod tests {
             .list_episodes("naruto-3686")
             .expect("episode listing");
         assert!(episodes.iter().any(|episode| episode.id == "6087"));
+    }
+
+    #[test]
+    fn resolve_stream_url_returns_selected_anidb_variant() {
+        let client = AnimeClient::with_fixtures().expect("fixtures client");
+        let stream = client
+            .resolve_stream_url("6087")
+            .expect("stream resolution");
+        assert_eq!(
+            stream.url.as_str(),
+            "https://stream.example/naruto/1080/index.m3u8"
+        );
+    }
+
+    #[test]
+    fn from_config_applies_stream_preferences() {
+        let config = AppConfig {
+            use_fixtures: Some(true),
+            mode: Some("dub".to_string()),
+            quality: Some("720p".to_string()),
+            ..AppConfig::default()
+        };
+        let client = AnimeClient::from_config(&config).expect("configured fixtures client");
+        assert_eq!(client.mode, StreamingMode::Dub);
+        assert_eq!(client.quality, QualityPreference::Height(720));
     }
 
     #[test]
