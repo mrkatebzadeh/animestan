@@ -110,6 +110,12 @@ pub enum Error {
         #[source]
         source: toml::de::Error,
     },
+    #[error("invalid {key} value '{value}'; expected {expected}")]
+    InvalidConfigValue {
+        key: &'static str,
+        value: String,
+        expected: &'static str,
+    },
     #[error("unknown source id '{source_id}'")]
     UnknownSourceId { source_id: String },
     #[error("failed to read tracking file at '{path}': {source}")]

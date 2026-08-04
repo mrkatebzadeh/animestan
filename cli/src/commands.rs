@@ -20,9 +20,9 @@ use spdlog::prelude::*;
 
 use animestan_core::{
     AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    MetadataProvider, MetadataResolver, PlaybackFilter, delete_episode, download_episode,
-    episode_file_path, format_list, format_season_year, format_status_score, local_playback_url,
-    metadata_source_label,
+    MetadataProvider, MetadataResolver, PlaybackFilter, SourceDefinition, delete_episode,
+    download_episode, episode_file_path, format_list, format_season_year, format_status_score,
+    local_playback_url, metadata_source_label,
 };
 
 use crate::{BookmarksCommand, Commands, playback};
@@ -249,7 +249,7 @@ pub(crate) fn handle_bookmarks(
             let source_id = config
                 .source_id
                 .clone()
-                .unwrap_or_else(|| "allanime".to_string());
+                .unwrap_or_else(|| SourceDefinition::ANIDB_ID.to_string());
             let anime_entry = AnimeEntry {
                 id: anime_id.clone(),
                 title: title.unwrap_or_else(|| anime_id.clone()),

@@ -37,6 +37,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub player: Option<String>,
     #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
     pub quality: Option<String>,
     #[serde(default)]
     pub tracking_path: Option<String>,
@@ -139,7 +141,7 @@ impl AppConfig {
                 Self::config_dir().join(configured)
             }
         } else {
-            Self::config_dir().join("progress.json")
+            Self::config_dir().join("anidb").join("progress.json")
         }
     }
 
@@ -153,7 +155,7 @@ impl AppConfig {
                 Self::config_dir().join(configured)
             }
         } else {
-            Self::config_dir().join("favorites.json")
+            Self::config_dir().join("anidb").join("favorites.json")
         }
     }
 
@@ -167,7 +169,7 @@ impl AppConfig {
                 Self::config_dir().join(configured)
             }
         } else {
-            Self::config_dir().join("metadata_cache.json")
+            Self::config_dir().join("anidb").join("metadata_cache.json")
         }
     }
 
@@ -181,7 +183,7 @@ impl AppConfig {
                 Self::config_dir().join(configured)
             }
         } else {
-            Self::config_dir().join("episodes_cache.json")
+            Self::config_dir().join("anidb").join("episodes_cache.json")
         }
     }
 
@@ -225,7 +227,7 @@ impl AppConfig {
     pub fn covers_dir(&self) -> PathBuf {
         let _ = self;
 
-        Self::data_dir().join("covers")
+        Self::data_dir().join("anidb").join("covers")
     }
 
     /// Loads configuration from the provided `path`.
@@ -266,5 +268,56 @@ impl AppConfig {
         let config =
             toml::from_str(contents).map_err(|source| Error::ConfigParse { path, source })?;
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::AppConfig;
+
+    #[test]
+    fn defaults_namespace_anidb_state() {
+        let config = AppConfig::default();
+        assert!(config.favorites_path().ends_with("anidb/favorites.json"));
+        assert!(config.progress_path().ends_with("anidb/progress.json"));
+        assert!(
+            config
+                .metadata_cache_path()
+                .ends_with("anidb/metadata_cache.json")
+        );
+        assert!(
+            config
+                .episodes_cache_path()
+                .ends_with("anidb/episodes_cache.json")
+        );
+        assert!(config.covers_dir().ends_with("anidb/covers"));
+    }
+
+    #[test]
+    fn config_parses_streaming_mode() {
+        let config = AppConfig::parse(
+            "mode = \"dub\"\nquality = \"720p\"",
+            PathBuf::from("test.toml"),
+        )
+        .expect("test configuration should parse");
+        assert_eq!(config.mode.as_deref(), Some("dub"));
+        assert_eq!(config.quality.as_deref(), Some("720p"));
+    }
+
+    #[test]
+    fn explicit_path_overrides_remain_unchanged() {
+        let config = AppConfig {
+            tracking_path: Some("progress.json".to_string()),
+            favorites_path: Some("/tmp/favorites.json".to_string()),
+            ..AppConfig::default()
+        };
+
+        assert!(config.progress_path().ends_with("progress.json"));
+        assert_eq!(
+            config.favorites_path(),
+            PathBuf::from("/tmp/favorites.json")
+        );
     }
 }

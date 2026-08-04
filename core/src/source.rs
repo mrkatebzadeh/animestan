@@ -56,7 +56,9 @@ pub struct SourceDefinition {
 
 impl SourceDefinition {
     pub const ALLANIME_ID: &'static str = "allanime";
+    pub const ANIDB_ID: &'static str = "anidb";
 
+    #[must_use]
     pub fn allanime() -> Self {
         let endpoint = EndpointTemplate {
             url_template: ALLANIME_API_ENDPOINT.to_string(),
@@ -68,6 +70,25 @@ impl SourceDefinition {
             search: endpoint.clone(),
             episodes: endpoint.clone(),
             stream: endpoint,
+        }
+    }
+
+    #[must_use]
+    pub fn anidb() -> Self {
+        Self {
+            id: Self::ANIDB_ID.to_string(),
+            name: "AniDB".to_string(),
+            search: EndpointTemplate {
+                url_template: "https://anidb.app/browse?q={query}".to_string(),
+            },
+            episodes: EndpointTemplate {
+                url_template: "https://anidb.app/api/frontend/anime/{anime_id}/episodes"
+                    .to_string(),
+            },
+            stream: EndpointTemplate {
+                url_template: "https://anidb.app/api/frontend/episode/{episode_id}/languages"
+                    .to_string(),
+            },
         }
     }
 }
@@ -92,5 +113,20 @@ impl EndpointTemplate {
             source,
         })?;
         Ok(url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourceDefinition;
+
+    #[test]
+    fn anidb_is_the_builtin_source() {
+        let source = SourceDefinition::anidb();
+        assert_eq!(source.id, "anidb");
+        assert_eq!(
+            source.search.url_template,
+            "https://anidb.app/browse?q={query}"
+        );
     }
 }

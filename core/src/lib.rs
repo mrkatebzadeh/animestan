@@ -47,5 +47,6 @@ pub use crate::metadata::{
 };
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::playback::{PlayerOutput, play_episode};
+pub use crate::source::SourceDefinition;
 pub use crate::tracking::{EpisodeProgress, EpisodeTracker};
 pub use anyhow::Result as AnyhowResult;
