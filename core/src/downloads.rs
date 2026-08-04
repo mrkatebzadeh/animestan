@@ -16,7 +16,7 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use spdlog::prelude::*;
@@ -154,13 +154,33 @@ fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<
     Ok(())
 }
 
-/// Returns the final download path for a numeric `AniDB` episode ID.
+fn validate_download_id(episode_id: &str) -> CoreResult<()> {
+    let path = Path::new(episode_id);
+    let safe = !episode_id.is_empty()
+        && episode_id != "."
+        && episode_id != ".."
+        && !episode_id.chars().any(char::is_control)
+        && !episode_id.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if safe {
+        return Ok(());
+    }
+
+    Err(Error::InvalidDownloadId {
+        episode_id: episode_id.to_string(),
+    }
+    .into())
+}
+
+/// Returns the final download path for an episode ID.
 /// # Errors
 ///
-/// Returns an error when `episode_id` is empty or contains anything other than
-/// ASCII digits.
+/// Returns an error when `episode_id` is not a safe single filename component.
 pub fn episode_file_path(config: &AppConfig, episode_id: &str) -> CoreResult<PathBuf> {
-    crate::client::anidb::validate_episode_id(episode_id)?;
+    validate_download_id(episode_id)?;
     Ok(config.downloads_dir().join(format!("{episode_id}.mp4")))
 }
 
@@ -185,7 +205,7 @@ pub fn download_episode(
     episode_id: &str,
     stream_url: &Url,
 ) -> CoreResult<PathBuf> {
-    crate::client::anidb::validate_media_url(stream_url)?;
+    crate::client::validate_media_url(stream_url)?;
     info!("starting download for '{episode_id}' from {stream_url}");
     let target_path = episode_file_path(config, episode_id)?;
     let downloads_dir = config.downloads_dir();
@@ -268,7 +288,8 @@ pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> 
 mod tests {
     use super::{
         Downloader, cleanup_temp_file, delete_episode, download_episode, downloader_command,
-        episode_file_path, finalize_download, prepare_download, program_is_available,
+        episode_file_path, finalize_download, local_playback_url, prepare_download,
+        program_is_available,
     };
     use crate::config::AppConfig;
     use std::path::Path;
@@ -408,15 +429,42 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_numeric_episode_ids_before_building_paths() {
+    fn accepts_safe_legacy_episode_ids_but_rejects_path_inputs() {
         let config = AppConfig::default();
 
-        assert!(episode_file_path(&config, "../escape").is_err());
-        assert!(episode_file_path(&config, "12/sidecar").is_err());
+        assert!(episode_file_path(&config, "allanime-show-1").is_ok());
+        for episode_id in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "12/sidecar",
+            r"..\escape",
+            "/tmp/escape",
+            "episode\0id",
+        ] {
+            assert!(
+                episode_file_path(&config, episode_id).is_err(),
+                "unsafe download id: {episode_id:?}"
+            );
+        }
     }
 
     #[test]
-    fn download_and_delete_reject_non_numeric_episode_ids() {
+    fn legacy_download_ids_are_used_by_local_and_delete_boundaries() {
+        let config = AppConfig::default();
+        let episode_id = format!("allanime-legacy-{}", std::process::id());
+        let path = episode_file_path(&config, &episode_id).expect("legacy path");
+        std::fs::create_dir_all(path.parent().expect("download parent")).unwrap();
+        std::fs::write(&path, b"legacy").unwrap();
+
+        assert!(local_playback_url(&config, &episode_id).is_some());
+        assert!(delete_episode(&config, &episode_id).unwrap());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn download_and_delete_reject_unsafe_episode_ids() {
         let config = AppConfig::default();
         let stream_url = Url::parse("https://cdn.example/master.m3u8").unwrap();
 

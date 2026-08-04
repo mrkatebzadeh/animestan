@@ -94,6 +94,8 @@ pub enum Error {
     EpisodeIdParse { episode_id: String },
     #[error("invalid episode id '{episode_id}'; expected a numeric AniDB episode id")]
     InvalidEpisodeId { episode_id: String },
+    #[error("invalid download id '{episode_id}'; expected a safe filename")]
+    InvalidDownloadId { episode_id: String },
     #[error("unable to resolve stream: {message}")]
     StreamResolution { message: String },
     #[error("could not determine default config path")]

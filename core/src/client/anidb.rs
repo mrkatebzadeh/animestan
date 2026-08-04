@@ -82,21 +82,6 @@ pub(crate) fn validate_episode_id(episode_id: &str) -> CoreResult<()> {
     Ok(())
 }
 
-pub(crate) fn validate_media_url(url: &Url) -> CoreResult<()> {
-    if matches!(url.scheme(), "http" | "https")
-        && url.host_str().is_some()
-        && url.username().is_empty()
-        && url.password().is_none()
-    {
-        return Ok(());
-    }
-
-    Err(Error::InvalidMediaUrl {
-        url: url.to_string(),
-    }
-    .into())
-}
-
 pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeEntry>> {
     if html.contains("Just a moment") {
         return Err(Error::ProviderBlocked {
@@ -215,7 +200,7 @@ pub(crate) fn parse_languages(body: &str, mode: StreamingMode) -> CoreResult<Url
         url: language.embed_url,
         source,
     })?;
-    validate_media_url(&url)?;
+    crate::client::validate_media_url(&url)?;
     Ok(url)
 }
 
@@ -238,12 +223,12 @@ pub(crate) fn extract_master_url(embed: &str) -> CoreResult<Url> {
         url: url.to_string(),
         source,
     })?;
-    validate_media_url(&url)?;
+    crate::client::validate_media_url(&url)?;
     Ok(url)
 }
 
 pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<Vec<HlsVariant>> {
-    validate_media_url(master_url)?;
+    crate::client::validate_media_url(master_url)?;
     let mut variants = Vec::new();
     let mut lines = body.lines();
 
@@ -281,7 +266,7 @@ pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<
                 url: uri.to_string(),
                 source,
             })?;
-        validate_media_url(&url)?;
+        crate::client::validate_media_url(&url)?;
         variants.push(HlsVariant { height, url });
     }
 
@@ -356,9 +341,12 @@ pub(crate) fn select_variant(
 mod tests {
     use super::{
         anime_numeric_id, extract_master_url, parse_episodes, parse_languages,
-        parse_master_playlist, parse_search, select_variant, validate_media_url,
+        parse_master_playlist, parse_search, select_variant,
     };
-    use crate::config::{QualityPreference, StreamingMode};
+    use crate::{
+        client::validate_media_url,
+        config::{QualityPreference, StreamingMode},
+    };
     use url::Url;
 
     #[test]

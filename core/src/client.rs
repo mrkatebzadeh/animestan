@@ -212,6 +212,27 @@ fn is_anidb_url(url: &Url) -> bool {
     url.scheme() == "https" && url.host_str() == Some("anidb.app")
 }
 
+/// Validates a URL before it is used as a remote media resource.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidMediaUrl`] unless the URL is HTTP(S), has a host,
+/// and contains no username or password.
+pub fn validate_media_url(url: &Url) -> CoreResult<()> {
+    if matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+    {
+        return Ok(());
+    }
+
+    Err(Error::InvalidMediaUrl {
+        url: url.to_string(),
+    }
+    .into())
+}
+
 pub enum FetchBackend {
     Fixtures(FixtureFetcher),
     Http(HttpFetcher),
@@ -401,6 +422,7 @@ impl<F: Fetcher> AnimeClient<F> {
                 url: payload.url.clone(),
                 source,
             })?;
+            validate_media_url(&stream_url)?;
 
             StreamLink {
                 url: stream_url,
@@ -517,6 +539,22 @@ mod tests {
             self.calls.set(self.calls.get() + 1);
             Ok(String::new())
         }
+    }
+
+    struct StreamFetcher {
+        body: String,
+    }
+
+    impl Fetcher for StreamFetcher {
+        fn fetch(&self, _request: &FetchRequest) -> CoreResult<String> {
+            Ok(self.body.clone())
+        }
+    }
+
+    fn custom_source() -> SourceDefinition {
+        let mut source = SourceDefinition::anidb();
+        source.id = "custom".to_string();
+        source
     }
 
     #[test]
@@ -697,5 +735,45 @@ mod tests {
         assert!(request.headers.get(USER_AGENT).is_none());
         assert!(request.headers.get(REFERER).is_none());
         assert!(request.headers.get(ORIGIN).is_none());
+    }
+
+    #[test]
+    fn generic_stream_responses_reject_unsafe_urls() {
+        for value in [
+            "file:///tmp/episode.m3u8",
+            "javascript:alert(1)",
+            "https://user:password@cdn.example/episode.m3u8",
+        ] {
+            let client = AnimeClient::new(
+                custom_source(),
+                StreamFetcher {
+                    body: format!(r#"{{"url":"{value}"}}"#),
+                },
+            );
+            let error = client
+                .resolve_stream_url("episode-1")
+                .expect_err("unsafe generic stream URL");
+
+            assert!(matches!(
+                error.downcast_ref::<Error>(),
+                Some(Error::InvalidMediaUrl { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn generic_stream_responses_accept_valid_http_urls() {
+        let client = AnimeClient::new(
+            custom_source(),
+            StreamFetcher {
+                body: r#"{"url":"https://cdn.example/episode.m3u8"}"#.to_string(),
+            },
+        );
+
+        let link = client
+            .resolve_stream_url("episode-1")
+            .expect("valid generic stream URL");
+
+        assert_eq!(link.url.as_str(), "https://cdn.example/episode.m3u8");
     }
 }

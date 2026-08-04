@@ -28,7 +28,7 @@ mod source;
 mod store;
 mod tracking;
 
-pub use crate::client::{AnimeClient, FetchBackend, Fetcher};
+pub use crate::client::{AnimeClient, FetchBackend, Fetcher, validate_media_url};
 pub use crate::config::AppConfig;
 pub use crate::downloads::{
     delete_episode, download_episode, episode_file_path, local_playback_url,

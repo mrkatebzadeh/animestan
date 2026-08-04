@@ -15,11 +15,12 @@
 
 use std::sync::Arc;
 
-use animestan_core::{AnimeMetadata, AppConfig, MetadataResolver};
+use animestan_core::{AnimeMetadata, AppConfig, MetadataResolver, validate_media_url};
 use futures::future::AbortHandle;
 use image::DynamicImage;
 use ratatui_image::Resize;
-use reqwest::Client;
+use reqwest::redirect::Policy;
+use reqwest::{Client, Url};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
@@ -47,13 +48,26 @@ pub(crate) struct ImageLoadResult {
     pub(crate) error: Option<String>,
 }
 
+fn image_client() -> Client {
+    Client::builder()
+        .redirect(Policy::none())
+        .build()
+        .expect("image HTTP client should build")
+}
+
+fn validate_image_url(value: &str) -> Result<Url, String> {
+    let url = Url::parse(value).map_err(|error| error.to_string())?;
+    validate_media_url(&url).map_err(|error| error.to_string())?;
+    Ok(url)
+}
+
 pub(crate) fn spawn_image_loader(
     runtime: &Handle,
     mut request_rx: UnboundedReceiver<ImageLoadRequest>,
     result_tx: UnboundedSender<ImageLoadResult>,
 ) {
     runtime.spawn({
-        let client = Client::new();
+        let client = image_client();
         async move {
             let mut join_set = JoinSet::new();
             loop {
@@ -66,16 +80,18 @@ pub(crate) fn spawn_image_loader(
                                 image: None,
                                 error: None,
                             };
-                            let response = client.get(&request.url).send().await;
-                            match response {
-                                Ok(resp) => match resp.bytes().await {
-                                    Ok(bytes) => match image::load_from_memory(&bytes) {
-                                        Ok(image) => result.image = Some(image),
+                            match validate_image_url(&request.url) {
+                                Ok(url) => match client.get(url).send().await {
+                                    Ok(resp) => match resp.bytes().await {
+                                        Ok(bytes) => match image::load_from_memory(&bytes) {
+                                            Ok(image) => result.image = Some(image),
+                                            Err(err) => result.error = Some(err.to_string()),
+                                        },
                                         Err(err) => result.error = Some(err.to_string()),
                                     },
                                     Err(err) => result.error = Some(err.to_string()),
                                 },
-                                Err(err) => result.error = Some(err.to_string()),
+                                Err(err) => result.error = Some(err),
                             }
                             result
                         });
@@ -121,6 +137,10 @@ pub(crate) fn queue_image_load(
             return;
         }
     }
+    let Ok(image_url) = validate_image_url(image_url) else {
+        app.set_details("Cover URL is not a safe HTTP(S) URL.");
+        return;
+    };
     app.mark_image_pending(anime_id.to_string());
     if image_request_tx
         .send(ImageLoadRequest {
@@ -509,10 +529,13 @@ fn store_metadata_side_effects(
 mod tests {
     use super::{
         ActiveMetadataFetch, AppConfig, CoverCache, ImageLoadRequest, MetadataFetchResult,
-        MetadataTarget, handle_current_refresh_metadata_result,
+        MetadataTarget, handle_current_refresh_metadata_result, image_client, validate_image_url,
     };
     use crate::app::App;
     use anyhow::anyhow;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc::unbounded_channel;
 
@@ -570,5 +593,56 @@ mod tests {
         );
 
         assert!(active_manual_refresh.is_some());
+    }
+
+    #[test]
+    fn image_urls_require_http_host_and_no_credentials() {
+        assert!(validate_image_url("https://cdn.example/cover.jpg").is_ok());
+        for value in [
+            "file:///tmp/cover.jpg",
+            "javascript:alert(1)",
+            "https://user:password@cdn.example/cover.jpg",
+        ] {
+            assert!(
+                validate_image_url(value).is_err(),
+                "unsafe image URL: {value}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn image_client_stops_cross_origin_redirects() {
+        let origin_listener = TcpListener::bind("127.0.0.1:0").expect("bind origin server");
+        let origin_address = origin_listener.local_addr().expect("origin address");
+        let external_listener = TcpListener::bind("127.0.0.1:0").expect("bind external server");
+        external_listener
+            .set_nonblocking(true)
+            .expect("set nonblocking");
+        let external_address = external_listener.local_addr().expect("external address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = origin_listener.accept().expect("accept origin request");
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).expect("read origin request");
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{external_address}/cover.jpg\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write redirect");
+        });
+
+        let response = image_client()
+            .get(format!("http://{origin_address}/cover.jpg"))
+            .send()
+            .await
+            .expect("request should stop at redirect");
+
+        server.join().expect("origin server thread");
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert!(matches!(
+            external_listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
     }
 }

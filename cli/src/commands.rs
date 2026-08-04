@@ -111,24 +111,24 @@ pub(crate) fn handle_play(
     episode_id: &str,
 ) -> Result<()> {
     let tracker = Arc::new(Mutex::new(EpisodeTracker::load_default(config)?));
+    let target = if local_playback_url(config, episode_id).is_some() {
+        episode_file_path(config, episode_id)?
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        client
+            .resolve_stream_url(episode_id)
+            .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?
+            .url
+            .to_string()
+    };
     {
         let mut guard = tracker
             .lock()
             .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
         guard.mark_started(episode_id)?;
     }
-
-    if local_playback_url(config, episode_id).is_some() {
-        let local_path = episode_file_path(config, episode_id)?;
-        let local_path_string = local_path.to_string_lossy().into_owned();
-        playback::play_episode(config, &tracker, episode_id, local_path_string.as_str())?;
-        return Ok(());
-    }
-
-    let link = client
-        .resolve_stream_url(episode_id)
-        .with_context(|| format!("failed to resolve stream url for '{episode_id}'"))?;
-    playback::play_episode(config, &tracker, episode_id, link.url.as_str())?;
+    playback::play_episode(config, &tracker, episode_id, &target)?;
     Ok(())
 }
 
@@ -324,6 +324,29 @@ mod tests {
             "anidb"
         );
         std::fs::remove_file(path).expect("remove bookmark file");
+    }
+
+    #[test]
+    fn invalid_play_does_not_persist_started_progress() {
+        let path = std::env::temp_dir().join(format!(
+            "animestan-play-progress-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let config = AppConfig {
+            tracking_path: Some(path.to_string_lossy().into_owned()),
+            use_fixtures: Some(true),
+            ..AppConfig::default()
+        };
+        let client = AnimeClient::from_config(&config).expect("fixture client");
+
+        assert!(handle_play(&client, &config, "not-anidb-episode").is_err());
+        let tracker = EpisodeTracker::load_default(&config).expect("tracker");
+        assert!(tracker.progress_for("not-anidb-episode").is_none());
+        let _ = std::fs::remove_file(path);
     }
 }
 

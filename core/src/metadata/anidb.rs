@@ -83,6 +83,11 @@ pub(super) fn parse_detail(html: &str, anime_id: &str) -> Result<AnimeMetadata, 
             query: anime_id.to_string(),
         });
     };
+    let image_url = json_ld.image.as_deref().and_then(|image| {
+        let url = Url::parse(image).ok()?;
+        crate::client::validate_media_url(&url).ok()?;
+        Some(image.to_owned())
+    });
 
     let status = document
         .select(&status_selector)
@@ -129,7 +134,7 @@ pub(super) fn parse_detail(html: &str, anime_id: &str) -> Result<AnimeMetadata, 
         season,
         year,
         trailer_url,
-        image_url: json_ld.image,
+        image_url,
         source_url,
         source: MetadataSource::AniDb,
     })
@@ -356,6 +361,14 @@ mod tests {
             "https://anidb.app/anime/ippon-again-20"
         );
         assert_eq!(metadata.source, MetadataSource::AniDb);
+    }
+
+    #[test]
+    fn drops_unsafe_cover_urls() {
+        let html = DETAIL_HTML.replace("https://cdn.example/20.jpg", "file:///tmp/cover.jpg");
+        let metadata = parse_detail(&html, "ippon-again-20").expect("metadata");
+
+        assert!(metadata.image_url.is_none());
     }
 
     #[test]
