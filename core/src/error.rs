@@ -88,6 +88,8 @@ pub enum Error {
         #[source]
         source: url::ParseError,
     },
+    #[error("unsupported media URL '{url}'; expected http(s) without credentials")]
+    InvalidMediaUrl { url: String },
     #[error("failed to split episode id '{episode_id}'")]
     EpisodeIdParse { episode_id: String },
     #[error("invalid episode id '{episode_id}'; expected a numeric AniDB episode id")]

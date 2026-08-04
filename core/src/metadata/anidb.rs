@@ -160,8 +160,17 @@ impl MetadataProvider for AniDbMetadataProvider {
 }
 
 impl AniDbMetadataProvider {
+    /// Constructs a provider with the default cache and safe redirect policy.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured metadata HTTP client cannot be constructed.
     #[must_use]
-    pub fn new(client: Client) -> Self {
+    pub fn new() -> Self {
+        let client = Client::builder()
+            .redirect(crate::client::safe_redirect_policy())
+            .build()
+            .expect("metadata HTTP client should build");
         Self::with_cache(
             client,
             MetadataCache::new(AppConfig::default().metadata_cache_path()),
@@ -267,6 +276,12 @@ impl AniDbMetadataProvider {
             return Err(http_status_error(url, status.as_u16(), &body));
         }
         Ok(body)
+    }
+}
+
+impl Default for AniDbMetadataProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -398,6 +413,43 @@ mod tests {
                 crate::error::Error::MetadataNotFound { query } if query == "example-1"
             ));
         }
+    }
+
+    #[test]
+    fn public_constructor_stops_cross_origin_redirects() {
+        let origin_listener = TcpListener::bind("127.0.0.1:0").expect("bind origin server");
+        let origin_address = origin_listener.local_addr().expect("origin address");
+        let external_listener = TcpListener::bind("127.0.0.1:0").expect("bind external server");
+        external_listener
+            .set_nonblocking(true)
+            .expect("set nonblocking");
+        let external_address = external_listener.local_addr().expect("external address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = origin_listener.accept().expect("accept origin request");
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).expect("read origin request");
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{external_address}/media\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write redirect");
+        });
+
+        let provider = AniDbMetadataProvider::new();
+        let response = provider
+            .client
+            .get(format!("http://{origin_address}/start"))
+            .send()
+            .expect("request should stop at redirect");
+
+        server.join().expect("origin server thread");
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert!(matches!(
+            external_listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
     }
 
     #[test]

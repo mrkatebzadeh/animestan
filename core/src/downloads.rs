@@ -185,6 +185,7 @@ pub fn download_episode(
     episode_id: &str,
     stream_url: &Url,
 ) -> CoreResult<PathBuf> {
+    crate::client::anidb::validate_media_url(stream_url)?;
     info!("starting download for '{episode_id}' from {stream_url}");
     let target_path = episode_file_path(config, episode_id)?;
     let downloads_dir = config.downloads_dir();
@@ -421,6 +422,25 @@ mod tests {
 
         assert!(download_episode(&config, "../escape", &stream_url).is_err());
         assert!(delete_episode(&config, "../escape").is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_download_urls_before_side_effects() {
+        let config = AppConfig::default();
+        for value in [
+            "file:///tmp/master.m3u8",
+            "javascript:alert(1)",
+            "https://user:password@cdn.example/master.m3u8",
+        ] {
+            let stream_url = Url::parse(value).unwrap();
+            let error = download_episode(&config, "1", &stream_url)
+                .expect_err("unsafe download URL should be rejected");
+
+            assert!(
+                error.to_string().contains("unsupported media URL"),
+                "{value}"
+            );
+        }
     }
 
     #[cfg(unix)]

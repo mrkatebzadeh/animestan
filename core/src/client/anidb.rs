@@ -82,6 +82,21 @@ pub(crate) fn validate_episode_id(episode_id: &str) -> CoreResult<()> {
     Ok(())
 }
 
+pub(crate) fn validate_media_url(url: &Url) -> CoreResult<()> {
+    if matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+    {
+        return Ok(());
+    }
+
+    Err(Error::InvalidMediaUrl {
+        url: url.to_string(),
+    }
+    .into())
+}
+
 pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeEntry>> {
     if html.contains("Just a moment") {
         return Err(Error::ProviderBlocked {
@@ -196,12 +211,12 @@ pub(crate) fn parse_languages(body: &str, mode: StreamingMode) -> CoreResult<Url
         .ok_or_else(|| Error::StreamResolution {
             message: format!("no {} language stream was returned", mode.code()),
         })?;
-    Url::parse(&language.embed_url)
-        .map_err(|source| Error::StreamUrlParse {
-            url: language.embed_url,
-            source,
-        })
-        .map_err(Into::into)
+    let url = Url::parse(&language.embed_url).map_err(|source| Error::StreamUrlParse {
+        url: language.embed_url,
+        source,
+    })?;
+    validate_media_url(&url)?;
+    Ok(url)
 }
 
 pub(crate) fn extract_master_url(embed: &str) -> CoreResult<Url> {
@@ -219,15 +234,16 @@ pub(crate) fn extract_master_url(embed: &str) -> CoreResult<Url> {
         .into());
     }
     let url = &embed[start..end];
-    Url::parse(url)
-        .map_err(|source| Error::StreamUrlParse {
-            url: url.to_string(),
-            source,
-        })
-        .map_err(Into::into)
+    let url = Url::parse(url).map_err(|source| Error::StreamUrlParse {
+        url: url.to_string(),
+        source,
+    })?;
+    validate_media_url(&url)?;
+    Ok(url)
 }
 
 pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<Vec<HlsVariant>> {
+    validate_media_url(master_url)?;
     let mut variants = Vec::new();
     let mut lines = body.lines();
 
@@ -248,11 +264,14 @@ pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<
             if uri.is_empty() {
                 continue;
             }
-            if uri.starts_with('#') {
+            if uri.starts_with("#EXT-X-STREAM-INF") {
                 return Err(Error::StreamResolution {
                     message: "stream-info tag was not followed by a variant URI".to_string(),
                 }
                 .into());
+            }
+            if uri.starts_with('#') {
+                continue;
             }
             break uri;
         };
@@ -262,6 +281,7 @@ pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<
                 url: uri.to_string(),
                 source,
             })?;
+        validate_media_url(&url)?;
         variants.push(HlsVariant { height, url });
     }
 
@@ -336,7 +356,7 @@ pub(crate) fn select_variant(
 mod tests {
     use super::{
         anime_numeric_id, extract_master_url, parse_episodes, parse_languages,
-        parse_master_playlist, parse_search, select_variant,
+        parse_master_playlist, parse_search, select_variant, validate_media_url,
     };
     use crate::config::{QualityPreference, StreamingMode};
     use url::Url;
@@ -423,6 +443,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unsafe_media_urls_at_all_boundaries() {
+        let master = Url::parse("https://cdn.example/master.m3u8").unwrap();
+        for url in [
+            "file:///tmp/master.m3u8",
+            "javascript:alert(1)",
+            "https://user:password@cdn.example/master.m3u8",
+        ] {
+            let language_body =
+                format!(r#"{{"languages":[{{"code":"jpn","embed_url":"{url}"}}]}}"#);
+            assert!(
+                parse_languages(&language_body, StreamingMode::Sub).is_err(),
+                "{url}"
+            );
+
+            let embed = format!("<script>player.setup({{file: '{url}'}});</script>");
+            assert!(extract_master_url(&embed).is_err(), "{url}");
+
+            let playlist = format!("#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n{url}\n");
+            assert!(parse_master_playlist(&playlist, &master).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn accepts_http_media_urls_without_credentials() {
+        for url in [
+            Url::parse("http://cdn.example/master.m3u8").unwrap(),
+            Url::parse("https://cdn.example/master.m3u8").unwrap(),
+        ] {
+            validate_media_url(&url).expect("HTTP(S) URL should be accepted");
+        }
+    }
+
+    #[test]
     fn resolves_relative_hls_variants_and_quality() {
         let master = Url::parse("https://cdn.example/path/master.m3u8").unwrap();
         let body = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n720/index.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\nhttps://video.example/1080.m3u8\n";
@@ -476,6 +529,18 @@ mod tests {
         let body = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\n1080.m3u8\n";
 
         assert!(parse_master_playlist(body, &master).is_err());
+    }
+
+    #[test]
+    fn skips_ordinary_comments_before_variant_uri() {
+        let master = Url::parse("https://cdn.example/master.m3u8").unwrap();
+        let body =
+            "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n#EXT-X-MEDIA:TYPE=AUDIO\n720.m3u8\n";
+
+        let variants = parse_master_playlist(body, &master).expect("variant should be parsed");
+
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].height, 720);
     }
 
     #[test]

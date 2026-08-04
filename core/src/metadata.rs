@@ -164,12 +164,7 @@ impl MetadataCache {
         let path = self.inner.path.clone();
         let cache = match std::fs::read_to_string(&path) {
             Ok(contents) => {
-                if let Ok(cache) = serde_json::from_str::<MetadataCacheFile>(&contents) {
-                    cache
-                } else {
-                    let _ = std::fs::remove_file(&path);
-                    MetadataCacheFile::default()
-                }
+                serde_json::from_str::<MetadataCacheFile>(&contents).unwrap_or_default()
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => MetadataCacheFile::default(),
             Err(source) => {
@@ -299,7 +294,7 @@ impl MetadataProvider for MetadataResolver {
 
 #[cfg(test)]
 mod tests {
-    use super::MetadataSource;
+    use super::{MetadataCache, MetadataSource};
 
     #[test]
     fn anidb_source_serializes_in_lowercase() {
@@ -307,5 +302,28 @@ mod tests {
             serde_json::to_string(&MetadataSource::AniDb).expect("source should serialize"),
             "\"anidb\""
         );
+    }
+
+    #[test]
+    fn incompatible_cache_is_preserved_and_ignored() {
+        let path = std::env::temp_dir().join(format!(
+            "animestan-metadata-incompatible-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let contents = r#"{"entries":{"legacy":{"metadata":{"title":"Legacy"}}}}"#;
+        std::fs::write(&path, contents).expect("write incompatible cache");
+
+        let cache = MetadataCache::new(path.clone());
+
+        assert!(cache.get("anidb:id:legacy").expect("cache read").is_none());
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read cache"),
+            contents
+        );
+        std::fs::remove_file(path).expect("remove test cache");
     }
 }
