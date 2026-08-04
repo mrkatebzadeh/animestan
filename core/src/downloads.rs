@@ -160,7 +160,10 @@ fn validate_download_id(episode_id: &str) -> CoreResult<()> {
         && episode_id != "."
         && episode_id != ".."
         && !episode_id.chars().any(char::is_control)
-        && !episode_id.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+        && !episode_id.chars().any(|character| {
+            matches!(character, '/' | '\\' | '*' | '?' | '"' | '<' | '>' | '|')
+                || (cfg!(windows) && character == ':')
+        })
         && !path.is_absolute()
         && path
             .components()
@@ -450,10 +453,11 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn legacy_download_ids_are_used_by_local_and_delete_boundaries() {
         let config = AppConfig::default();
-        let episode_id = format!("allanime-legacy-{}", std::process::id());
+        let episode_id = format!("show_id:{}", std::process::id());
         let path = episode_file_path(&config, &episode_id).expect("legacy path");
         std::fs::create_dir_all(path.parent().expect("download parent")).unwrap();
         std::fs::write(&path, b"legacy").unwrap();
