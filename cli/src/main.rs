@@ -70,7 +70,7 @@ fn run() -> Result<()> {
 }
 
 const ABOUT: &str = concat!(
-    "Search live AllAnime by default. ",
+    "Search live AniDB by default. ",
     "Edit ~/.config/animestan/config.toml or set ANIMESTAN_USE_FIXTURES=1 to use fixtures."
 );
 

@@ -39,11 +39,11 @@ pub(crate) mod anidb;
 
 use crate::client::allanime::{
     ALLANIME_EPISODE_EMBED_GQL, ALLANIME_EPISODE_EMBED_PERSISTED_HASH, ALLANIME_EPISODES_GQL,
-    ALLANIME_REFERER, ALLANIME_SEARCH_GQL, ALLANIME_TRANSLATION, AllAnimeEpisodeEmbedResponse,
-    AllAnimeEpisodesResponse, AllAnimeSearchResponse, AllAnimeSourceUrl, build_aa_req,
-    build_embed_url, build_graphql_url, decode_source_url, fetch_allanime_key_material,
-    maybe_decrypt_response_data, ordered_source_urls, parse_episode_number, select_stream_url,
-    split_episode_id,
+    ALLANIME_REFERER, ALLANIME_SEARCH_GQL, ALLANIME_TRANSLATION, ALLANIME_USER_AGENT,
+    AllAnimeEpisodeEmbedResponse, AllAnimeEpisodesResponse, AllAnimeSearchResponse,
+    AllAnimeSourceUrl, build_aa_req, build_embed_url, build_graphql_url, decode_source_url,
+    fetch_allanime_key_material, maybe_decrypt_response_data, ordered_source_urls,
+    parse_episode_number, select_stream_url, split_episode_id,
 };
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
@@ -145,15 +145,7 @@ pub struct HttpFetcher {
 
 impl HttpFetcher {
     fn new() -> CoreResult<Self> {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_static(anidb::USER_AGENT_VALUE),
-        );
-        headers.insert(REFERER, HeaderValue::from_static(ALLANIME_REFERER));
-
         let client = BlockingHttpClient::builder()
-            .default_headers(headers)
             .build()
             .map_err(Error::HttpClient)?;
 
@@ -307,7 +299,7 @@ impl<F: Fetcher> AnimeClient<F> {
             self.search_allanime(query)?
         } else {
             let url = self.source.search.render(&[("query", query)])?;
-            let request = FetchRequest::get(url.clone());
+            let request = self.get_request(url);
             let mut entries: Vec<AnimeEntry> = self.fetch_and_parse(&request)?;
             for entry in &mut entries {
                 entry.source_id.clone_from(&self.source.id);
@@ -334,7 +326,7 @@ impl<F: Fetcher> AnimeClient<F> {
             self.list_episodes_allanime(anime_id)?
         } else {
             let url = self.source.episodes.render(&[("anime_id", anime_id)])?;
-            let request = FetchRequest::get(url.clone());
+            let request = self.get_request(url);
             let mut episodes: Vec<Episode> = self.fetch_and_parse(&request)?;
             for episode in &mut episodes {
                 episode.source_id.clone_from(&self.source.id);
@@ -359,7 +351,7 @@ impl<F: Fetcher> AnimeClient<F> {
             self.resolve_stream_url_allanime(episode_id)?
         } else {
             let url = self.source.stream.render(&[("episode_id", episode_id)])?;
-            let request = FetchRequest::get(url.clone());
+            let request = self.get_request(url);
             let payload: StreamPayload = self.fetch_and_parse(&request)?;
             let stream_url = Url::parse(&payload.url).map_err(|source| Error::StreamUrlParse {
                 url: payload.url.clone(),
@@ -379,14 +371,14 @@ impl<F: Fetcher> AnimeClient<F> {
 
     fn search_anidb(&self, query: &str) -> CoreResult<Vec<AnimeEntry>> {
         let url = self.source.search.render(&[("query", query)])?;
-        let body = self.fetcher.fetch(&FetchRequest::get(url))?;
+        let body = self.fetcher.fetch(&self.get_request(url))?;
         anidb::parse_search(&body, &self.source.id)
     }
 
     fn list_episodes_anidb(&self, anime_id: &str) -> CoreResult<Vec<Episode>> {
         let numeric_id = anidb::anime_numeric_id(anime_id)?;
         let url = self.source.episodes.render(&[("anime_id", numeric_id)])?;
-        let body = self.fetcher.fetch(&FetchRequest::get(url))?;
+        let body = self.fetcher.fetch(&self.get_request(url))?;
         anidb::parse_episodes(&body, anime_id, &self.source.id)
     }
 
@@ -551,7 +543,8 @@ impl<F: Fetcher> AnimeClient<F> {
             pairs.append_pair("extensions", &extensions_json);
         }
 
-        let persisted_request = FetchRequest::get(persisted_url)
+        let persisted_request = self
+            .get_request(persisted_url)
             .with_header(
                 HeaderName::from_static("x-build-id"),
                 HeaderValue::from_str(&keys.build_id).expect("valid AllAnime build ID"),
@@ -600,7 +593,7 @@ impl<F: Fetcher> AnimeClient<F> {
         }
 
         let embed_url = build_embed_url(&decoded)?;
-        let embed_request = FetchRequest::get(embed_url);
+        let embed_request = self.get_request(embed_url);
         let payload: Value = self.fetch_and_parse(&embed_request)?;
         let stream_url = select_stream_url(&payload)?;
         let url = Url::parse(&stream_url).map_err(|source| Error::StreamUrlParse {
@@ -631,8 +624,27 @@ impl<F: Fetcher> AnimeClient<F> {
         });
         let request = FetchRequest::post(url, body);
         request
+            .with_header(USER_AGENT, HeaderValue::from_static(ALLANIME_USER_AGENT))
             .with_header(REFERER, HeaderValue::from_static(ALLANIME_REFERER))
             .with_header(ORIGIN, HeaderValue::from_static(ALLANIME_REFERER))
+    }
+
+    fn get_request(&self, url: Url) -> FetchRequest {
+        let request = FetchRequest::get(url);
+        if self.uses_anidb() {
+            request
+                .with_header(
+                    USER_AGENT,
+                    HeaderValue::from_static(anidb::USER_AGENT_VALUE),
+                )
+                .with_header(REFERER, HeaderValue::from_static(anidb::BASE_URL))
+        } else if self.uses_allanime() {
+            request
+                .with_header(USER_AGENT, HeaderValue::from_static(ALLANIME_USER_AGENT))
+                .with_header(REFERER, HeaderValue::from_static(ALLANIME_REFERER))
+        } else {
+            request
+        }
     }
 
     fn fetch_and_parse<T>(&self, request: &FetchRequest) -> CoreResult<T>
@@ -664,6 +676,19 @@ struct StreamPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct CapturingFetcher {
+        headers: Rc<RefCell<Option<HeaderMap>>>,
+    }
+
+    impl Fetcher for CapturingFetcher {
+        fn fetch(&self, request: &FetchRequest) -> CoreResult<String> {
+            self.headers.replace(Some(request.headers.clone()));
+            Ok(r#"<a href="/anime/naruto-3686" title="Naruto"></a>"#.to_string())
+        }
+    }
 
     #[test]
     fn search_returns_results() {
@@ -679,6 +704,33 @@ mod tests {
             .list_episodes("naruto-3686")
             .expect("episode listing");
         assert!(episodes.iter().any(|episode| episode.id == "6087"));
+    }
+
+    #[test]
+    fn anidb_requests_use_anidb_headers() {
+        let headers = Rc::new(RefCell::new(None));
+        let client = AnimeClient::new(
+            SourceDefinition::anidb(),
+            CapturingFetcher {
+                headers: Rc::clone(&headers),
+            },
+        );
+
+        client.search("naruto").expect("search results");
+
+        let headers = headers.borrow();
+        let headers = headers.as_ref().expect("captured request headers");
+        assert_eq!(
+            headers
+                .get(USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some(anidb::USER_AGENT_VALUE)
+        );
+        assert_eq!(
+            headers.get(REFERER).and_then(|value| value.to_str().ok()),
+            Some(anidb::BASE_URL)
+        );
+        assert!(headers.get(ORIGIN).is_none());
     }
 
     #[test]

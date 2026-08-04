@@ -104,9 +104,10 @@ pub(crate) fn parse_episodes(
     anime_id: &str,
     source_id: &str,
 ) -> CoreResult<Vec<Episode>> {
+    let numeric_id = anime_numeric_id(anime_id)?;
     let response: EpisodesResponse =
         serde_json::from_str(body).map_err(|source| Error::ResponseParse {
-            url: format!("{BASE_URL}/api/frontend/anime/{anime_id}/episodes"),
+            url: format!("{BASE_URL}/api/frontend/anime/{numeric_id}/episodes"),
             source,
         })?;
 
@@ -184,5 +185,14 @@ mod tests {
     fn extracts_numeric_anime_suffix() {
         assert_eq!(anime_numeric_id("naruto-3686").unwrap(), "3686");
         assert!(anime_numeric_id("naruto").is_err());
+    }
+
+    #[test]
+    fn malformed_episode_response_reports_numeric_endpoint() {
+        let error =
+            parse_episodes("not json", "naruto-3686", "anidb").expect_err("malformed response");
+        let message = error.to_string();
+        assert!(message.contains("/api/frontend/anime/3686/episodes"));
+        assert!(!message.contains("/api/frontend/anime/naruto-3686/episodes"));
     }
 }
