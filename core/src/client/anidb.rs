@@ -75,7 +75,7 @@ pub(crate) fn anime_numeric_id(anime_id: &str) -> CoreResult<&str> {
 pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeEntry>> {
     if html.contains("Just a moment") {
         return Err(Error::ProviderBlocked {
-            url: BASE_URL.to_string(),
+            url: format!("{BASE_URL}/browse"),
         }
         .into());
     }
@@ -105,12 +105,12 @@ pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeE
         let Some(title) = title else {
             continue;
         };
-        if !seen.insert(anime_id.to_string()) {
+        if !seen.insert(anime_id.clone()) {
             continue;
         }
 
         entries.push(AnimeEntry {
-            id: anime_id.to_string(),
+            id: anime_id.clone(),
             title: title.to_string(),
             source_id: source_id.to_string(),
         });
@@ -149,8 +149,17 @@ pub(crate) fn parse_episodes(
     Ok(episodes)
 }
 
-fn anime_path_segment(href: &str) -> Option<&str> {
-    let path = href.split(['?', '#']).next()?;
+fn anime_path_segment(href: &str) -> Option<String> {
+    let path = if let Ok(url) = Url::parse(href) {
+        if url.scheme() != "https" || url.host_str() != Some("anidb.app") {
+            return None;
+        }
+        url.path().to_string()
+    } else if href.starts_with('/') {
+        href.split(['?', '#']).next()?.to_string()
+    } else {
+        return None;
+    };
     let mut segments = path.split('/');
     while let Some(segment) = segments.next() {
         if segment != "anime" {
@@ -159,7 +168,7 @@ fn anime_path_segment(href: &str) -> Option<&str> {
 
         let anime_id = segments.next()?;
         anime_numeric_id(anime_id).ok()?;
-        return Some(anime_id);
+        return Some(anime_id.to_string());
     }
     None
 }
@@ -337,6 +346,20 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, "naruto-3686");
         assert_eq!(entries[1].title, "Boruto & Naruto");
+    }
+
+    #[test]
+    fn rejects_non_anidb_result_hosts() {
+        let html = r#"
+            <a href="https://evil.example/anime/evil-1" title="Evil"></a>
+            <a href="https://anidb.app/anime/good-2" title="Good"></a>
+            <a href="/anime/relative-3" title="Relative"></a>
+        "#;
+
+        let entries = parse_search(html, "anidb").expect("search entries");
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| entry.id != "evil-1"));
     }
 
     #[test]

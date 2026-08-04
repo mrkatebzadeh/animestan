@@ -90,6 +90,8 @@ pub enum Error {
     },
     #[error("failed to split episode id '{episode_id}'")]
     EpisodeIdParse { episode_id: String },
+    #[error("invalid episode id '{episode_id}'; expected a numeric AniDB episode id")]
+    InvalidEpisodeId { episode_id: String },
     #[error("unable to resolve stream: {message}")]
     StreamResolution { message: String },
     #[error("could not determine default config path")]

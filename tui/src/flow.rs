@@ -16,9 +16,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use animestan_core::{
-    AnimeClient, AppConfig, EpisodeTracker, FetchBackend, episode_file_path, local_playback_url,
-};
+use animestan_core::{AnimeClient, AppConfig, EpisodeTracker, FetchBackend, episode_file_path};
 use anyhow::{Result, anyhow};
 use futures::future::AbortHandle;
 use tokio::runtime::Handle;
@@ -180,7 +178,7 @@ pub(crate) fn handle_playback_requests(
             let episode_title = app.current_episode_title();
             (episode_id, episode_title, anime_id)
         };
-    let using_local = local_playback_url(config, &episode_id).is_some();
+    let using_local = episode_file_path(config, &episode_id).is_ok_and(|path| path.exists());
 
     if let Some(title) = &episode_title {
         if using_local {
@@ -334,7 +332,7 @@ pub(crate) fn refresh_episode_indicators(
             let state = guard.state_for(&episode.id);
             let watched = state.as_ref().is_some_and(|status| status.watched);
             let in_progress = state.as_ref().is_some_and(|status| status.in_progress);
-            let downloaded = episode_file_path(config, &episode.id).exists();
+            let downloaded = episode_file_path(config, &episode.id).is_ok_and(|path| path.exists());
             indicators.insert(
                 episode.id.clone(),
                 EpisodeIndicators {

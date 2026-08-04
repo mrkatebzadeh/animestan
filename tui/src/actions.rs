@@ -64,7 +64,13 @@ pub(crate) fn handle_download(
     let episode_title = app.current_episode_title();
 
     if local_playback_url(config, &episode_id).is_some() {
-        let path = episode_file_path(config, &episode_id);
+        let path = match episode_file_path(config, &episode_id) {
+            Ok(path) => path,
+            Err(err) => {
+                app.set_details(format!("Failed to locate download: {err}"));
+                return true;
+            }
+        };
         app.set_details(format!("Episode already downloaded at {}", path.display()));
         info!(
             "episode '{episode_id}' already downloaded locally at {}",

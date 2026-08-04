@@ -119,7 +119,7 @@ pub(crate) fn handle_play(
     }
 
     if local_playback_url(config, episode_id).is_some() {
-        let local_path = episode_file_path(config, episode_id);
+        let local_path = episode_file_path(config, episode_id)?;
         let local_path_string = local_path.to_string_lossy().into_owned();
         playback::play_episode(config, &tracker, episode_id, local_path_string.as_str())?;
         return Ok(());
@@ -139,7 +139,7 @@ pub(crate) fn handle_download(
 ) -> Result<()> {
     if let Some(local_url) = local_playback_url(config, episode_id) {
         info!("download requested for '{episode_id}' but file already exists");
-        let path = episode_file_path(config, episode_id);
+        let path = episode_file_path(config, episode_id)?;
         println!(
             "Episode '{episode_id}' already downloaded at {} ({}), skipping",
             path.display(),
@@ -246,14 +246,10 @@ pub(crate) fn handle_bookmarks(
         }
         BookmarksCommand::Add { anime_id, title } => {
             let mut store = FavoriteStore::load_default(config)?;
-            let source_id = config
-                .source_id
-                .clone()
-                .unwrap_or_else(|| SourceDefinition::ANIDB_ID.to_string());
             let anime_entry = AnimeEntry {
                 id: anime_id.clone(),
                 title: title.unwrap_or_else(|| anime_id.clone()),
-                source_id,
+                source_id: SourceDefinition::ANIDB_ID.to_string(),
             };
             store.add(anime_entry)?;
             println!("Added bookmark '{anime_id}'");
@@ -286,6 +282,48 @@ pub(crate) fn describe_command(command: &Commands) -> &'static str {
             BookmarksCommand::Add { .. } => "bookmarks::add",
             BookmarksCommand::Rm { .. } => "bookmarks::rm",
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bookmark_add_uses_anidb_for_stale_config_source() {
+        let path = std::env::temp_dir().join(format!(
+            "animestan-bookmark-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let config = AppConfig {
+            source_id: Some("allanime".to_string()),
+            use_fixtures: Some(false),
+            favorites_path: Some(path.to_string_lossy().into_owned()),
+            ..AppConfig::default()
+        };
+        let client = AnimeClient::from_config(&config).expect("client");
+
+        handle_bookmarks(
+            &client,
+            &config,
+            BookmarksCommand::Add {
+                anime_id: "naruto-3686".to_string(),
+                title: Some("Naruto".to_string()),
+            },
+        )
+        .expect("bookmark");
+
+        let contents = std::fs::read_to_string(&path).expect("bookmark file");
+        let json: serde_json::Value = serde_json::from_str(&contents).expect("bookmark json");
+        assert_eq!(
+            json["entries"]["naruto-3686"]["anime"]["source_id"],
+            "anidb"
+        );
+        std::fs::remove_file(path).expect("remove bookmark file");
     }
 }
 

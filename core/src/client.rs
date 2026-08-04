@@ -160,21 +160,38 @@ impl Fetcher for HttpFetcher {
             url: request.url.to_string(),
             source,
         })?;
-
-        if !response.status().is_success() {
-            return Err(Error::HttpStatus {
-                url: request.url.to_string(),
-                status: response.status().as_u16(),
-            }
-            .into());
-        }
-
+        let status = response.status();
         let body = response.text().map_err(|source| Error::HttpBodyParse {
             url: request.url.to_string(),
             source,
         })?;
+
+        if !status.is_success() {
+            return Err(http_status_error(request, status.as_u16(), &body).into());
+        }
+
         Ok(body)
     }
+}
+
+fn http_status_error(request: &FetchRequest, status: u16, body: &str) -> Error {
+    if is_anidb_url(&request.url)
+        && request.url.path() == "/browse"
+        && body.contains("Just a moment")
+    {
+        Error::ProviderBlocked {
+            url: request.url.to_string(),
+        }
+    } else {
+        Error::HttpStatus {
+            url: request.url.to_string(),
+            status,
+        }
+    }
+}
+
+fn is_anidb_url(url: &Url) -> bool {
+    url.scheme() == "https" && url.host_str() == Some("anidb.app")
 }
 
 pub enum FetchBackend {
@@ -417,7 +434,7 @@ impl<F: Fetcher> AnimeClient<F> {
 
     fn get_request(&self, url: Url) -> FetchRequest {
         let request = FetchRequest::get(url);
-        if self.uses_anidb() {
+        if self.uses_anidb() && is_anidb_url(&request.url) {
             request
                 .with_header(
                     USER_AGENT,
@@ -535,5 +552,40 @@ mod tests {
             Some(anidb::BASE_URL)
         );
         assert!(headers.get(ORIGIN).is_none());
+    }
+
+    #[test]
+    fn cloudflare_search_status_uses_response_body() {
+        let request = FetchRequest::get(Url::parse("https://anidb.app/browse?q=naruto").unwrap());
+        let error = super::http_status_error(&request, 403, "<title>Just a moment...</title>");
+
+        assert!(matches!(error, Error::ProviderBlocked { url } if url == request.url.to_string()));
+    }
+
+    #[test]
+    fn non_search_status_preserves_url_and_status() {
+        let request = FetchRequest::get(
+            Url::parse("https://anidb.app/api/frontend/anime/3686/episodes").unwrap(),
+        );
+        let error = super::http_status_error(&request, 403, "<title>Just a moment...</title>");
+
+        assert!(
+            matches!(error, Error::HttpStatus { url, status } if url == request.url.to_string() && status == 403)
+        );
+    }
+
+    #[test]
+    fn external_media_requests_omit_anidb_headers() {
+        let client = AnimeClient::new(
+            SourceDefinition::anidb(),
+            CapturingFetcher {
+                headers: Rc::new(RefCell::new(None)),
+            },
+        );
+        let request = client.get_request(Url::parse("https://stream.example/master.m3u8").unwrap());
+
+        assert!(request.headers.get(USER_AGENT).is_none());
+        assert!(request.headers.get(REFERER).is_none());
+        assert!(request.headers.get(ORIGIN).is_none());
     }
 }

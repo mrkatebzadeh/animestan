@@ -35,6 +35,7 @@ fn downloader_command(downloader: Downloader, stream_url: &Url, target: &Path) -
         Downloader::YtDlp => {
             let mut command = Command::new("yt-dlp");
             command.args([
+                "--no-part",
                 "--no-skip-unavailable-fragments",
                 "--fragment-retries",
                 "infinite",
@@ -134,14 +135,24 @@ fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<
     Ok(())
 }
 
-#[must_use]
-pub fn episode_file_path(config: &AppConfig, episode_id: &str) -> PathBuf {
-    config.downloads_dir().join(format!("{episode_id}.mp4"))
+/// Returns the final download path for a numeric `AniDB` episode ID.
+/// # Errors
+///
+/// Returns an error when `episode_id` is empty or contains anything other than
+/// ASCII digits.
+pub fn episode_file_path(config: &AppConfig, episode_id: &str) -> CoreResult<PathBuf> {
+    if episode_id.is_empty() || !episode_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::InvalidEpisodeId {
+            episode_id: episode_id.to_string(),
+        }
+        .into());
+    }
+    Ok(config.downloads_dir().join(format!("{episode_id}.mp4")))
 }
 
 #[must_use]
 pub fn local_playback_url(config: &AppConfig, episode_id: &str) -> Option<Url> {
-    let path = episode_file_path(config, episode_id);
+    let path = episode_file_path(config, episode_id).ok()?;
     if !path.exists() {
         return None;
     }
@@ -161,13 +172,13 @@ pub fn download_episode(
     stream_url: &Url,
 ) -> CoreResult<PathBuf> {
     info!("starting download for '{episode_id}' from {stream_url}");
+    let target_path = episode_file_path(config, episode_id)?;
     let downloads_dir = config.downloads_dir();
     fs::create_dir_all(&downloads_dir).map_err(|source| Error::DownloadCreateDir {
         path: downloads_dir.clone(),
         source,
     })?;
 
-    let target_path = episode_file_path(config, episode_id);
     let temp_path = downloads_dir.join(format!("{episode_id}.mp4.part"));
     if target_path.exists() {
         warn!(
@@ -244,7 +255,7 @@ pub fn download_episode(
 /// Returns an error when the filesystem fails to remove the file for reasons
 /// other than the file being missing.
 pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> {
-    let path = episode_file_path(config, episode_id);
+    let path = episode_file_path(config, episode_id)?;
     if !path.exists() {
         return Ok(false);
     }
@@ -258,7 +269,11 @@ pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> 
 
 #[cfg(test)]
 mod tests {
-    use super::{Downloader, downloader_command, finalize_download, program_is_available};
+    use super::{
+        Downloader, delete_episode, download_episode, downloader_command, episode_file_path,
+        finalize_download, program_is_available,
+    };
+    use crate::config::AppConfig;
     use std::path::Path;
     use url::Url;
 
@@ -276,6 +291,7 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--fragment-retries", "infinite"])
         );
+        assert!(args.contains(&"--no-part".to_string()));
         assert!(
             args.windows(2)
                 .any(|pair| pair == ["-o", "episode.mp4.part"])
@@ -356,6 +372,23 @@ mod tests {
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         assert!(source.raw_os_error().is_some());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_numeric_episode_ids_before_building_paths() {
+        let config = AppConfig::default();
+
+        assert!(episode_file_path(&config, "../escape").is_err());
+        assert!(episode_file_path(&config, "12/sidecar").is_err());
+    }
+
+    #[test]
+    fn download_and_delete_reject_non_numeric_episode_ids() {
+        let config = AppConfig::default();
+        let stream_url = Url::parse("https://cdn.example/master.m3u8").unwrap();
+
+        assert!(download_episode(&config, "../escape", &stream_url).is_err());
+        assert!(delete_episode(&config, "../escape").is_err());
     }
 
     #[cfg(unix)]
