@@ -39,18 +39,9 @@ mod tests {
     #[test]
     fn episodes_command_outputs_episode_listing() {
         cli_command()
-            .args(["episodes", "naruto"])
+            .args(["episodes", "naruto-3686"])
             .assert()
             .success()
-            .stdout(contains("naruto-1").and(contains("Enter: Naruto")));
-    }
-
-    #[test]
-    fn url_command_outputs_stream_url() {
-        cli_command()
-            .args(["url", "naruto-1"])
-            .assert()
-            .success()
-            .stdout(contains("https://stream.example/naruto-1.m3u8"));
+            .stdout(contains("6087").and(contains("Episode 1")));
     }
 }

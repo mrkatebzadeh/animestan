@@ -14,7 +14,6 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{CoreResult, error::Error, source::SourceCatalog};
-use serde_json::Value;
 use std::collections::HashMap;
 
 const SOURCE_CATALOG: &str = include_str!(concat!(
@@ -30,7 +29,7 @@ pub(crate) fn load_catalog() -> CoreResult<SourceCatalog> {
     SourceCatalog::load_from_str(SOURCE_CATALOG)
 }
 
-pub(crate) fn load_responses() -> CoreResult<HashMap<String, Value>> {
+pub(crate) fn load_responses() -> CoreResult<HashMap<String, String>> {
     let responses = serde_json::from_str(RESPONSES).map_err(Error::ResponseFixture)?;
     Ok(responses)
 }

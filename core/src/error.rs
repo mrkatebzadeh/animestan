@@ -68,6 +68,8 @@ pub enum Error {
     },
     #[error("unexpected http status {status} for '{url}'")]
     HttpStatus { url: String, status: u16 },
+    #[error("AniDB request was blocked by Cloudflare at '{url}'")]
+    ProviderBlocked { url: String },
     #[error("failed to decode http body for '{url}': {source}")]
     HttpBodyParse {
         url: String,
