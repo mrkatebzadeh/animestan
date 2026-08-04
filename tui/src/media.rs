@@ -535,19 +535,23 @@ mod tests {
     use anyhow::anyhow;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc::unbounded_channel;
+
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn unique_temp_path(name: &str) -> String {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should advance")
             .as_nanos();
+        let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir()
             .join(format!(
-                "animestan-media-{name}-{}-{stamp}.json",
-                std::process::id()
+                "animestan-media-{name}-{}-{stamp}-{counter}.json",
+                std::process::id(),
             ))
             .display()
             .to_string()

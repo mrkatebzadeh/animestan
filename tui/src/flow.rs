@@ -368,20 +368,24 @@ pub(crate) fn update_playback_elapsed(app: &mut App, tracker: &Arc<Mutex<Episode
 mod tests {
     use super::*;
     use animestan_core::{AnimeEntry, Episode, FavoriteStore};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc::unbounded_channel;
 
     use crate::tasks::BackgroundEpisodeRefreshResult;
+
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn unique_temp_path(name: &str) -> String {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should advance")
             .as_nanos();
+        let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir()
             .join(format!(
-                "animestan-{name}-{}-{stamp}.json",
-                std::process::id()
+                "animestan-{name}-{}-{stamp}-{counter}.json",
+                std::process::id(),
             ))
             .display()
             .to_string()
