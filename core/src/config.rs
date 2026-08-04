@@ -129,6 +129,10 @@ impl AppConfig {
 # Streaming quality: best, worst, or a height such as 720p (default: best)
 # quality = "best"
 
+# HLS downloads require yt-dlp or ffmpeg; yt-dlp is preferred.
+# New state lives under the anidb namespace; old source-dependent state is preserved but ignored.
+# Clear or change custom paths when upgrading; downloads remain available.
+
 # Path to cached metadata (relative to config dir or absolute)
 # metadata_cache_path = "metadata_cache.json"
 
