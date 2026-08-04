@@ -16,6 +16,7 @@
 use reqwest::Method;
 use reqwest::blocking::Client as BlockingHttpClient;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
+use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -135,6 +136,7 @@ pub struct HttpFetcher {
 impl HttpFetcher {
     fn new() -> CoreResult<Self> {
         let client = BlockingHttpClient::builder()
+            .redirect(safe_redirect_policy())
             .build()
             .map_err(Error::HttpClient)?;
 
@@ -167,27 +169,43 @@ impl Fetcher for HttpFetcher {
         })?;
 
         if !status.is_success() {
-            return Err(http_status_error(request, status.as_u16(), &body).into());
+            return Err(http_status_error(&request.url, status.as_u16(), &body).into());
         }
 
         Ok(body)
     }
 }
 
-fn http_status_error(request: &FetchRequest, status: u16, body: &str) -> Error {
-    if is_anidb_url(&request.url)
-        && request.url.path() == "/browse"
-        && body.contains("Just a moment")
-    {
+pub(crate) fn http_status_error(url: &Url, status: u16, body: &str) -> Error {
+    if status == 403 && is_anidb_url(url) && body.contains("Just a moment") {
         Error::ProviderBlocked {
-            url: request.url.to_string(),
+            url: url.to_string(),
         }
     } else {
         Error::HttpStatus {
-            url: request.url.to_string(),
+            url: url.to_string(),
             status,
         }
     }
+}
+
+pub(crate) fn safe_redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        let Some(previous) = attempt.previous().last() else {
+            return attempt.stop();
+        };
+        if same_origin(previous, attempt.url()) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
+fn same_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
 }
 
 fn is_anidb_url(url: &Url) -> bool {
@@ -396,6 +414,7 @@ impl<F: Fetcher> AnimeClient<F> {
     }
 
     fn resolve_stream_url_anidb(&self, episode_id: &str) -> CoreResult<StreamLink> {
+        anidb::validate_episode_id(episode_id)?;
         let languages_url = self.source.stream.render(&[("episode_id", episode_id)])?;
         let languages = self.fetcher.fetch(&self.get_request(languages_url))?;
         let embed_url = anidb::parse_languages(&languages, self.mode)?;
@@ -472,8 +491,11 @@ struct StreamPayload {
 mod tests {
     use super::*;
     use reqwest::header::ORIGIN;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::rc::Rc;
+    use std::time::Duration;
 
     struct CapturingFetcher {
         headers: Rc<RefCell<Option<HeaderMap>>>,
@@ -483,6 +505,17 @@ mod tests {
         fn fetch(&self, request: &FetchRequest) -> CoreResult<String> {
             self.headers.replace(Some(request.headers.clone()));
             Ok(r#"<a href="/anime/naruto-3686" title="Naruto"></a>"#.to_string())
+        }
+    }
+
+    struct CountingFetcher {
+        calls: Rc<Cell<usize>>,
+    }
+
+    impl Fetcher for CountingFetcher {
+        fn fetch(&self, _request: &FetchRequest) -> CoreResult<String> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(String::new())
         }
     }
 
@@ -556,22 +589,99 @@ mod tests {
 
     #[test]
     fn cloudflare_search_status_uses_response_body() {
-        let request = FetchRequest::get(Url::parse("https://anidb.app/browse?q=naruto").unwrap());
-        let error = super::http_status_error(&request, 403, "<title>Just a moment...</title>");
+        let url = Url::parse("https://anidb.app/browse?q=naruto").unwrap();
+        let error = super::http_status_error(&url, 403, "<title>Just a moment...</title>");
 
-        assert!(matches!(error, Error::ProviderBlocked { url } if url == request.url.to_string()));
+        assert!(
+            matches!(error, Error::ProviderBlocked { url: error_url } if error_url == url.to_string())
+        );
     }
 
     #[test]
-    fn non_search_status_preserves_url_and_status() {
-        let request = FetchRequest::get(
-            Url::parse("https://anidb.app/api/frontend/anime/3686/episodes").unwrap(),
-        );
-        let error = super::http_status_error(&request, 403, "<title>Just a moment...</title>");
+    fn cloudflare_detail_status_uses_response_body() {
+        let url = Url::parse("https://anidb.app/anime/naruto-3686").unwrap();
+        let error = super::http_status_error(&url, 403, "<title>Just a moment...</title>");
 
         assert!(
-            matches!(error, Error::HttpStatus { url, status } if url == request.url.to_string() && status == 403)
+            matches!(error, Error::ProviderBlocked { url: error_url } if error_url == url.to_string())
         );
+    }
+
+    #[test]
+    fn non_403_status_never_reports_provider_blocked() {
+        let url = Url::parse("https://anidb.app/browse?q=naruto").unwrap();
+        let error = super::http_status_error(&url, 500, "<title>Just a moment...</title>");
+
+        assert!(
+            matches!(error, Error::HttpStatus { url: error_url, status } if error_url == url.to_string() && status == 500)
+        );
+    }
+
+    #[test]
+    fn redirect_policy_only_follows_same_origin() {
+        let anidb = Url::parse("https://anidb.app/browse").unwrap();
+        let anidb_next = Url::parse("https://anidb.app/anime/naruto-3686").unwrap();
+        let external = Url::parse("https://cdn.example/master.m3u8").unwrap();
+
+        assert!(super::same_origin(&anidb, &anidb_next));
+        assert!(!super::same_origin(&anidb, &external));
+    }
+
+    #[test]
+    fn redirect_policy_stops_before_cross_origin_request() {
+        let origin_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin_address = origin_listener.local_addr().unwrap();
+        let external_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        external_listener.set_nonblocking(true).unwrap();
+        let external_address = external_listener.local_addr().unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = origin_listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{external_address}/media\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let client = BlockingHttpClient::builder()
+            .redirect(super::safe_redirect_policy())
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!("http://{origin_address}/start"))
+            .send()
+            .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert!(matches!(
+            external_listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+    }
+
+    #[test]
+    fn invalid_anidb_episode_id_does_not_fetch() {
+        let calls = Rc::new(Cell::new(0));
+        let client = AnimeClient::new(
+            SourceDefinition::anidb(),
+            CountingFetcher {
+                calls: Rc::clone(&calls),
+            },
+        );
+
+        let error = client
+            .resolve_stream_url("episode/1")
+            .expect_err("invalid AniDB episode id");
+
+        assert!(matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::InvalidEpisodeId { episode_id }) if episode_id == "episode/1"
+        ));
+        assert_eq!(calls.get(), 0);
     }
 
     #[test]

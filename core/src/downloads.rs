@@ -97,6 +97,35 @@ fn program_is_available(path: &Path) -> bool {
     }
 }
 
+fn cleanup_temp_file(path: &Path) -> CoreResult<()> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(Error::DownloadWrite {
+                path: path.to_path_buf(),
+                source,
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn prepare_download(
+    temp_path: &Path,
+    is_available: impl Fn(&str) -> bool,
+) -> CoreResult<Downloader> {
+    cleanup_temp_file(temp_path)?;
+    if is_available("yt-dlp") {
+        Ok(Downloader::YtDlp)
+    } else if is_available("ffmpeg") {
+        Ok(Downloader::Ffmpeg)
+    } else {
+        Err(Error::DownloadDependency.into())
+    }
+}
+
 fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<()> {
     if succeeded {
         let metadata = fs::metadata(temp).map_err(|source| Error::DownloadWrite {
@@ -119,17 +148,7 @@ fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<
             .into());
         }
     } else {
-        match fs::remove_file(temp) {
-            Ok(()) => {}
-            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(Error::DownloadWrite {
-                    path: temp.to_path_buf(),
-                    source,
-                }
-                .into());
-            }
-        }
+        cleanup_temp_file(temp)?;
     }
 
     Ok(())
@@ -141,12 +160,7 @@ fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<
 /// Returns an error when `episode_id` is empty or contains anything other than
 /// ASCII digits.
 pub fn episode_file_path(config: &AppConfig, episode_id: &str) -> CoreResult<PathBuf> {
-    if episode_id.is_empty() || !episode_id.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(Error::InvalidEpisodeId {
-            episode_id: episode_id.to_string(),
-        }
-        .into());
-    }
+    crate::client::anidb::validate_episode_id(episode_id)?;
     Ok(config.downloads_dir().join(format!("{episode_id}.mp4")))
 }
 
@@ -194,29 +208,11 @@ pub fn download_episode(
     let remote_url = Url::parse(stream_url.as_str()).map_err(Error::DownloadUrl)?;
     let url_display = remote_url.to_string();
 
-    let downloader = if program_available("yt-dlp") {
-        Downloader::YtDlp
-    } else if program_available("ffmpeg") {
-        Downloader::Ffmpeg
-    } else {
-        return Err(Error::DownloadDependency.into());
-    };
+    let downloader = prepare_download(&temp_path, program_available)?;
     let program = match downloader {
         Downloader::YtDlp => "yt-dlp",
         Downloader::Ffmpeg => "ffmpeg",
     };
-
-    match fs::remove_file(&temp_path) {
-        Ok(()) => {}
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(Error::DownloadWrite {
-                path: temp_path,
-                source,
-            }
-            .into());
-        }
-    }
 
     let mut command = downloader_command(downloader, &remote_url, &temp_path);
     let status = match command.status() {
@@ -270,8 +266,8 @@ pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> 
 #[cfg(test)]
 mod tests {
     use super::{
-        Downloader, delete_episode, download_episode, downloader_command, episode_file_path,
-        finalize_download, program_is_available,
+        Downloader, cleanup_temp_file, delete_episode, download_episode, downloader_command,
+        episode_file_path, finalize_download, prepare_download, program_is_available,
     };
     use crate::config::AppConfig;
     use std::path::Path;
@@ -371,6 +367,42 @@ mod tests {
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         assert!(source.raw_os_error().is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cleans_stale_temp_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "animestan-download-dependency-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("episode.mp4.part");
+        std::fs::write(&temp, b"partial").unwrap();
+
+        cleanup_temp_file(&temp).unwrap();
+
+        assert!(!temp.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cleans_stale_temp_file_before_download_dependency() {
+        let dir = std::env::temp_dir().join(format!(
+            "animestan-download-dependency-order-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("episode.mp4.part");
+        std::fs::write(&temp, b"partial").unwrap();
+
+        let error = prepare_download(&temp, |_| false).expect_err("missing downloader");
+
+        assert!(matches!(
+            error.downcast_ref::<crate::Error>(),
+            Some(crate::Error::DownloadDependency)
+        ));
+        assert!(!temp.exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -21,7 +21,7 @@ use scraper::{Html, Selector};
 use serde::Deserialize;
 use url::Url;
 
-use crate::{AppConfig, client::anidb as anidb_client, error::Error};
+use crate::{AppConfig, client::anidb as anidb_client, client::http_status_error, error::Error};
 
 use super::{AnimeMetadata, MetadataCache, MetadataProvider, MetadataSource, normalize_query};
 
@@ -51,7 +51,12 @@ pub(super) fn parse_detail(html: &str, anime_id: &str) -> Result<AnimeMetadata, 
     let source_url = document.select(&canonical_selector).find_map(|link| {
         let href = link.value().attr("href")?;
         let url = Url::parse(href).ok()?;
-        if url.host_str() != Some("anidb.app") {
+        if url.scheme() != "https"
+            || url.host_str() != Some("anidb.app")
+            || url.port_or_known_default() != Some(443)
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
             return None;
         }
         let canonical_id = url.path().strip_prefix("/anime/")?;
@@ -175,9 +180,8 @@ impl AniDbMetadataProvider {
         if let Some(metadata) = self.cache.get(&key)? {
             return Ok(metadata);
         }
-        let metadata = self.fetch_detail(id, query)?;
-        self.cache.insert(key, metadata.clone())?;
-        Ok(metadata)
+        let url = detail_url(id)?;
+        self.fetch_and_cache_detail(key, id, query, &url)
     }
 
     pub(super) fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, Error> {
@@ -218,13 +222,29 @@ impl AniDbMetadataProvider {
 
     fn fetch_detail(&self, id: &str, query: &str) -> Result<AnimeMetadata, Error> {
         let url = detail_url(id)?;
-        let body = self.fetch_url(&url)?;
+        self.fetch_detail_at(&url, id, query)
+    }
+
+    fn fetch_detail_at(&self, url: &Url, id: &str, query: &str) -> Result<AnimeMetadata, Error> {
+        let body = self.fetch_url(url)?;
         parse_detail(&body, id).map_err(|error| match error {
             Error::MetadataNotFound { .. } => Error::MetadataNotFound {
                 query: query.to_string(),
             },
             error => error,
         })
+    }
+
+    fn fetch_and_cache_detail(
+        &self,
+        key: String,
+        id: &str,
+        query: &str,
+        url: &Url,
+    ) -> Result<AnimeMetadata, Error> {
+        let metadata = self.fetch_detail_at(url, id, query)?;
+        self.cache.insert(key, metadata.clone())?;
+        Ok(metadata)
     }
 
     fn fetch_url(&self, url: &Url) -> Result<String, Error> {
@@ -239,16 +259,14 @@ impl AniDbMetadataProvider {
                 source,
             })?;
         let status = response.status();
-        if !status.is_success() {
-            return Err(Error::HttpStatus {
-                url: url.to_string(),
-                status: status.as_u16(),
-            });
-        }
-        response.text().map_err(|source| Error::HttpBodyParse {
+        let body = response.text().map_err(|source| Error::HttpBodyParse {
             url: url.to_string(),
             source,
-        })
+        })?;
+        if !status.is_success() {
+            return Err(http_status_error(url, status.as_u16(), &body));
+        }
+        Ok(body)
     }
 }
 
@@ -362,6 +380,8 @@ mod tests {
     fn rejects_invalid_canonical_urls() {
         for canonical in [
             "/anime/example-1",
+            "http://anidb.app/anime/example-1",
+            "https://anidb.app:8443/anime/example-1",
             "https://example.com/anime/example-1",
             "https://anidb.app/anime/other-1",
             "https://anidb.app/anime/example-no-id",
@@ -378,6 +398,69 @@ mod tests {
                 crate::error::Error::MetadataNotFound { query } if query == "example-1"
             ));
         }
+    }
+
+    #[test]
+    fn invalid_detail_is_not_inserted_into_cache() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let read = stream.read(&mut buffer).expect("read request");
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = b"<html><title>Not found</title></html>";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write headers");
+            stream.write_all(body).expect("write body");
+        });
+
+        let cache_path = std::env::temp_dir().join(format!(
+            "animestan-metadata-invalid-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let provider = AniDbMetadataProvider::with_cache(
+            Client::new(),
+            MetadataCache::new(cache_path.clone()),
+        );
+        let url = Url::parse(&format!("http://{address}/anime/example-1")).expect("test URL");
+        let error = provider
+            .fetch_and_cache_detail(
+                "anidb:id:example-1".to_string(),
+                "example-1",
+                "example-1",
+                &url,
+            )
+            .expect_err("invalid detail should fail");
+
+        assert!(matches!(
+            error,
+            crate::error::Error::MetadataNotFound { query } if query == "example-1"
+        ));
+        assert!(
+            provider
+                .cache
+                .get("anidb:id:example-1")
+                .expect("cache read")
+                .is_none()
+        );
+        assert!(!cache_path.exists());
+        server.join().expect("server thread");
     }
 
     #[test]

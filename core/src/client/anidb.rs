@@ -72,6 +72,16 @@ pub(crate) fn anime_numeric_id(anime_id: &str) -> CoreResult<&str> {
     Ok(suffix)
 }
 
+pub(crate) fn validate_episode_id(episode_id: &str) -> CoreResult<()> {
+    if episode_id.is_empty() || !episode_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::InvalidEpisodeId {
+            episode_id: episode_id.to_string(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeEntry>> {
     if html.contains("Just a moment") {
         return Err(Error::ProviderBlocked {
@@ -155,7 +165,7 @@ fn anime_path_segment(href: &str) -> Option<String> {
             return None;
         }
         url.path().to_string()
-    } else if href.starts_with('/') {
+    } else if href.starts_with('/') && !href.starts_with("//") {
         href.split(['?', '#']).next()?.to_string()
     } else {
         return None;
@@ -352,6 +362,7 @@ mod tests {
     fn rejects_non_anidb_result_hosts() {
         let html = r#"
             <a href="https://evil.example/anime/evil-1" title="Evil"></a>
+            <a href="//evil.example/anime/protocol-relative-2" title="Protocol relative"></a>
             <a href="https://anidb.app/anime/good-2" title="Good"></a>
             <a href="/anime/relative-3" title="Relative"></a>
         "#;

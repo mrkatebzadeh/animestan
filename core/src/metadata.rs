@@ -245,8 +245,12 @@ impl MetadataResolver {
     }
 
     fn with_cache(cache_path: PathBuf) -> Self {
+        let client = Client::builder()
+            .redirect(crate::client::safe_redirect_policy())
+            .build()
+            .expect("metadata HTTP client should build");
         Self {
-            anidb: AniDbMetadataProvider::with_cache(Client::new(), MetadataCache::new(cache_path)),
+            anidb: AniDbMetadataProvider::with_cache(client, MetadataCache::new(cache_path)),
         }
     }
 
