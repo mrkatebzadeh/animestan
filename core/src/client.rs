@@ -286,13 +286,17 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn curl_command_args(request: &FetchRequest) -> CoreResult<Vec<OsString>> {
-    let mut args = vec![
-        OsString::from("-sL"),
-        OsString::from("-A"),
-        OsString::from(anidb::USER_AGENT_VALUE),
-        OsString::from("--max-time"),
-        OsString::from("10"),
-    ];
+    let anidb_request = is_anidb_url(&request.url);
+    let mut args = vec![OsString::from("-s")];
+
+    if anidb_request {
+        args.extend([
+            OsString::from("-A"),
+            OsString::from(anidb::USER_AGENT_VALUE),
+        ]);
+    }
+
+    args.extend([OsString::from("--max-time"), OsString::from("10")]);
 
     #[cfg(target_os = "macos")]
     {
@@ -304,7 +308,7 @@ fn curl_command_args(request: &FetchRequest) -> CoreResult<Vec<OsString>> {
         ]);
     }
 
-    if is_anidb_url(&request.url) {
+    if anidb_request {
         for (name, value) in &request.headers {
             let value = value.to_str().map_err(|_| Error::CurlHeader {
                 url: request.url.to_string(),
@@ -336,7 +340,7 @@ fn parse_curl_response(stdout: &[u8], stderr: &[u8]) -> io::Result<(u16, String)
 }
 
 pub(crate) fn http_status_error(url: &Url, status: u16, body: &str) -> Error {
-    if status == 403 && is_anidb_url(url) && body.contains("Just a moment") {
+    if !(200..=299).contains(&status) && is_anidb_url(url) && body.contains("Just a moment") {
         Error::ProviderBlocked {
             url: url.to_string(),
         }
@@ -673,11 +677,17 @@ mod tests {
     use super::*;
     use reqwest::header::ORIGIN;
     use std::cell::{Cell, RefCell};
+    #[cfg(unix)]
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::time::Duration;
+    #[cfg(unix)]
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct CapturingFetcher {
         headers: Rc<RefCell<Option<HeaderMap>>>,
@@ -708,6 +718,59 @@ mod tests {
     impl Fetcher for StreamFetcher {
         fn fetch(&self, _request: &FetchRequest) -> CoreResult<String> {
             Ok(self.body.clone())
+        }
+    }
+
+    #[cfg(unix)]
+    struct TemporaryExecutable {
+        path: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl TemporaryExecutable {
+        fn new(script: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos();
+            let path = env::temp_dir().join(format!(
+                "animestan-test-curl-{}-{unique}",
+                std::process::id()
+            ));
+            fs::write(&path, script).expect("write temporary curl executable");
+            let mut permissions = fs::metadata(&path)
+                .expect("temporary curl executable metadata")
+                .permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&path, permissions).expect("make curl executable executable");
+            Self { path }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for TemporaryExecutable {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    #[cfg(unix)]
+    fn fake_curl(body: &str, status: u16) -> TemporaryExecutable {
+        TemporaryExecutable::new(&format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"-L\" ] || [ \"$arg\" = \"-sL\" ]; then\n    printf '%s' 'redirect following is forbidden' >&2\n    exit 42\n  fi\ndone\nprintf '%s' '{body}'\nprintf '%s' '{status}' >&2\n"
+        ))
+    }
+
+    #[cfg(unix)]
+    fn failing_fake_curl() -> TemporaryExecutable {
+        TemporaryExecutable::new("#!/bin/sh\nprintf '%s' 'fake curl failure' >&2\nexit 7\n")
+    }
+
+    #[cfg(unix)]
+    fn http_fetcher(executable: &Path) -> HttpFetcher {
+        HttpFetcher {
+            client: BlockingHttpClient::builder().build().expect("http client"),
+            curl_executable: Some(executable.to_path_buf()),
         }
     }
 
@@ -814,7 +877,7 @@ mod tests {
 
         assert_eq!(
             args[0..5],
-            ["-sL", "-A", anidb::USER_AGENT_VALUE, "--max-time", "10"]
+            ["-s", "-A", anidb::USER_AGENT_VALUE, "--max-time", "10"]
         );
         assert!(
             args.windows(2)
@@ -851,6 +914,55 @@ mod tests {
         let args = super::curl_command_args(&request).expect("curl arguments");
 
         assert!(!args.iter().any(|arg| arg == "-H"));
+        assert!(!args.iter().any(|arg| arg == "-A"));
+        assert!(!args.iter().any(|arg| arg == anidb::USER_AGENT_VALUE));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn curl_transport_keeps_anidb_search_working_without_following_redirects() {
+        let fake = fake_curl(r#"<a href="/anime/naruto-3686" title="Naruto"></a>"#, 200);
+        let client = AnimeClient::new(SourceDefinition::anidb(), http_fetcher(&fake.path));
+
+        let results = client.search("naruto").expect("curl search results");
+
+        assert!(results.iter().any(|entry| entry.id == "naruto-3686"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn curl_transport_returns_redirect_status_without_following_it() {
+        let fake = fake_curl("redirect response", 302);
+        let fetcher = http_fetcher(&fake.path);
+        let request = FetchRequest::get(Url::parse("https://anidb.app/browse?q=naruto").unwrap());
+
+        let error = fetcher.fetch(&request).expect_err("redirect response");
+
+        assert!(matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::HttpStatus { status: 302, .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn curl_transport_reports_selected_process_failure() {
+        let fake = failing_fake_curl();
+        let fetcher = http_fetcher(&fake.path);
+        let request = FetchRequest::get(Url::parse("https://anidb.app/browse?q=naruto").unwrap());
+
+        let error = fetcher.fetch(&request).expect_err("curl process failure");
+
+        assert!(matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::CurlRequest {
+                url,
+                executable,
+                source,
+            }) if url == request.url.as_str()
+                && executable == fake.path.to_string_lossy().as_ref()
+                && source.to_string().contains("fake curl failure")
+        ));
     }
 
     #[test]
@@ -891,11 +1003,19 @@ mod tests {
     #[test]
     fn non_403_status_never_reports_provider_blocked() {
         let url = Url::parse("https://anidb.app/browse?q=naruto").unwrap();
-        let error = super::http_status_error(&url, 500, "<title>Just a moment...</title>");
+        let error = super::http_status_error(&url, 500, "<title>internal server error</title>");
 
         assert!(
             matches!(error, Error::HttpStatus { url: error_url, status } if error_url == url.to_string() && status == 500)
         );
+    }
+
+    #[test]
+    fn challenge_body_on_non_403_status_reports_provider_blocked() {
+        let url = Url::parse("https://anidb.app/browse?q=naruto").unwrap();
+        let error = super::http_status_error(&url, 500, "<title>Just a moment...</title>");
+
+        assert!(matches!(error, Error::ProviderBlocked { .. }));
     }
 
     #[test]
