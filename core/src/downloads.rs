@@ -13,18 +13,98 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::fs::{self, File};
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::time::Duration;
+use std::env;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use reqwest::blocking::Client;
 use spdlog::prelude::*;
 use url::Url;
 
 use crate::{CoreResult, config::AppConfig, error::Error};
 
-const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Downloader {
+    YtDlp,
+    Ffmpeg,
+}
+
+fn downloader_command(downloader: Downloader, stream_url: &Url, target: &Path) -> Command {
+    match downloader {
+        Downloader::YtDlp => {
+            let mut command = Command::new("yt-dlp");
+            command.args([
+                "--no-skip-unavailable-fragments",
+                "--fragment-retries",
+                "infinite",
+                "-N",
+                "16",
+                "--merge-output-format",
+                "mp4",
+                "-o",
+            ]);
+            command.arg(target).arg(stream_url.as_str());
+            command
+        }
+        Downloader::Ffmpeg => {
+            let mut command = Command::new("ffmpeg");
+            command.args([
+                "-y",
+                "-extension_picky",
+                "0",
+                "-loglevel",
+                "error",
+                "-stats",
+                "-i",
+            ]);
+            command
+                .arg(stream_url.as_str())
+                .args(["-c", "copy", "-f", "mp4"])
+                .arg(target);
+            command
+        }
+    }
+}
+
+fn program_available(program: &str) -> bool {
+    let suffix = env::consts::EXE_SUFFIX;
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+
+    env::split_paths(&path).any(|directory| directory.join(format!("{program}{suffix}")).is_file())
+}
+
+fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<()> {
+    if succeeded {
+        if !temp.is_file() {
+            return Err(Error::DownloadWrite {
+                path: temp.to_path_buf(),
+                source: io::Error::new(io::ErrorKind::NotFound, "download output is missing"),
+            }
+            .into());
+        }
+        fs::rename(temp, target).map_err(|source| Error::DownloadWrite {
+            path: target.to_path_buf(),
+            source,
+        })?;
+    } else {
+        match fs::remove_file(temp) {
+            Ok(()) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(Error::DownloadWrite {
+                    path: temp.to_path_buf(),
+                    source,
+                }
+                .into());
+            }
+        }
+    }
+
+    Ok(())
+}
 
 #[must_use]
 pub fn episode_file_path(config: &AppConfig, episode_id: &str) -> PathBuf {
@@ -45,8 +125,8 @@ pub fn local_playback_url(config: &AppConfig, episode_id: &str) -> Option<Url> {
 ///
 /// # Errors
 ///
-/// Returns an error if the directory cannot be created, the request fails,
-/// the response status is not successful, or the file cannot be written.
+/// Returns an error if the directory cannot be created, no downloader is
+/// available, a downloader fails, or the file cannot be written.
 pub fn download_episode(
     config: &AppConfig,
     episode_id: &str,
@@ -75,46 +155,52 @@ pub fn download_episode(
     let remote_url = Url::parse(stream_url.as_str()).map_err(Error::DownloadUrl)?;
     let url_display = remote_url.to_string();
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-        .build()
-        .map_err(|source| Error::DownloadRequest {
-            url: url_display.clone(),
-            source,
-        })?;
+    let downloader = if program_available("yt-dlp") {
+        Downloader::YtDlp
+    } else if program_available("ffmpeg") {
+        Downloader::Ffmpeg
+    } else {
+        return Err(Error::DownloadDependency.into());
+    };
+    let program = match downloader {
+        Downloader::YtDlp => "yt-dlp",
+        Downloader::Ffmpeg => "ffmpeg",
+    };
 
-    let mut response = client
-        .get(remote_url.clone())
-        .send()
-        .map_err(|source| Error::DownloadRequest {
-            url: url_display.clone(),
-            source,
-        })?
-        .error_for_status()
-        .map_err(|source| Error::DownloadResponse {
+    match fs::remove_file(&temp_path) {
+        Ok(()) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(Error::DownloadWrite {
+                path: temp_path,
+                source,
+            }
+            .into());
+        }
+    }
+
+    let mut command = downloader_command(downloader, &remote_url, &temp_path);
+    let status = match command.status() {
+        Ok(status) => status,
+        Err(source) => {
+            let _ = finalize_download(&temp_path, &target_path, false);
+            return Err(Error::DownloadWrite {
+                path: temp_path,
+                source,
+            }
+            .into());
+        }
+    };
+    let succeeded = status.success();
+    finalize_download(&temp_path, &target_path, succeeded)?;
+    if !succeeded {
+        return Err(Error::DownloadProcess {
+            program,
             url: url_display,
-            source,
-        })?;
-
-    let mut file = File::create(&temp_path).map_err(|source| Error::DownloadWrite {
-        path: temp_path.clone(),
-        source,
-    })?;
-
-    io::copy(&mut response, &mut file).map_err(|source| Error::DownloadWrite {
-        path: temp_path.clone(),
-        source,
-    })?;
-
-    file.flush().map_err(|source| Error::DownloadWrite {
-        path: temp_path.clone(),
-        source,
-    })?;
-
-    fs::rename(&temp_path, &target_path).map_err(|source| Error::DownloadWrite {
-        path: target_path.clone(),
-        source,
-    })?;
+            status: status.to_string(),
+        }
+        .into());
+    }
 
     info!(
         "completed download for '{episode_id}' at {}",
@@ -139,5 +225,56 @@ pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> 
         Ok(()) => Ok(true),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(Error::DownloadRemove { path, source }.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Downloader, downloader_command, finalize_download};
+    use std::path::Path;
+    use url::Url;
+
+    #[test]
+    fn builds_yt_dlp_hls_command() {
+        let url = Url::parse("https://cdn.example/720/index.m3u8").unwrap();
+        let command = downloader_command(Downloader::YtDlp, &url, Path::new("episode.mp4.part"));
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(command.get_program(), "yt-dlp");
+        assert!(args.windows(2).any(|pair| pair == ["-N", "16"]));
+        assert!(args.contains(&"--fragment-retries".to_string()));
+        assert!(args.contains(&"episode.mp4.part".to_string()));
+    }
+
+    #[test]
+    fn builds_ffmpeg_stream_copy_command() {
+        let url = Url::parse("https://cdn.example/720/index.m3u8").unwrap();
+        let command = downloader_command(Downloader::Ffmpeg, &url, Path::new("episode.mp4.part"));
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(command.get_program(), "ffmpeg");
+        assert!(args.windows(2).any(|pair| pair == ["-c", "copy"]));
+        assert!(args.windows(2).any(|pair| pair == ["-f", "mp4"]));
+    }
+
+    #[test]
+    fn finalization_renames_success_and_removes_failure() {
+        let dir = std::env::temp_dir().join(format!("animestan-download-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("episode.mp4.part");
+        let target = dir.join("episode.mp4");
+
+        std::fs::write(&temp, b"video").unwrap();
+        finalize_download(&temp, &target, true).unwrap();
+        assert!(target.is_file());
+
+        std::fs::write(&temp, b"partial").unwrap();
+        finalize_download(&temp, &target, false).unwrap();
+        assert!(!temp.exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

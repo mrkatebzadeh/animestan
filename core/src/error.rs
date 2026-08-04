@@ -168,17 +168,13 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("download request failed for '{url}': {source}")]
-    DownloadRequest {
+    #[error("neither yt-dlp nor ffmpeg is available for HLS downloads")]
+    DownloadDependency,
+    #[error("{program} failed to download '{url}' with exit status {status}")]
+    DownloadProcess {
+        program: &'static str,
         url: String,
-        #[source]
-        source: reqwest::Error,
-    },
-    #[error("unexpected download response for '{url}': {source}")]
-    DownloadResponse {
-        url: String,
-        #[source]
-        source: reqwest::Error,
+        status: String,
     },
     #[error("failed to remove download file at '{path}': {source}")]
     DownloadRemove {
