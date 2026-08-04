@@ -73,22 +73,50 @@ fn program_available(program: &str) -> bool {
         return false;
     };
 
-    env::split_paths(&path).any(|directory| directory.join(format!("{program}{suffix}")).is_file())
+    env::split_paths(&path)
+        .map(|directory| directory.join(format!("{program}{suffix}")))
+        .any(|path| program_is_available(&path))
+}
+
+fn program_is_available(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn finalize_download(temp: &Path, target: &Path, succeeded: bool) -> CoreResult<()> {
     if succeeded {
-        if !temp.is_file() {
+        let metadata = fs::metadata(temp).map_err(|source| Error::DownloadWrite {
+            path: temp.to_path_buf(),
+            source,
+        })?;
+        if !metadata.is_file() {
             return Err(Error::DownloadWrite {
                 path: temp.to_path_buf(),
-                source: io::Error::new(io::ErrorKind::NotFound, "download output is missing"),
+                source: io::Error::new(io::ErrorKind::InvalidData, "download output is not a file"),
             }
             .into());
         }
-        fs::rename(temp, target).map_err(|source| Error::DownloadWrite {
-            path: target.to_path_buf(),
-            source,
-        })?;
+        if let Err(source) = fs::rename(temp, target) {
+            let _ = fs::remove_file(temp);
+            return Err(Error::DownloadWrite {
+                path: target.to_path_buf(),
+                source,
+            }
+            .into());
+        }
     } else {
         match fs::remove_file(temp) {
             Ok(()) => {}
@@ -230,7 +258,7 @@ pub fn delete_episode(config: &AppConfig, episode_id: &str) -> CoreResult<bool> 
 
 #[cfg(test)]
 mod tests {
-    use super::{Downloader, downloader_command, finalize_download};
+    use super::{Downloader, downloader_command, finalize_download, program_is_available};
     use std::path::Path;
     use url::Url;
 
@@ -244,8 +272,14 @@ mod tests {
             .collect();
         assert_eq!(command.get_program(), "yt-dlp");
         assert!(args.windows(2).any(|pair| pair == ["-N", "16"]));
-        assert!(args.contains(&"--fragment-retries".to_string()));
-        assert!(args.contains(&"episode.mp4.part".to_string()));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--fragment-retries", "infinite"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-o", "episode.mp4.part"])
+        );
     }
 
     #[test]
@@ -257,8 +291,13 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         assert_eq!(command.get_program(), "ffmpeg");
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-i", "https://cdn.example/720/index.m3u8"])
+        );
         assert!(args.windows(2).any(|pair| pair == ["-c", "copy"]));
         assert!(args.windows(2).any(|pair| pair == ["-f", "mp4"]));
+        assert_eq!(args.last(), Some(&"episode.mp4.part".to_string()));
     }
 
     #[test]
@@ -275,6 +314,70 @@ mod tests {
         std::fs::write(&temp, b"partial").unwrap();
         finalize_download(&temp, &target, false).unwrap();
         assert!(!temp.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn finalization_removes_temp_when_rename_fails() {
+        let dir = std::env::temp_dir().join(format!(
+            "animestan-download-rename-failure-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("episode.mp4.part");
+        let target = dir.join("episode.mp4");
+
+        std::fs::write(&temp, b"video").unwrap();
+        std::fs::create_dir(&target).unwrap();
+        let error = finalize_download(&temp, &target, true).unwrap_err();
+
+        assert!(!temp.exists());
+        assert!(target.is_dir());
+        assert!(error.to_string().contains("failed to write download file"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn finalization_preserves_output_metadata_error() {
+        let dir = std::env::temp_dir().join(format!(
+            "animestan-download-metadata-error-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("missing.mp4.part");
+        let target = dir.join("episode.mp4");
+
+        let error = finalize_download(&temp, &target, true).unwrap_err();
+        let crate::Error::DownloadWrite { source, .. } =
+            error.downcast_ref::<crate::Error>().unwrap()
+        else {
+            panic!("expected a download write error");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(source.raw_os_error().is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ignores_non_executable_programs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("animestan-download-program-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("yt-dlp");
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        assert!(!program_is_available(&path));
+
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        assert!(program_is_available(&path));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
