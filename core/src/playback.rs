@@ -76,10 +76,6 @@ fn play_episode_inner(
     let mut command = Command::new(&binary);
     command.args(&extra_args);
 
-    if is_mpv(&binary) && needs_allanime_referer(stream_url) {
-        command.arg("--referrer=https://mkissa.to");
-    }
-
     configure_stdio(&mut command, output);
     command.arg(stream_url);
 
@@ -141,10 +137,6 @@ fn play_episode_inner(
     let mut command = Command::new(&binary);
     command.args(&extra_args);
 
-    if is_mpv(&binary) && needs_allanime_referer(stream_url) {
-        command.arg("--referrer=https://mkissa.to");
-    }
-
     configure_stdio(&mut command, output);
     command.arg(stream_url);
 
@@ -185,10 +177,6 @@ fn is_mpv(binary: &str) -> bool {
     PathBuf::from(binary)
         .file_name()
         .is_some_and(|name| name == OsStr::new("mpv"))
-}
-
-fn needs_allanime_referer(stream_url: &str) -> bool {
-    stream_url.contains("tools.fast4speed.rsvp")
 }
 
 fn socket_path(pid: u32) -> PathBuf {
@@ -345,7 +333,7 @@ fn handle_ipc_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_mpv, needs_allanime_referer, player_command};
+    use super::{is_mpv, player_command};
     use crate::AppConfig;
 
     #[test]
@@ -365,16 +353,6 @@ mod tests {
         let (binary, args) = player_command(&config);
         assert_eq!(binary, "vlc");
         assert_eq!(args, vec!["--fullscreen".to_string()]);
-    }
-
-    #[test]
-    fn allanime_referer_is_detected() {
-        assert!(needs_allanime_referer(
-            "https://tools.fast4speed.rsvp/stream/example.m3u8"
-        ));
-        assert!(!needs_allanime_referer(
-            "https://example.com/stream/example.m3u8"
-        ));
     }
 
     #[test]

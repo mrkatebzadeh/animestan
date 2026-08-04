@@ -15,14 +15,13 @@
 
 use reqwest::Method;
 use reqwest::blocking::Client as BlockingHttpClient;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::Value;
 use spdlog::prelude::*;
 use std::collections::HashMap;
 use std::env;
-use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 use crate::{
@@ -34,17 +33,7 @@ use crate::{
     source::SourceDefinition,
 };
 
-mod allanime;
 pub(crate) mod anidb;
-
-use crate::client::allanime::{
-    ALLANIME_EPISODE_EMBED_GQL, ALLANIME_EPISODE_EMBED_PERSISTED_HASH, ALLANIME_EPISODES_GQL,
-    ALLANIME_REFERER, ALLANIME_SEARCH_GQL, ALLANIME_TRANSLATION, ALLANIME_USER_AGENT,
-    AllAnimeEpisodeEmbedResponse, AllAnimeEpisodesResponse, AllAnimeSearchResponse,
-    AllAnimeSourceUrl, build_aa_req, build_embed_url, build_graphql_url, decode_source_url,
-    fetch_allanime_key_material, maybe_decrypt_response_data, ordered_source_urls,
-    parse_episode_number, select_stream_url, split_episode_id,
-};
 
 const FIXTURES_ENV: &str = "ANIMESTAN_USE_FIXTURES";
 
@@ -319,8 +308,6 @@ impl<F: Fetcher> AnimeClient<F> {
 
         let entries = if self.uses_anidb() {
             self.search_anidb(query)?
-        } else if self.uses_allanime() {
-            self.search_allanime(query)?
         } else {
             let url = self.source.search.render(&[("query", query)])?;
             let request = self.get_request(url);
@@ -346,8 +333,6 @@ impl<F: Fetcher> AnimeClient<F> {
 
         let episodes = if self.uses_anidb() {
             self.list_episodes_anidb(anime_id)?
-        } else if self.uses_allanime() {
-            self.list_episodes_allanime(anime_id)?
         } else {
             let url = self.source.episodes.render(&[("anime_id", anime_id)])?;
             let request = self.get_request(url);
@@ -371,9 +356,7 @@ impl<F: Fetcher> AnimeClient<F> {
     pub fn resolve_stream_url(&self, episode_id: &str) -> CoreResult<StreamLink> {
         info!("resolving stream for '{episode_id}' via {}", self.source.id);
 
-        let link = if self.uses_allanime() {
-            self.resolve_stream_url_allanime(episode_id)?
-        } else if self.uses_anidb() {
+        let link = if self.uses_anidb() {
             self.resolve_stream_url_anidb(episode_id)?
         } else {
             let url = self.source.stream.render(&[("episode_id", episode_id)])?;
@@ -424,251 +407,12 @@ impl<F: Fetcher> AnimeClient<F> {
         anidb::parse_episodes(&body, anime_id, &self.source.id)
     }
 
-    fn search_allanime(&self, query: &str) -> CoreResult<Vec<AnimeEntry>> {
-        let variables = json!({
-            "search": {
-                "allowAdult": false,
-                "allowUnknown": false,
-                "query": query,
-            },
-            "limit": 40,
-            "page": 1,
-            "translationType": ALLANIME_TRANSLATION,
-            "countryOrigin": "ALL",
-        });
-        let request = Self::post_graphql_request(ALLANIME_SEARCH_GQL, &variables);
-        let payload: AllAnimeSearchResponse = self.fetch_and_parse(&request)?;
-
-        let entries = payload
-            .data
-            .shows
-            .edges
-            .into_iter()
-            .map(|edge| AnimeEntry {
-                id: edge.id,
-                title: edge.name,
-                source_id: self.source.id.clone(),
-            })
-            .collect();
-
-        Ok(entries)
-    }
-
-    fn list_episodes_allanime(&self, anime_id: &str) -> CoreResult<Vec<Episode>> {
-        let variables = json!({ "showId": anime_id });
-        let request = Self::post_graphql_request(ALLANIME_EPISODES_GQL, &variables);
-        let payload: AllAnimeEpisodesResponse = self.fetch_and_parse(&request)?;
-
-        let Some(show) = payload.data.show else {
-            return Ok(Vec::new());
-        };
-
-        let mut episodes: Vec<Episode> = show
-            .available_episodes_detail
-            .sub
-            .into_iter()
-            .map(|episode_string| Episode {
-                id: format!("{}:{}", show.id, episode_string),
-                number: parse_episode_number(&episode_string),
-                title: format!("Episode {episode_string}"),
-                anime_id: show.id.clone(),
-                source_id: self.source.id.clone(),
-                synopsis: None,
-                duration_secs: None,
-                air_date: None,
-            })
-            .collect();
-
-        episodes.sort_by_key(|episode| episode.number);
-        Ok(episodes)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn resolve_stream_url_allanime(&self, episode_id: &str) -> CoreResult<StreamLink> {
-        let (show_id, episode_string) = split_episode_id(episode_id)?;
-        let keys = fetch_allanime_key_material()?;
-        let (payload, request_url_for_errors) =
-            self.fetch_allanime_episode_embed(&show_id, &episode_string, &keys)?;
-
-        let episode = payload
-            .data
-            .episode
-            .ok_or_else(|| Error::StreamResolution {
-                message: format!("episode metadata missing (request: {request_url_for_errors})"),
-            })?;
-
-        let sources = ordered_source_urls(&episode.source_urls);
-        if sources.is_empty() {
-            return Err(Error::StreamResolution {
-                message: "no source URLs returned".to_string(),
-            }
-            .into());
-        }
-
-        let mut last_error: Option<anyhow::Error> = None;
-        for source in sources {
-            match self.resolve_stream_from_allanime_source(episode_id, source) {
-                Ok(link) => return Ok(link),
-                Err(err) => last_error = Some(err),
-            }
-        }
-
-        let last_error_text =
-            last_error.map_or_else(|| "no specific error".to_string(), |err| err.to_string());
-
-        Err(Error::StreamResolution {
-            message: format!("all AllAnime source URLs failed; last error: {last_error_text}"),
-        }
-        .into())
-    }
-
-    fn fetch_allanime_episode_embed(
-        &self,
-        show_id: &str,
-        episode_string: &str,
-        keys: &crate::client::allanime::AllAnimeKeyMaterial,
-    ) -> CoreResult<(AllAnimeEpisodeEmbedResponse, Url)> {
-        let now_ms = u64::try_from(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|source| Error::StreamResolution {
-                    message: format!("system clock before unix epoch: {source}"),
-                })?
-                .as_millis(),
-        )
-        .map_err(|_| Error::StreamResolution {
-            message: "system clock too far in the future".to_string(),
-        })?;
-
-        let variables = json!({
-            "showId": show_id,
-            "translationType": ALLANIME_TRANSLATION,
-            "episodeString": episode_string,
-        });
-        let variables_json = format!(
-            "{{\"showId\":{},\"translationType\":{},\"episodeString\":{}}}",
-            serde_json::to_string(show_id).map_err(|source| Error::ResponseParse {
-                url: ALLANIME_EPISODE_EMBED_GQL.to_string(),
-                source,
-            })?,
-            serde_json::to_string(ALLANIME_TRANSLATION).map_err(|source| Error::ResponseParse {
-                url: ALLANIME_EPISODE_EMBED_GQL.to_string(),
-                source,
-            })?,
-            serde_json::to_string(episode_string).map_err(|source| Error::ResponseParse {
-                url: ALLANIME_EPISODE_EMBED_GQL.to_string(),
-                source,
-            })?,
-        );
-        let aa_req = build_aa_req(
-            ALLANIME_EPISODE_EMBED_PERSISTED_HASH,
-            &keys.build_id,
-            keys.epoch,
-            &keys.content_lane,
-            &keys.key,
-            now_ms,
-        )?;
-        let extensions_json = format!(
-            "{{\"persistedQuery\":{{\"version\":1,\"sha256Hash\":\"{}\"}},\"k\":\"{}\",\"aaReq\":{}}}",
-            ALLANIME_EPISODE_EMBED_PERSISTED_HASH,
-            keys.content_lane.as_str(),
-            serde_json::to_string(&aa_req).map_err(|source| Error::ResponseParse {
-                url: ALLANIME_EPISODE_EMBED_GQL.to_string(),
-                source,
-            })?,
-        );
-
-        let mut persisted_url = build_graphql_url(ALLANIME_EPISODE_EMBED_GQL, &variables);
-        {
-            let mut pairs = persisted_url.query_pairs_mut();
-            pairs.append_pair("variables", &variables_json);
-            pairs.append_pair("extensions", &extensions_json);
-        }
-
-        let persisted_request = self
-            .get_request(persisted_url)
-            .with_header(
-                HeaderName::from_static("x-build-id"),
-                HeaderValue::from_str(&keys.build_id).expect("valid AllAnime build ID"),
-            )
-            .with_header(REFERER, HeaderValue::from_static(ALLANIME_REFERER))
-            .with_header(ORIGIN, HeaderValue::from_static(ALLANIME_REFERER));
-
-        let decode_payload = |value: Value,
-                              request_url: &Url,
-                              key: &[u8; 32]|
-         -> CoreResult<AllAnimeEpisodeEmbedResponse> {
-            let value = maybe_decrypt_response_data(value, key)?;
-            serde_json::from_value::<AllAnimeEpisodeEmbedResponse>(value).map_err(|source| {
-                Error::ResponseParse {
-                    url: request_url.to_string(),
-                    source,
-                }
-                .into()
-            })
-        };
-
-        let value: Value = self.fetch_and_parse(&persisted_request)?;
-        let payload = decode_payload(value, &persisted_request.url, &keys.key)?;
-        Ok((payload, persisted_request.url.clone()))
-    }
-
-    fn resolve_stream_from_allanime_source(
-        &self,
-        episode_id: &str,
-        source: &AllAnimeSourceUrl,
-    ) -> CoreResult<StreamLink> {
-        let decoded = decode_source_url(&source.source_url)?;
-        if (decoded.starts_with("http://") || decoded.starts_with("https://"))
-            && !decoded.contains("/clock")
-        {
-            let url = Url::parse(&decoded).map_err(|source| Error::StreamUrlParse {
-                url: decoded.clone(),
-                source,
-            })?;
-
-            return Ok(StreamLink {
-                url,
-                episode_id: episode_id.to_string(),
-                source_id: self.source.id.clone(),
-            });
-        }
-
-        let embed_url = build_embed_url(&decoded)?;
-        let embed_request = self.get_request(embed_url);
-        let payload: Value = self.fetch_and_parse(&embed_request)?;
-        let stream_url = select_stream_url(&payload)?;
-        let url = Url::parse(&stream_url).map_err(|source| Error::StreamUrlParse {
-            url: stream_url.clone(),
-            source,
-        })?;
-
-        Ok(StreamLink {
-            url,
-            episode_id: episode_id.to_string(),
-            source_id: self.source.id.clone(),
-        })
-    }
-
     fn log_result_count(action: &str, subject: &str, count: usize) {
         if count == 0 {
             warn!("{action} returned no results for '{subject}'");
         } else {
             debug!("{action} returned {count} results for '{subject}'");
         }
-    }
-
-    fn post_graphql_request(query: &str, variables: &Value) -> FetchRequest {
-        let url = build_graphql_url(query, variables);
-        let body = json!({
-            "query": query,
-            "variables": variables,
-        });
-        let request = FetchRequest::post(url, body);
-        request
-            .with_header(USER_AGENT, HeaderValue::from_static(ALLANIME_USER_AGENT))
-            .with_header(REFERER, HeaderValue::from_static(ALLANIME_REFERER))
-            .with_header(ORIGIN, HeaderValue::from_static(ALLANIME_REFERER))
     }
 
     fn get_request(&self, url: Url) -> FetchRequest {
@@ -680,10 +424,6 @@ impl<F: Fetcher> AnimeClient<F> {
                     HeaderValue::from_static(anidb::USER_AGENT_VALUE),
                 )
                 .with_header(REFERER, HeaderValue::from_static(anidb::BASE_URL))
-        } else if self.uses_allanime() {
-            request
-                .with_header(USER_AGENT, HeaderValue::from_static(ALLANIME_USER_AGENT))
-                .with_header(REFERER, HeaderValue::from_static(ALLANIME_REFERER))
         } else {
             request
         }
@@ -701,10 +441,6 @@ impl<F: Fetcher> AnimeClient<F> {
         Ok(parsed)
     }
 
-    fn uses_allanime(&self) -> bool {
-        self.source.id == SourceDefinition::ALLANIME_ID
-    }
-
     fn uses_anidb(&self) -> bool {
         self.source.id == SourceDefinition::ANIDB_ID
     }
@@ -718,6 +454,7 @@ struct StreamPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::ORIGIN;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -798,23 +535,5 @@ mod tests {
             Some(anidb::BASE_URL)
         );
         assert!(headers.get(ORIGIN).is_none());
-    }
-
-    #[test]
-    fn allanime_graphql_posts_use_mkissa_origin() {
-        let request = AnimeClient::<FixtureFetcher>::post_graphql_request(
-            ALLANIME_SEARCH_GQL,
-            &json!({"search": {"query": "naruto"}}),
-        );
-
-        assert_eq!(
-            request.headers.get(ORIGIN).unwrap().to_str().unwrap(),
-            "https://mkissa.to"
-        );
-        assert_eq!(
-            request.headers.get(REFERER).unwrap().to_str().unwrap(),
-            "https://mkissa.to"
-        );
-        assert!(request.headers.get("x-build-id").is_none());
     }
 }

@@ -28,20 +28,29 @@ mod tests {
     }
 
     #[test]
-    fn search_command_outputs_naruto_entries() {
+    fn search_command_outputs_anidb_entries() {
         cli_command()
             .args(["search", "naruto"])
             .assert()
             .success()
-            .stdout(contains("naruto").and(contains("Naruto")));
+            .stdout(contains("naruto-3686").and(contains("Naruto")));
     }
 
     #[test]
-    fn episodes_command_outputs_episode_listing() {
+    fn episodes_command_outputs_anidb_episode_listing() {
         cli_command()
             .args(["episodes", "naruto-3686"])
             .assert()
             .success()
             .stdout(contains("6087").and(contains("Episode 1")));
+    }
+
+    #[test]
+    fn url_command_outputs_selected_hls_variant() {
+        cli_command()
+            .args(["url", "6087"])
+            .assert()
+            .success()
+            .stdout(contains("https://stream.example/naruto/1080/index.m3u8"));
     }
 }

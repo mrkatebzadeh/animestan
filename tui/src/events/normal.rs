@@ -115,7 +115,7 @@ mod tests {
             .add(AnimeEntry {
                 id: "naruto".to_string(),
                 title: "Naruto".to_string(),
-                source_id: "allanime".to_string(),
+                source_id: "anidb".to_string(),
             })
             .expect("bookmark should persist");
 

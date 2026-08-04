@@ -406,7 +406,7 @@ mod tests {
             .add(AnimeEntry {
                 id: "naruto".to_string(),
                 title: "Naruto".to_string(),
-                source_id: "allanime".to_string(),
+                source_id: "anidb".to_string(),
             })
             .expect("favorite should persist");
 
@@ -425,7 +425,7 @@ mod tests {
             number,
             title: format!("Episode {number}"),
             anime_id: "naruto".to_string(),
-            source_id: "allanime".to_string(),
+            source_id: "anidb".to_string(),
             synopsis: None,
             duration_secs: None,
             air_date: None,

@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn config_parses_streaming_mode() {
         let config = AppConfig::parse(
-            "metadata_source = \"anilist\"\nmode = \"dub\"\nquality = \"720p\"",
+            "mode = \"dub\"\nquality = \"720p\"",
             PathBuf::from("test.toml"),
         )
         .expect("test configuration should parse");

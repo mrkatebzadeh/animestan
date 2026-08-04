@@ -423,7 +423,7 @@ mod tests {
             anime: AnimeEntry {
                 id: id.to_string(),
                 title: title.to_string(),
-                source_id: "allanime".to_string(),
+                source_id: "anidb".to_string(),
             },
             added_at: 1,
         }

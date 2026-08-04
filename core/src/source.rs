@@ -17,8 +17,6 @@ use crate::{CoreResult, error::Error, models::SourceId};
 use serde::Deserialize;
 use url::Url;
 
-pub const ALLANIME_API_ENDPOINT: &str = "https://api.mkissa.net/api";
-
 #[derive(Debug, Deserialize, Clone)]
 pub struct SourceCatalog {
     pub sources: Vec<SourceDefinition>,
@@ -55,23 +53,7 @@ pub struct SourceDefinition {
 }
 
 impl SourceDefinition {
-    pub const ALLANIME_ID: &'static str = "allanime";
     pub const ANIDB_ID: &'static str = "anidb";
-
-    #[must_use]
-    pub fn allanime() -> Self {
-        let endpoint = EndpointTemplate {
-            url_template: ALLANIME_API_ENDPOINT.to_string(),
-        };
-
-        Self {
-            id: Self::ALLANIME_ID.to_string(),
-            name: "AllAnime".to_string(),
-            search: endpoint.clone(),
-            episodes: endpoint.clone(),
-            stream: endpoint,
-        }
-    }
 
     #[must_use]
     pub fn anidb() -> Self {
