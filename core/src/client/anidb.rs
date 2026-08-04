@@ -213,16 +213,30 @@ pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<
     let mut lines = body.lines();
 
     while let Some(line) = lines.next() {
-        let Some(height) = stream_height(line) else {
+        let line = line.trim();
+        if !line.starts_with("#EXT-X-STREAM-INF") {
             continue;
+        }
+        let height = stream_height(line)?;
+        let uri = loop {
+            let Some(line) = lines.next() else {
+                return Err(Error::StreamResolution {
+                    message: "stream-info tag was not followed by a variant URI".to_string(),
+                }
+                .into());
+            };
+            let uri = line.trim();
+            if uri.is_empty() {
+                continue;
+            }
+            if uri.starts_with('#') {
+                return Err(Error::StreamResolution {
+                    message: "stream-info tag was not followed by a variant URI".to_string(),
+                }
+                .into());
+            }
+            break uri;
         };
-        let Some(uri) = lines
-            .by_ref()
-            .find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
-        else {
-            break;
-        };
-        let uri = uri.trim();
         let url = master_url
             .join(uri)
             .map_err(|source| Error::StreamUrlParse {
@@ -242,10 +256,40 @@ pub(crate) fn parse_master_playlist(body: &str, master_url: &Url) -> CoreResult<
     Ok(variants)
 }
 
-fn stream_height(line: &str) -> Option<u16> {
-    let resolution = line.split_once("RESOLUTION=")?.1;
-    let (_, height) = resolution.split_once('x')?;
-    height.split(',').next()?.parse().ok()
+fn stream_height(line: &str) -> CoreResult<u16> {
+    let attributes =
+        line.strip_prefix("#EXT-X-STREAM-INF:")
+            .ok_or_else(|| Error::StreamResolution {
+                message: "stream-info tag was missing its attributes".to_string(),
+            })?;
+    let resolution = attributes
+        .split(',')
+        .find_map(|attribute| attribute.strip_prefix("RESOLUTION="))
+        .ok_or_else(|| Error::StreamResolution {
+            message: "stream-info tag was missing a valid resolution".to_string(),
+        })?;
+    let (width, height) = resolution
+        .split_once('x')
+        .ok_or_else(|| Error::StreamResolution {
+            message: "stream-info tag contained an invalid resolution".to_string(),
+        })?;
+    let width = width.parse::<u32>().map_err(|_| Error::StreamResolution {
+        message: "stream-info tag contained an invalid resolution".to_string(),
+    })?;
+    if width == 0 {
+        return Err(Error::StreamResolution {
+            message: "stream-info tag contained an invalid resolution".to_string(),
+        }
+        .into());
+    }
+    let height = height
+        .parse::<u16>()
+        .ok()
+        .filter(|height| *height > 0)
+        .ok_or_else(|| Error::StreamResolution {
+            message: "stream-info tag contained an invalid resolution".to_string(),
+        })?;
+    Ok(height)
 }
 
 pub(crate) fn select_variant(
@@ -374,6 +418,30 @@ mod tests {
                 .height,
             1080
         );
+    }
+
+    #[test]
+    fn rejects_hls_variant_with_invalid_resolution() {
+        let master = Url::parse("https://cdn.example/master.m3u8").unwrap();
+        let body = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n720.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=bad\n1080.m3u8\n";
+
+        assert!(parse_master_playlist(body, &master).is_err());
+    }
+
+    #[test]
+    fn rejects_hls_variant_without_uri() {
+        let master = Url::parse("https://cdn.example/master.m3u8").unwrap();
+        let body = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n720.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\n";
+
+        assert!(parse_master_playlist(body, &master).is_err());
+    }
+
+    #[test]
+    fn rejects_hls_variant_when_next_stream_info_precedes_uri() {
+        let master = Url::parse("https://cdn.example/master.m3u8").unwrap();
+        let body = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\n1080.m3u8\n";
+
+        assert!(parse_master_playlist(body, &master).is_err());
     }
 
     #[test]

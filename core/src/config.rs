@@ -54,7 +54,7 @@ pub(crate) enum StreamingMode {
 
 impl StreamingMode {
     pub(crate) fn parse(value: Option<&str>) -> CoreResult<Self> {
-        match value.unwrap_or("sub").trim().to_ascii_lowercase().as_str() {
+        match value.unwrap_or("sub") {
             "sub" => Ok(Self::Sub),
             "dub" => Ok(Self::Dub),
             value => Err(Error::InvalidConfigValue {
@@ -83,7 +83,7 @@ pub(crate) enum QualityPreference {
 
 impl QualityPreference {
     pub(crate) fn parse(value: Option<&str>) -> CoreResult<Self> {
-        let value = value.unwrap_or("best").trim();
+        let value = value.unwrap_or("best");
         let invalid = || Error::InvalidConfigValue {
             key: "quality",
             value: value.to_string(),
@@ -390,6 +390,15 @@ mod tests {
             QualityPreference::parse(None).unwrap(),
             QualityPreference::Best
         );
+    }
+
+    #[test]
+    fn rejects_non_literal_mode_and_quality_values() {
+        assert!(StreamingMode::parse(Some(" Dub")).is_err());
+        assert!(StreamingMode::parse(Some("DUB")).is_err());
+        assert!(QualityPreference::parse(Some(" 720p")).is_err());
+        assert!(QualityPreference::parse(Some("720p ")).is_err());
+        assert!(QualityPreference::parse(Some("720P")).is_err());
     }
 
     #[test]
