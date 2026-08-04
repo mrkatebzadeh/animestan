@@ -125,6 +125,8 @@ target/release/animestan
 ## Requirements
 
 - `mpv` is required for playback.
+- HLS downloads require `yt-dlp` or `ffmpeg`; `yt-dlp` is preferred.
+- AniDB is the built-in search, metadata, episode, and media source.
 - The CLI expects the configuration file to be located in the OS-specific config directory (e.g., `$HOME/.config/animestan/config.toml` on Linux).
 
 ## Configuration and customization
@@ -140,15 +142,20 @@ If the config file does not exist, Animestan creates one with default settings o
 
 | Key                 | Description                                                                    |
 | ------------------- | ------------------------------------------------------------------------------ |
-| `source_id`           | Anime source to use (default: Allanime)                                        |
+| `source_id`           | Built-in anime and metadata source (default: `anidb`)                          |
 | `metadata_cache_path` | Path to cached metadata (relative or absolute)                                 |
 | `episodes_cache_path` | Path to cached episode lists (relative or absolute)                            |
 | `player`              | Media player command (default: `mpv`)                                            |
-| `quality`             | Streaming quality preference: `best`, `worst`, or specific quality (default: `best`) |
+| `mode`                | Audio mode: `sub` (Japanese embed) or `dub` (English embed); default `sub`    |
+| `quality`             | `best`, `worst`, or an explicit height such as `720p`; default `best`           |
 | `tracking_path`       | Path to episode tracking file (relative or absolute)                           |
 | `favorites_path`      | Path to favorites file (relative or absolute)                                  |
 
 Feel free to customize these settings by editing the `config.toml` file to tailor Animestan to your preferences.
+
+### Upgrade note
+
+The app starts with fresh state under the `anidb` namespace; old favorites/progress/cache files are preserved but ignored; users with custom paths must clear or change them; downloads remain available.
 
 ---
 

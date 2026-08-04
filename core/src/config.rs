@@ -120,8 +120,14 @@ impl AppConfig {
         r#"# Animestan configuration file
 # Uncomment and modify any settings below as needed
 
-# Anime source to use (default: Allanime)
-# source_id = "allanime"
+# Built-in anime and metadata source: AniDB
+# source_id = "anidb"
+
+# Audio mode: sub or dub (default: sub)
+# mode = "sub"
+
+# Streaming quality: best, worst, or a height such as 720p (default: best)
+# quality = "best"
 
 # Path to cached metadata (relative to config dir or absolute)
 # metadata_cache_path = "metadata_cache.json"
@@ -131,9 +137,6 @@ impl AppConfig {
 
 # Media player command (default: mpv)
 # player = "mpv"
-
-# Streaming quality preference: best, worst, or specific quality (default: best)
-# quality = "best"
 
 # Path to episode tracking file (relative to config dir or absolute)
 # tracking_path = "progress.json"
