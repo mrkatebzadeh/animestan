@@ -15,11 +15,11 @@
 
 use super::{
     AnimeMetadata, AnimeProgress, AnimeRefreshRequest, App, Episode, EpisodeIndicators,
-    FavoriteEntry, FilterActive, FilterTarget, MetadataSummary, SearchModal,
+    FavoriteEntry, FilterTarget,
 };
 use std::collections::HashMap;
 
-use animestan_core::{AnimeClient, CoreResult, FavoriteStore, FetchBackend};
+use animestan_core::{CoreResult, FavoriteStore};
 
 impl App {
     pub fn bookmark_entries(&self) -> &[FavoriteEntry] {
@@ -74,7 +74,7 @@ impl App {
 
     pub fn load_bookmarks(&mut self, store: &FavoriteStore) {
         self.data.bookmark_entries = store.list();
-        self.apply_saved_panel_filter(FilterTarget::Bookmarks);
+        self.apply_saved_panel_filter(FilterTarget::Anime);
         self.reset_navigation_state();
         if self.data.bookmark_entries.is_empty() {
             self.set_details("No bookmarks saved yet. Use the CLI to add some.");
@@ -91,7 +91,7 @@ impl App {
 
     pub fn sync_bookmark_cache(&mut self, store: &FavoriteStore) {
         self.data.bookmark_entries = store.list();
-        self.apply_saved_panel_filter(FilterTarget::Bookmarks);
+        self.apply_saved_panel_filter(FilterTarget::Anime);
         self.nav.anime_selection_changed = !self.data.bookmark_entries.is_empty();
         self.refresh_quick_launch_items();
     }
@@ -113,16 +113,6 @@ impl App {
 
     pub fn set_anime_progress(&mut self, anime_id: String, progress: AnimeProgress) {
         self.data.anime_progress.insert(anime_id, progress);
-    }
-
-    pub fn metadata_summary(&self, anime_id: &str) -> Option<MetadataSummary> {
-        self.data
-            .metadata_store
-            .get(anime_id)
-            .map(|metadata| MetadataSummary {
-                status: metadata.status.clone(),
-                score: metadata.score,
-            })
     }
 
     pub fn episode_refresh_pending(&self, anime_id: &str) -> bool {
@@ -283,7 +273,7 @@ impl App {
 
         self.sync_bookmark_cache(store);
         self.set_details(details);
-        if matches!(self.search.modal_visible, SearchModal::Visible) {
+        if self.search.modal_visible {
             self.close_search_results_modal();
         }
         Ok(())
@@ -311,23 +301,8 @@ impl App {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn load_episodes(&mut self, client: &AnimeClient<FetchBackend>) -> CoreResult<()> {
-        let Some(anime) = self.current_anime() else {
-            self.clear_episodes();
-            self.set_details("Select an anime to load episodes.");
-            return Ok(());
-        };
-
-        let episodes = client.list_episodes(&anime.id)?;
-        self.set_episodes(episodes);
-        self.set_details(format!("Loaded {} episodes", self.data.episodes.len()));
-        self.nav.anime_selection_changed = false;
-        Ok(())
-    }
-
     pub(super) fn visible_episodes(&self) -> &[Episode] {
-        if matches!(self.filters.episode_active, FilterActive::Active) {
+        if self.filters.episode_active {
             &self.data.filtered_episode_entries
         } else {
             self.base_episode_entries()
@@ -343,7 +318,7 @@ impl App {
     }
 
     pub(super) fn visible_bookmark_entries(&self) -> &[FavoriteEntry] {
-        if matches!(self.filters.bookmark_active, FilterActive::Active) {
+        if self.filters.bookmark_active {
             &self.data.filtered_bookmark_entries
         } else {
             &self.data.bookmark_entries

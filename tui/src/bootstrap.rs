@@ -16,7 +16,7 @@
 use std::sync::{Arc, Mutex};
 
 use animestan_core::{
-    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend, MetadataResolver,
+    AniDbMetadataProvider, AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, FetchBackend,
 };
 use futures::future::AbortHandle;
 use tokio::runtime::Handle;
@@ -59,7 +59,7 @@ pub(crate) fn initialize_app_state(
 pub(crate) fn start_background_refreshes(
     app: &mut App,
     runtime: &Handle,
-    resolver: &Arc<MetadataResolver>,
+    resolver: &Arc<AniDbMetadataProvider>,
     client: &Arc<AnimeClient<FetchBackend>>,
     episode_cache: &Arc<Mutex<EpisodeCache>>,
     background_job_tx: &UnboundedSender<BackgroundEpisodeRefreshResult>,

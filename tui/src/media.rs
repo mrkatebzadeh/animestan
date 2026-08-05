@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use animestan_core::{AnimeMetadata, AppConfig, MetadataResolver, validate_media_url};
+use animestan_core::{AniDbMetadataProvider, AnimeMetadata, AppConfig, validate_media_url};
 use futures::future::AbortHandle;
 use image::DynamicImage;
 use ratatui_image::Resize;
@@ -155,7 +155,7 @@ pub(crate) fn queue_image_load(
 
 pub(crate) fn handle_metadata_fetch(
     app: &mut App,
-    resolver: &Arc<MetadataResolver>,
+    resolver: &Arc<AniDbMetadataProvider>,
     runtime: &Handle,
     result_tx: &UnboundedSender<MetadataFetchResult>,
     active_fetch: &mut Option<AbortHandle>,
@@ -221,7 +221,7 @@ pub(crate) fn handle_metadata_fetch(
 
 pub(crate) fn handle_list_metadata_fetch(
     app: &mut App,
-    resolver: &Arc<MetadataResolver>,
+    resolver: &Arc<AniDbMetadataProvider>,
     runtime: &Handle,
     result_tx: &UnboundedSender<MetadataFetchResult>,
     active_fetch: &mut Option<ActiveMetadataFetch>,

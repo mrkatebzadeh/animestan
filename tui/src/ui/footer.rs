@@ -56,23 +56,10 @@ pub(super) fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &mut App, th
         .constraints(constraints.as_slice())
         .split(area);
 
-    render_footer_status_line(frame, chunks[0], app, theme);
+    render_status_text(frame, chunks[0], app, theme);
     if chunks.len() > 1 {
         render_footer_keybindings(frame, chunks[1], theme);
     }
-}
-
-fn render_footer_status_line(frame: &mut Frame<'_>, area: Rect, app: &mut App, theme: &Theme) {
-    if area.height == 0 || area.width == 0 {
-        return;
-    }
-
-    let status_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0)])
-        .split(area);
-
-    render_status_text(frame, status_chunks[0], app, theme);
 }
 
 fn render_status_text(frame: &mut Frame<'_>, area: Rect, app: &App, theme: &Theme) {

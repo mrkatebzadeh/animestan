@@ -112,3 +112,43 @@ impl FavoriteStore {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FavoriteStore;
+
+    #[test]
+    fn loads_legacy_anidb_favorite_unchanged() {
+        let path = std::env::temp_dir().join(format!(
+            "animestan-favorites-legacy-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let contents = r#"{
+            "entries": {
+                "naruto-3686": {
+                    "anime": {
+                        "id": "naruto-3686",
+                        "title": "Naruto",
+                        "source_id": "anidb"
+                    },
+                    "added_at": 1
+                }
+            }
+        }"#;
+        std::fs::write(&path, contents).expect("write legacy favorites");
+
+        let store = FavoriteStore::load(path.clone()).expect("load legacy favorites");
+        let entries = store.list();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].anime.id, "naruto-3686");
+        assert_eq!(entries[0].anime.title, "Naruto");
+        assert_eq!(entries[0].anime.source_id, "anidb");
+        assert_eq!(entries[0].added_at, 1);
+
+        std::fs::remove_file(path).expect("remove legacy favorites");
+    }
+}

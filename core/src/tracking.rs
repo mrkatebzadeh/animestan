@@ -194,41 +194,32 @@ impl EpisodeTracker {
         self.store.episodes.get(episode_id).cloned()
     }
 
-    /// Indicates whether the episode has been marked as watched.
-    #[must_use]
-    pub fn is_watched(&self, episode_id: &str) -> bool {
-        self.store
-            .episodes
-            .get(episode_id)
-            .is_some_and(|entry| entry.watched)
-    }
-
-    /// Indicates whether playback progress exists without being fully watched.
-    #[must_use]
-    pub fn is_in_progress(&self, episode_id: &str) -> bool {
-        self.store
-            .episodes
-            .get(episode_id)
-            .is_some_and(|entry| !entry.watched && entry.last_position_sec.is_some())
-    }
-
     /// Filters episodes by the requested playback filter.
     #[must_use]
     pub fn filter_episodes(&self, episodes: &[Episode], filter: PlaybackFilter) -> Vec<Episode> {
         match filter {
             PlaybackFilter::Unwatched => episodes
                 .iter()
-                .filter(|episode| !self.is_watched(&episode.id))
+                .filter(|episode| {
+                    self.state_for(&episode.id)
+                        .is_none_or(|state| !state.watched)
+                })
                 .cloned()
                 .collect(),
             PlaybackFilter::InProgress => episodes
                 .iter()
-                .filter(|episode| self.is_in_progress(&episode.id))
+                .filter(|episode| {
+                    self.state_for(&episode.id)
+                        .is_some_and(|state| state.in_progress)
+                })
                 .cloned()
                 .collect(),
             PlaybackFilter::Next => episodes
                 .iter()
-                .filter(|episode| !self.is_watched(&episode.id))
+                .filter(|episode| {
+                    self.state_for(&episode.id)
+                        .is_none_or(|state| !state.watched)
+                })
                 .min_by_key(|episode| episode.number)
                 .cloned()
                 .into_iter()
@@ -266,5 +257,65 @@ impl EpisodeTracker {
         })?;
         debug!("saved playback progress to {}", self.path.display());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn episode(id: &str, number: u32) -> Episode {
+        Episode {
+            id: id.to_string(),
+            number,
+            title: id.to_string(),
+            anime_id: "naruto-3686".to_string(),
+            source_id: "anidb".to_string(),
+            synopsis: None,
+            duration_secs: None,
+            air_date: None,
+        }
+    }
+
+    #[test]
+    fn playback_filters_preserve_unwatched_in_progress_and_next_behavior() {
+        let tracker = EpisodeTracker {
+            path: PathBuf::new(),
+            store: ProgressStore {
+                episodes: HashMap::from([
+                    (
+                        "watched".to_string(),
+                        EpisodeProgress {
+                            watched: true,
+                            ..EpisodeProgress::default()
+                        },
+                    ),
+                    (
+                        "progress".to_string(),
+                        EpisodeProgress {
+                            last_position_sec: Some(30.0),
+                            ..EpisodeProgress::default()
+                        },
+                    ),
+                ]),
+            },
+        };
+        let episodes = vec![
+            episode("unwatched", 3),
+            episode("progress", 2),
+            episode("watched", 1),
+        ];
+
+        let ids = |filter| {
+            tracker
+                .filter_episodes(&episodes, filter)
+                .into_iter()
+                .map(|episode| episode.id)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(ids(PlaybackFilter::Unwatched), ["unwatched", "progress"]);
+        assert_eq!(ids(PlaybackFilter::InProgress), ["progress"]);
+        assert_eq!(ids(PlaybackFilter::Next), ["progress"]);
     }
 }

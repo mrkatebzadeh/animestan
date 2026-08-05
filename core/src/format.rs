@@ -13,8 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use crate::MetadataSource;
-
 #[must_use]
 pub fn format_status_score(status: Option<&str>, score: Option<f32>) -> String {
     match (status, score) {
@@ -41,12 +39,5 @@ pub fn format_season_year(season: Option<&str>, year: Option<u16>) -> String {
         (Some(season), None) => season.to_string(),
         (None, Some(year)) => year.to_string(),
         _ => "N/A".to_string(),
-    }
-}
-
-#[must_use]
-pub fn metadata_source_label(source: MetadataSource) -> &'static str {
-    match source {
-        MetadataSource::AniDb => "AniDB",
     }
 }

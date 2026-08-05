@@ -52,7 +52,7 @@ pub(super) fn handle(app: &mut App, key_event: KeyEvent) {
         KeyCode::Char('d') => app.request_download(),
         KeyCode::Char('D') => app.request_delete(),
         KeyCode::Char(' ') => app.select_current(),
-        KeyCode::Char('?') => app.show_help(),
+        KeyCode::Char('?') => app.toggle_keybindings(),
         KeyCode::Enter => handle_enter(app),
         _ => {}
     }
@@ -62,7 +62,7 @@ fn handle_enter(app: &mut App) {
     if matches!(app.focus(), Focus::Left) {
         app.toggle_focus();
     } else {
-        app.request_play();
+        app.request_play_async();
     }
 }
 

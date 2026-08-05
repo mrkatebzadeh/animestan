@@ -15,8 +15,8 @@
 
 use super::{
     App, ConfirmExitChoice, DEFAULT_SEARCH_QUERY, DataState, FilterState, Focus, InputMode,
-    KeybindingsState, Matcher, MetadataBackgroundState, ModalState, NavState, PanelMode,
-    PlaybackState, PlaybackStatus, QuickLaunchState, SearchState, UiState, image::ImageUiState,
+    KeybindingsState, Matcher, MetadataBackgroundState, ModalState, NavState, PlaybackState,
+    PlaybackStatus, QuickLaunchState, SearchState, UiState, image::ImageUiState,
 };
 
 use crate::events;
@@ -78,9 +78,7 @@ impl App {
     }
 
     pub fn mode_label(&self) -> &'static str {
-        if matches!(self.nav.input_mode, InputMode::Search)
-            || matches!(self.filters.panel_mode, PanelMode::Active)
-        {
+        if matches!(self.nav.input_mode, InputMode::Search) || self.filters.panel_mode {
             "Insert"
         } else {
             "Normal"
@@ -106,10 +104,6 @@ impl App {
 
     pub fn set_details<S: Into<String>>(&mut self, details: S) {
         self.ui.details_text = details.into();
-    }
-
-    pub fn show_help(&mut self) {
-        self.toggle_keybindings();
     }
 
     pub fn request_exit(&mut self) {

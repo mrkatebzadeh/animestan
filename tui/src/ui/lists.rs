@@ -24,8 +24,6 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState,
 };
 
-use super::border_style;
-
 pub(super) fn render_list(
     frame: &mut Frame,
     area: Rect,
@@ -52,7 +50,7 @@ pub(super) fn render_list(
         } else {
             BorderType::Plain
         })
-        .border_style(border_style(theme, focused));
+        .border_style(theme.panel_border_style(focused));
 
     let mut state = ListState::default();
     if !items.is_empty() {
@@ -77,7 +75,7 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
         let block = Block::default()
             .title("Anime")
             .borders(Borders::ALL)
-            .border_style(border_style(theme, app.focus() == Focus::Left));
+            .border_style(theme.panel_border_style(app.focus() == Focus::Left));
         let paragraph = Paragraph::new("No favorites yet. Use the CLI to add some.")
             .alignment(Alignment::Center)
             .block(block);
@@ -93,15 +91,13 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
                 || "--/--".to_string(),
                 |stats| format!("{}/{}", stats.watched, stats.total),
             );
-            let metadata_summary = app.metadata_summary(&entry.anime.id);
-            let status = metadata_summary
-                .as_ref()
-                .and_then(|summary| summary.status.as_deref())
+            let metadata = app.cached_metadata(&entry.anime.id);
+            let status = metadata
+                .and_then(|metadata| metadata.status.as_deref())
                 .unwrap_or("—")
                 .to_string();
-            let score = metadata_summary
-                .as_ref()
-                .and_then(|summary| summary.score)
+            let score = metadata
+                .and_then(|metadata| metadata.score)
                 .map_or_else(|| "—".to_string(), |value| format!("{value:.1}"));
             Row::new(vec![
                 Cell::from(entry.anime.title.clone()),
@@ -118,7 +114,7 @@ pub(super) fn render_anime_table(frame: &mut Frame, area: Rect, app: &App, theme
     }
 
     let focused = app.focus() == Focus::Left;
-    let mut border = border_style(theme, focused);
+    let mut border = theme.panel_border_style(focused);
     if focused {
         border = border.add_modifier(Modifier::BOLD);
     }

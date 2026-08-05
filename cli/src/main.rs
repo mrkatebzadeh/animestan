@@ -20,7 +20,6 @@ use spdlog::prelude::*;
 use animestan_core::{AnimeClient, AppConfig, init_logging};
 
 mod commands;
-mod playback;
 
 use crate::commands::{
     FilterArgs, describe_command, handle_bookmarks, handle_delete, handle_download,
@@ -28,10 +27,6 @@ use crate::commands::{
 };
 
 fn main() -> Result<()> {
-    run()
-}
-
-fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load_default().context("failed to load configuration")?;
     init_logging("animestan-cli", cli.verbosity, &config, true)

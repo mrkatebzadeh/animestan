@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use animestan_core::{AnimeClient, AppConfig, EpisodeTracker, FetchBackend, MetadataResolver};
+use animestan_core::{AniDbMetadataProvider, AnimeClient, AppConfig, EpisodeTracker, FetchBackend};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -42,7 +42,7 @@ pub(crate) fn handle_search(app: &mut App, client: &AnimeClient<FetchBackend>) {
 pub(crate) fn handle_current_anime_refresh(
     app: &mut App,
     runtime: &Handle,
-    resolver: &Arc<MetadataResolver>,
+    resolver: &Arc<AniDbMetadataProvider>,
     metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
     active_metadata_fetch: &mut Option<ActiveMetadataFetch>,
     request_tx: &UnboundedSender<EpisodeFetchRequest>,
@@ -157,7 +157,7 @@ fn request_episode_refresh(
 fn request_metadata_refresh(
     app: &mut App,
     runtime: &Handle,
-    resolver: &Arc<MetadataResolver>,
+    resolver: &Arc<AniDbMetadataProvider>,
     metadata_result_tx: &UnboundedSender<MetadataFetchResult>,
     active_metadata_fetch: &mut Option<ActiveMetadataFetch>,
     refresh: crate::app::AnimeRefreshRequest,
@@ -201,7 +201,7 @@ mod tests {
     use crate::media::ActiveMetadataFetch;
     use crate::tasks::MetadataTarget;
     use animestan_core::{
-        AnimeEntry, AnimeMetadata, FavoriteStore, MetadataResolver, MetadataSource,
+        AniDbMetadataProvider, AnimeEntry, AnimeMetadata, FavoriteStore, MetadataSource,
     };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -270,7 +270,7 @@ mod tests {
             .enable_all()
             .build()
             .expect("runtime should build");
-        let resolver = Arc::new(MetadataResolver::default());
+        let resolver = Arc::new(AniDbMetadataProvider::default());
         let mut app = app_with_two_bookmarks();
         let first_candidate = app
             .next_metadata_fetch_candidate()

@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{AnimeEntry, App, InputMode, MetaFetch, PendingFlag, SearchModal};
+use super::{AnimeEntry, App, InputMode, MetaFetch};
 
 use animestan_core::{AnimeClient, AnimeMetadata, CoreResult, FetchBackend};
 
@@ -23,7 +23,7 @@ impl App {
     }
 
     pub fn search_results_modal_visible(&self) -> bool {
-        matches!(self.search.modal_visible, SearchModal::Visible)
+        self.search.modal_visible
     }
 
     pub fn search_results(&self) -> &[AnimeEntry] {
@@ -62,7 +62,7 @@ impl App {
         self.nav.selected_anime = None;
         self.set_search_query(String::new());
         self.search.selection = 0;
-        self.search.modal_visible = SearchModal::Visible;
+        self.search.modal_visible = true;
         self.set_details("Search mode: type a query and press Enter.");
     }
 
@@ -80,23 +80,18 @@ impl App {
     }
 
     pub fn request_search(&mut self) {
-        self.search.pending_search = PendingFlag::Yes;
+        self.search.pending_search = true;
     }
 
     pub fn take_pending_search(&mut self) -> bool {
-        if matches!(self.search.pending_search, PendingFlag::Yes) {
-            self.search.pending_search = PendingFlag::No;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.search.pending_search)
     }
 
     pub fn search(&mut self, client: &AnimeClient<FetchBackend>) -> CoreResult<()> {
         let query = self.search.query.trim().to_owned();
         if query.is_empty() {
             self.data.search_results.clear();
-            self.search.modal_visible = SearchModal::Hidden;
+            self.search.modal_visible = false;
             self.search.meta_state = MetaFetch::Idle;
             self.clear_episodes();
             self.nav.left_index = 0;
@@ -111,7 +106,7 @@ impl App {
         self.data.search_results = entries;
         self.search.results_query.clone_from(&query);
         self.search.selection = 0;
-        self.search.modal_visible = SearchModal::Visible;
+        self.search.modal_visible = true;
         self.search.metadata = None;
         self.search.metadata_error = None;
         self.search.meta_state = MetaFetch::Idle;
@@ -181,7 +176,7 @@ impl App {
     }
 
     fn hide_search_modal(&mut self) {
-        self.search.modal_visible = SearchModal::Hidden;
+        self.search.modal_visible = false;
         self.search.metadata = None;
         self.search.metadata_error = None;
         self.search.meta_state = MetaFetch::Idle;
@@ -236,16 +231,11 @@ impl App {
     }
 
     pub fn request_search_results_add(&mut self) {
-        self.search.add_pending = PendingFlag::Yes;
+        self.search.add_pending = true;
     }
 
     pub fn take_pending_search_results_add(&mut self) -> bool {
-        if matches!(self.search.add_pending, PendingFlag::Yes) {
-            self.search.add_pending = PendingFlag::No;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.search.add_pending)
     }
 
     fn request_search_results_metadata(&mut self) {
@@ -269,5 +259,70 @@ impl App {
             self.search.selection = clamped;
         }
         self.request_search_results_metadata();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use animestan_core::Episode;
+
+    use super::App;
+
+    #[test]
+    fn request_flags_are_consumed_once() {
+        let mut app = App::new();
+
+        app.request_search();
+        assert!(app.take_pending_search());
+        assert!(!app.take_pending_search());
+
+        app.request_search_results_add();
+        assert!(app.take_pending_search_results_add());
+        assert!(!app.take_pending_search_results_add());
+
+        app.request_bookmark_toggle();
+        assert!(app.take_pending_bookmark_toggle());
+        assert!(!app.take_pending_bookmark_toggle());
+
+        app.request_info_metadata();
+        assert!(app.take_pending_info_fetch());
+        assert!(!app.take_pending_info_fetch());
+
+        app.request_play_async();
+        assert!(app.take_pending_play_async());
+        assert!(!app.take_pending_play_async());
+
+        app.set_episodes(vec![Episode {
+            id: "episode-1".to_string(),
+            number: 1,
+            title: "Episode 1".to_string(),
+            anime_id: "anime-1".to_string(),
+            source_id: "anidb".to_string(),
+            synopsis: None,
+            duration_secs: None,
+            air_date: None,
+        }]);
+        app.nav.selected_episode = Some(0);
+        app.request_download();
+        assert!(app.take_pending_download());
+        assert!(!app.take_pending_download());
+        app.request_delete();
+        assert!(app.take_pending_delete());
+        assert!(!app.take_pending_delete());
+
+        app.cycle_filter();
+        assert!(app.take_filter_changed());
+        assert!(!app.take_filter_changed());
+    }
+
+    #[test]
+    fn search_modal_visibility_follows_enter_and_exit() {
+        let mut app = App::new();
+
+        assert!(!app.search_results_modal_visible());
+        app.enter_search_mode();
+        assert!(app.search_results_modal_visible());
+        app.exit_search_mode();
+        assert!(!app.search_results_modal_visible());
     }
 }

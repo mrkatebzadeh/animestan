@@ -31,8 +31,7 @@ mod quick;
 mod search;
 
 pub use image::ImageState;
-#[allow(unused_imports)]
-pub use quick::{QuickLaunchAction, QuickLaunchCandidate};
+use quick::QuickLaunchCandidate;
 
 const DEFAULT_SEARCH_QUERY: &str = "";
 const QUICK_LAUNCH_HISTORY_SIZE: usize = 12;
@@ -95,7 +94,6 @@ pub enum PlaybackStatus {
 pub enum FilterTarget {
     Anime,
     Episodes,
-    Bookmarks,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
@@ -153,37 +151,10 @@ pub struct AnimeProgress {
     pub total: usize,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct MetadataSummary {
-    pub status: Option<String>,
-    pub score: Option<f32>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AnimeRefreshRequest {
     pub(crate) anime_id: String,
     pub(crate) title: String,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-enum PanelMode {
-    #[default]
-    Inactive,
-    Active,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-enum FilterActive {
-    #[default]
-    Inactive,
-    Active,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-enum SearchModal {
-    #[default]
-    Hidden,
-    Visible,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -192,20 +163,6 @@ enum MetaFetch {
     Idle,
     Pending,
     Loading,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-enum PendingFlag {
-    #[default]
-    No,
-    Yes,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-enum Progress {
-    #[default]
-    Idle,
-    Active,
 }
 
 #[derive(Debug, Default)]
@@ -221,15 +178,16 @@ struct NavState {
 }
 
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct FilterState {
-    panel_mode: PanelMode,
+    panel_mode: bool,
     panel_target: Option<FilterTarget>,
     panel_query: String,
-    bookmark_active: FilterActive,
-    episode_active: FilterActive,
+    bookmark_active: bool,
+    episode_active: bool,
     bookmark_query: String,
     episode_query: String,
-    filter_changed: PendingFlag,
+    filter_changed: bool,
     filter_mode: FilterMode,
 }
 
@@ -256,35 +214,36 @@ struct DataState {
 #[derive(Debug, Default)]
 struct SearchState {
     query: String,
-    pending_search: PendingFlag,
+    pending_search: bool,
     results_query: String,
-    modal_visible: SearchModal,
+    modal_visible: bool,
     selection: usize,
     metadata: Option<AnimeMetadata>,
     metadata_error: Option<String>,
     metadata_generation: u64,
     meta_state: MetaFetch,
-    add_pending: PendingFlag,
+    add_pending: bool,
 }
 
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct PlaybackState {
     status: PlaybackStatus,
-    in_progress: Progress,
+    in_progress: bool,
     current_episode_id: Option<String>,
     current_anime_title: Option<String>,
     current_episode_title: Option<String>,
     elapsed_seconds: Option<f64>,
-    pending_playback_request: PendingFlag,
-    pending_download: PendingFlag,
-    pending_delete: PendingFlag,
-    pending_bookmark_toggle: PendingFlag,
+    pending_playback_request: bool,
+    pending_download: bool,
+    pending_delete: bool,
+    pending_bookmark_toggle: bool,
     pending_episode_mark_action: Option<EpisodeMarkAction>,
 }
 
 #[derive(Debug, Default)]
 struct QuickLaunchState {
-    active: PendingFlag,
+    active: bool,
     query: String,
     selection: usize,
     items: Vec<QuickLaunchCandidate>,

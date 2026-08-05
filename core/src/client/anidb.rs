@@ -27,7 +27,36 @@ use crate::{
 };
 
 pub(crate) const BASE_URL: &str = "https://anidb.app";
+pub const ANIDB_SOURCE_ID: &str = "anidb";
 pub(crate) const USER_AGENT_VALUE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+pub(crate) fn search_url(query: &str) -> Result<Url, Error> {
+    let mut url = Url::parse(BASE_URL).map_err(|source| Error::InvalidUrl {
+        template: BASE_URL.to_string(),
+        source,
+    })?;
+    url.set_path("/browse");
+    url.query_pairs_mut().append_pair("q", query);
+    Ok(url)
+}
+
+pub(crate) fn episodes_url(anime_id: &str) -> Result<Url, Error> {
+    let mut url = Url::parse(BASE_URL).map_err(|source| Error::InvalidUrl {
+        template: BASE_URL.to_string(),
+        source,
+    })?;
+    url.set_path(&format!("/api/frontend/anime/{anime_id}/episodes"));
+    Ok(url)
+}
+
+pub(crate) fn languages_url(episode_id: &str) -> Result<Url, Error> {
+    let mut url = Url::parse(BASE_URL).map_err(|source| Error::InvalidUrl {
+        template: BASE_URL.to_string(),
+        source,
+    })?;
+    url.set_path(&format!("/api/frontend/episode/{episode_id}/languages"));
+    Ok(url)
+}
 
 #[derive(Deserialize)]
 struct EpisodesResponse {
@@ -82,7 +111,7 @@ pub(crate) fn validate_episode_id(episode_id: &str) -> CoreResult<()> {
     Ok(())
 }
 
-pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeEntry>> {
+pub(crate) fn parse_search(html: &str) -> CoreResult<Vec<AnimeEntry>> {
     if html.contains("Just a moment") {
         return Err(Error::ProviderBlocked {
             url: format!("{BASE_URL}/browse"),
@@ -122,18 +151,14 @@ pub(crate) fn parse_search(html: &str, source_id: &str) -> CoreResult<Vec<AnimeE
         entries.push(AnimeEntry {
             id: anime_id.clone(),
             title: title.to_string(),
-            source_id: source_id.to_string(),
+            source_id: ANIDB_SOURCE_ID.to_string(),
         });
     }
 
     Ok(entries)
 }
 
-pub(crate) fn parse_episodes(
-    body: &str,
-    anime_id: &str,
-    source_id: &str,
-) -> CoreResult<Vec<Episode>> {
+pub(crate) fn parse_episodes(body: &str, anime_id: &str) -> CoreResult<Vec<Episode>> {
     let numeric_id = anime_numeric_id(anime_id)?;
     let response: EpisodesResponse =
         serde_json::from_str(body).map_err(|source| Error::ResponseParse {
@@ -149,7 +174,7 @@ pub(crate) fn parse_episodes(
             number: episode.number,
             title: format!("Episode {}", episode.number),
             anime_id: anime_id.to_string(),
-            source_id: source_id.to_string(),
+            source_id: ANIDB_SOURCE_ID.to_string(),
             synopsis: None,
             duration_secs: None,
             air_date: None,
@@ -340,14 +365,30 @@ pub(crate) fn select_variant(
 #[cfg(test)]
 mod tests {
     use super::{
-        anime_numeric_id, extract_master_url, parse_episodes, parse_languages,
-        parse_master_playlist, parse_search, select_variant,
+        anime_numeric_id, episodes_url, extract_master_url, languages_url, parse_episodes,
+        parse_languages, parse_master_playlist, parse_search, search_url, select_variant,
     };
     use crate::{
         client::validate_media_url,
         config::{QualityPreference, StreamingMode},
     };
     use url::Url;
+
+    #[test]
+    fn anidb_urls_encode_query_and_use_numeric_episode_paths() {
+        assert_eq!(
+            search_url("my hero").unwrap().as_str(),
+            "https://anidb.app/browse?q=my+hero"
+        );
+        assert_eq!(
+            episodes_url("3686").unwrap().as_str(),
+            "https://anidb.app/api/frontend/anime/3686/episodes"
+        );
+        assert_eq!(
+            languages_url("6087").unwrap().as_str(),
+            "https://anidb.app/api/frontend/episode/6087/languages"
+        );
+    }
 
     #[test]
     fn parses_and_deduplicates_browse_cards() {
@@ -360,7 +401,7 @@ mod tests {
               <img alt="Boruto &amp; Naruto">
             </a>
         "#;
-        let entries = parse_search(html, "anidb").expect("search entries");
+        let entries = parse_search(html).expect("search entries");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, "naruto-3686");
         assert_eq!(entries[1].title, "Boruto & Naruto");
@@ -375,7 +416,7 @@ mod tests {
             <a href="/anime/relative-3" title="Relative"></a>
         "#;
 
-        let entries = parse_search(html, "anidb").expect("search entries");
+        let entries = parse_search(html).expect("search entries");
 
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|entry| entry.id != "evil-1"));
@@ -383,15 +424,14 @@ mod tests {
 
     #[test]
     fn rejects_cloudflare_block_page() {
-        let error =
-            parse_search("<title>Just a moment...</title>", "anidb").expect_err("blocked response");
+        let error = parse_search("<title>Just a moment...</title>").expect_err("blocked response");
         assert!(error.to_string().contains("Cloudflare"));
     }
 
     #[test]
     fn maps_episode_api_ids_and_sorts_numbers() {
         let body = r#"{"episodes":[{"id":6090,"number":4,"number2":null,"filler":false},{"id":6087,"number":1,"number2":null,"filler":false}]}"#;
-        let episodes = parse_episodes(body, "ippon-again-20", "anidb").expect("episodes");
+        let episodes = parse_episodes(body, "ippon-again-20").expect("episodes");
         assert_eq!(episodes[0].id, "6087");
         assert_eq!(episodes[0].anime_id, "ippon-again-20");
         assert_eq!(episodes[1].number, 4);
@@ -405,8 +445,7 @@ mod tests {
 
     #[test]
     fn malformed_episode_response_reports_numeric_endpoint() {
-        let error =
-            parse_episodes("not json", "naruto-3686", "anidb").expect_err("malformed response");
+        let error = parse_episodes("not json", "naruto-3686").expect_err("malformed response");
         let message = error.to_string();
         assert!(message.contains("/api/frontend/anime/3686/episodes"));
         assert!(!message.contains("/api/frontend/anime/naruto-3686/episodes"));

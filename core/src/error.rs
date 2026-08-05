@@ -22,12 +22,8 @@ use url::ParseError;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("failed to load catalog fixture: {0}")]
-    CatalogFixture(#[source] serde_json::Error),
     #[error("failed to load response fixture: {0}")]
     ResponseFixture(#[source] serde_json::Error),
-    #[error("no sources available in fixture catalog")]
-    EmptyCatalog,
     #[error("metadata cache lock poisoned")]
     MetadataCacheLock,
     #[error("failed to read metadata cache file at '{path}': {source}")]
@@ -42,15 +38,9 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("failed to parse metadata cache file at '{path}': {source}")]
-    MetadataCacheParse {
-        path: PathBuf,
-        #[source]
-        source: serde_json::Error,
-    },
     #[error("missing fixture response for url '{url}'")]
     MissingFixture { url: String },
-    #[error("failed to render url from template '{template}': {source}")]
+    #[error("failed to parse url '{template}': {source}")]
     InvalidUrl {
         template: String,
         #[source]
@@ -133,8 +123,6 @@ pub enum Error {
         value: String,
         expected: &'static str,
     },
-    #[error("unknown source id '{source_id}'")]
-    UnknownSourceId { source_id: String },
     #[error("failed to read tracking file at '{path}': {source}")]
     TrackingRead {
         path: PathBuf,

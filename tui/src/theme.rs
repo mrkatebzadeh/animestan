@@ -6,7 +6,7 @@ use std::{
 use animestan_core::{AppConfig, CoreResult};
 use anyhow::{Context, anyhow};
 use ratatui::style::{Color, Modifier, Style};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 const DEFAULT_THEME_TOML: &str = r##"# Animestan TUI theme configuration
 # Every panel, title, item, selected item, and non-interactive text uses
@@ -31,8 +31,6 @@ fg = "#838BA7"
 
 [heatmap]
 watched = "#A6D189"
-in_progress = "#E5C890"
-upcoming = "#838BA7"
 "##;
 
 #[derive(Clone, Debug)]
@@ -51,19 +49,9 @@ struct PanelStyle {
     focused_border: Color,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
-pub enum HeatmapVariant {
-    Watched,
-    InProgress,
-    Upcoming,
-}
-
 #[derive(Clone, Debug)]
 struct HeatmapPalette {
-    watched: (u8, u8, u8),
-    in_progress: (u8, u8, u8),
-    upcoming: (u8, u8, u8),
+    watched: Color,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +60,7 @@ struct TextStyle {
     bg: Option<Color>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ThemeConfig {
     panels: PanelConfig,
     titles: ColorConfig,
@@ -82,56 +70,22 @@ struct ThemeConfig {
     non_interactive: ColorConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct PanelConfig {
     border: String,
     focused_border: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ColorConfig {
     fg: String,
     #[serde(default)]
     bg: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct HeatmapConfig {
     watched: String,
-    in_progress: String,
-    upcoming: String,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Self {
-            panels: PanelStyle {
-                border: Color::Gray,
-                focused_border: Color::Cyan,
-            },
-            titles: TextStyle {
-                fg: Color::Cyan,
-                bg: None,
-            },
-            items: TextStyle {
-                fg: Color::White,
-                bg: None,
-            },
-            selected_item: TextStyle {
-                fg: Color::Yellow,
-                bg: None,
-            },
-            heatmap: HeatmapPalette {
-                watched: (32, 180, 90),
-                in_progress: (225, 200, 70),
-                upcoming: (110, 115, 140),
-            },
-            non_interactive: TextStyle {
-                fg: Color::DarkGray,
-                bg: None,
-            },
-        }
-    }
 }
 
 impl Theme {
@@ -176,16 +130,12 @@ impl Theme {
     }
 
     #[must_use]
-    pub fn heatmap_color(&self, variant: HeatmapVariant) -> (u8, u8, u8) {
-        match variant {
-            HeatmapVariant::Watched => self.heatmap.watched,
-            HeatmapVariant::InProgress => self.heatmap.in_progress,
-            HeatmapVariant::Upcoming => self.heatmap.upcoming,
-        }
+    pub fn heatmap_color(&self) -> Color {
+        self.heatmap.watched
     }
 
-    pub fn load(config: &AppConfig) -> CoreResult<Self> {
-        let path = Self::config_path(config);
+    pub fn load() -> CoreResult<Self> {
+        let path = Self::config_path();
         match fs::read_to_string(&path) {
             Ok(contents) => Self::from_toml(&contents),
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
@@ -198,7 +148,7 @@ impl Theme {
         }
     }
 
-    fn config_path(_config: &AppConfig) -> PathBuf {
+    fn config_path() -> PathBuf {
         AppConfig::config_dir().join("theme.toml")
     }
 
@@ -231,9 +181,7 @@ impl Theme {
             items: TextStyle::from_config(parsed.items)?,
             selected_item: TextStyle::from_config(parsed.selected_item)?,
             heatmap: HeatmapPalette {
-                watched: parse_rgb_string(&parsed.heatmap.watched)?,
-                in_progress: parse_rgb_string(&parsed.heatmap.in_progress)?,
-                upcoming: parse_rgb_string(&parsed.heatmap.upcoming)?,
+                watched: parse_color_string(&parsed.heatmap.watched)?,
             },
             non_interactive: TextStyle::from_config(parsed.non_interactive)?,
         })
@@ -263,8 +211,8 @@ impl TextStyle {
 
 fn parse_color_string(value: &str) -> CoreResult<Color> {
     let trimmed = value.trim();
-    if let Some(rgb) = parse_hex_color(trimmed) {
-        return Ok(Color::Rgb(rgb.0, rgb.1, rgb.2));
+    if let Some(color) = parse_hex_color(trimmed) {
+        return Ok(color);
     }
 
     match trimmed.to_ascii_lowercase().as_str() {
@@ -282,12 +230,7 @@ fn parse_color_string(value: &str) -> CoreResult<Color> {
     }
 }
 
-fn parse_rgb_string(value: &str) -> CoreResult<(u8, u8, u8)> {
-    let color = parse_color_string(value)?;
-    color_to_rgb(color)
-}
-
-fn parse_hex_color(value: &str) -> Option<(u8, u8, u8)> {
+fn parse_hex_color(value: &str) -> Option<Color> {
     let normalized = value.trim();
     let normalized = normalized.strip_prefix('#').unwrap_or(normalized);
     if normalized.len() != 6 {
@@ -298,22 +241,50 @@ fn parse_hex_color(value: &str) -> Option<(u8, u8, u8)> {
     let red = ((decoded >> 16) & 0xFF) as u8;
     let green = ((decoded >> 8) & 0xFF) as u8;
     let blue = (decoded & 0xFF) as u8;
-    Some((red, green, blue))
+    Some(Color::Rgb(red, green, blue))
 }
 
-fn color_to_rgb(color: Color) -> CoreResult<(u8, u8, u8)> {
-    match color {
-        Color::Rgb(r, g, b) => Ok((r, g, b)),
-        Color::Black => Ok((0, 0, 0)),
-        Color::White => Ok((255, 255, 255)),
-        Color::DarkGray => Ok((169, 169, 169)),
-        Color::Gray => Ok((128, 128, 128)),
-        Color::Yellow => Ok((255, 255, 0)),
-        Color::Cyan => Ok((0, 255, 255)),
-        Color::Magenta => Ok((255, 0, 255)),
-        Color::Red => Ok((255, 0, 0)),
-        Color::Green => Ok((0, 128, 0)),
-        Color::Blue => Ok((0, 0, 255)),
-        other => Err(anyhow!("color {other:?} cannot be used for heatmap")),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_hex_colors() {
+        assert_eq!(
+            parse_color_string(" #A6D189 ").expect("hex color should parse"),
+            Color::Rgb(166, 209, 137)
+        );
+    }
+
+    #[test]
+    fn ignores_legacy_heatmap_colors() {
+        let theme = Theme::from_toml(
+            r##"
+[panels]
+border = "#737994"
+focused_border = "#8CAAEE"
+
+[titles]
+fg = "#A6D189"
+
+[items]
+fg = "#C6D0F5"
+
+[selected_item]
+fg = "#232634"
+bg = "#F2D5CF"
+
+[non_interactive]
+fg = "#838BA7"
+
+[heatmap]
+watched = "#A6D189"
+in_progress = "#E5C890"
+upcoming = "#838BA7"
+"##,
+        )
+        .expect("legacy heatmap fields should be ignored");
+
+        assert_eq!(theme.heatmap_color(), Color::Rgb(166, 209, 137));
     }
 }

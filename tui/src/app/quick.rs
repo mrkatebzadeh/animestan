@@ -14,8 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use super::{
-    App, FilterCandidate, Focus, PendingFlag, QUICK_LAUNCH_HISTORY_SIZE,
-    QUICK_LAUNCH_RECENT_PLAY_SIZE,
+    App, FilterCandidate, Focus, QUICK_LAUNCH_HISTORY_SIZE, QUICK_LAUNCH_RECENT_PLAY_SIZE,
 };
 
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
@@ -53,7 +52,7 @@ pub(super) struct PendingPlayback {
 
 impl App {
     pub fn quick_launch_active(&self) -> bool {
-        matches!(self.quick.active, PendingFlag::Yes)
+        self.quick.active
     }
 
     pub fn quick_launch_query(&self) -> &str {
@@ -69,7 +68,7 @@ impl App {
     }
 
     pub fn open_quick_launch(&mut self) {
-        self.quick.active = PendingFlag::Yes;
+        self.quick.active = true;
         self.quick.selection = 0;
         self.quick.query.clear();
         self.set_details("Quick Launch: type to filter, Enter to run, Esc to close.");
@@ -77,7 +76,7 @@ impl App {
     }
 
     pub fn close_quick_launch(&mut self) {
-        self.quick.active = PendingFlag::No;
+        self.quick.active = false;
     }
 
     pub fn append_quick_launch_char(&mut self, ch: char) {

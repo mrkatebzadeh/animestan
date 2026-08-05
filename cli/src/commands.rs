@@ -19,13 +19,13 @@ use anyhow::{Context, Result, anyhow};
 use spdlog::prelude::*;
 
 use animestan_core::{
-    AnimeClient, AnimeEntry, AppConfig, EpisodeTracker, FavoriteEntry, FavoriteStore, FetchBackend,
-    MetadataProvider, MetadataResolver, PlaybackFilter, SourceDefinition, delete_episode,
+    ANIDB_SOURCE_ID, AniDbMetadataProvider, AnimeClient, AnimeEntry, AppConfig, EpisodeTracker,
+    FavoriteEntry, FavoriteStore, FetchBackend, PlaybackFilter, PlayerOutput, delete_episode,
     download_episode, episode_file_path, format_list, format_season_year, format_status_score,
-    local_playback_url, metadata_source_label,
+    local_playback_url, play_episode,
 };
 
-use crate::{BookmarksCommand, Commands, playback};
+use crate::{BookmarksCommand, Commands};
 
 pub(crate) fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> Result<()> {
     let results = client.search(query)?;
@@ -37,7 +37,7 @@ pub(crate) fn handle_search(client: &AnimeClient<FetchBackend>, query: &str) -> 
 }
 
 pub(crate) fn handle_info(config: &AppConfig, title: &str) -> Result<()> {
-    let resolver = MetadataResolver::from_config(config);
+    let resolver = AniDbMetadataProvider::from_config(config);
     let metadata = resolver
         .fetch_by_query(title)
         .with_context(|| format!("failed to fetch metadata for '{title}'"))?;
@@ -57,11 +57,7 @@ pub(crate) fn handle_info(config: &AppConfig, title: &str) -> Result<()> {
         "Trailer: {}",
         metadata.trailer_url.as_deref().unwrap_or("N/A")
     );
-    println!(
-        "Source: {} ({})",
-        metadata.source_url,
-        metadata_source_label(metadata.source)
-    );
+    println!("Source: {} (AniDB)", metadata.source_url);
 
     Ok(())
 }
@@ -128,7 +124,7 @@ pub(crate) fn handle_play(
             .map_err(|_| anyhow!("episode tracker lock poisoned"))?;
         guard.mark_started(episode_id)?;
     }
-    playback::play_episode(config, &tracker, episode_id, &target)?;
+    play_episode(config, &tracker, episode_id, &target, PlayerOutput::Inherit)?;
     Ok(())
 }
 
@@ -249,7 +245,7 @@ pub(crate) fn handle_bookmarks(
             let anime_entry = AnimeEntry {
                 id: anime_id.clone(),
                 title: title.unwrap_or_else(|| anime_id.clone()),
-                source_id: SourceDefinition::ANIDB_ID.to_string(),
+                source_id: ANIDB_SOURCE_ID.to_string(),
             };
             store.add(anime_entry)?;
             println!("Added bookmark '{anime_id}'");
@@ -300,7 +296,6 @@ mod tests {
                 .as_nanos()
         ));
         let config = AppConfig {
-            source_id: Some("allanime".to_string()),
             use_fixtures: Some(false),
             favorites_path: Some(path.to_string_lossy().into_owned()),
             ..AppConfig::default()
@@ -317,12 +312,9 @@ mod tests {
         )
         .expect("bookmark");
 
-        let contents = std::fs::read_to_string(&path).expect("bookmark file");
-        let json: serde_json::Value = serde_json::from_str(&contents).expect("bookmark json");
-        assert_eq!(
-            json["entries"]["naruto-3686"]["anime"]["source_id"],
-            "anidb"
-        );
+        let store = FavoriteStore::load(path.clone()).expect("bookmark file");
+        let entries = store.list();
+        assert_eq!(entries[0].anime.source_id, "anidb");
         std::fs::remove_file(path).expect("remove bookmark file");
     }
 
@@ -350,25 +342,6 @@ mod tests {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum FilterChoice {
-    Unwatched,
-    InProgress,
-    Next,
-    Recent,
-}
-
-impl From<FilterChoice> for PlaybackFilter {
-    fn from(choice: FilterChoice) -> Self {
-        match choice {
-            FilterChoice::Unwatched => PlaybackFilter::Unwatched,
-            FilterChoice::InProgress => PlaybackFilter::InProgress,
-            FilterChoice::Next => PlaybackFilter::Next,
-            FilterChoice::Recent => PlaybackFilter::Recent,
-        }
-    }
-}
-
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FilterArgs {
@@ -380,18 +353,16 @@ pub(crate) struct FilterArgs {
 
 impl FilterArgs {
     pub(crate) fn selected(self) -> Option<PlaybackFilter> {
-        let choice = if self.unwatched {
-            Some(FilterChoice::Unwatched)
+        if self.unwatched {
+            Some(PlaybackFilter::Unwatched)
         } else if self.in_progress {
-            Some(FilterChoice::InProgress)
+            Some(PlaybackFilter::InProgress)
         } else if self.next {
-            Some(FilterChoice::Next)
+            Some(PlaybackFilter::Next)
         } else if self.recent {
-            Some(FilterChoice::Recent)
+            Some(PlaybackFilter::Recent)
         } else {
             None
-        };
-
-        choice.map(PlaybackFilter::from)
+        }
     }
 }

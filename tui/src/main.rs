@@ -21,7 +21,6 @@ mod cache;
 mod events;
 mod flow;
 mod media;
-mod playback;
 mod tasks;
 mod theme;
 mod ui;
@@ -31,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, MetadataResolver, init_logging,
+    AniDbMetadataProvider, AnimeClient, AppConfig, EpisodeTracker, FavoriteStore, init_logging,
 };
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -74,7 +73,7 @@ use crate::theme::Theme;
 fn main() -> Result<()> {
     let args = Args::parse();
     let config = Arc::new(AppConfig::load_default().context("failed to load configuration")?);
-    let theme = Arc::new(Theme::load(&config).context("failed to load theme configuration")?);
+    let theme = Arc::new(Theme::load().context("failed to load theme configuration")?);
     init_logging("animestan", args.verbosity, &config, false)
         .context("failed to initialize logging")?;
     info!("launching animestan");
@@ -106,7 +105,7 @@ fn run_app(
     let client = Arc::new(AnimeClient::from_config(config.as_ref())?);
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let runtime_handle = runtime.handle().clone();
-    let metadata_resolver = Arc::new(MetadataResolver::from_config(config.as_ref()));
+    let metadata_resolver = Arc::new(AniDbMetadataProvider::from_config(config.as_ref()));
     let (request_tx, mut request_rx) = unbounded_channel::<EpisodeFetchRequest>();
     let (result_tx, mut result_rx) = unbounded_channel::<EpisodeFetchResult>();
     let mut active_fetch: Option<AbortHandle> = None;

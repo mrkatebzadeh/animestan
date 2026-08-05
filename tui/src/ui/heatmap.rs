@@ -14,14 +14,12 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::app::App;
-use crate::theme::{HeatmapVariant, Theme};
+use crate::theme::Theme;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::Frame;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-
-use super::border_style;
 
 pub(super) fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
@@ -31,7 +29,7 @@ pub(super) fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, t
     let block = Block::default()
         .title("Progress")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, false));
+        .border_style(theme.panel_border_style(false));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
@@ -105,8 +103,8 @@ pub(super) fn render_episode_heatmap(frame: &mut Frame, area: Rect, app: &App, t
 
     let mut spans = Vec::new();
     if !fill_str.is_empty() {
-        let color = theme.heatmap_color(HeatmapVariant::Watched);
-        let fill_style = Style::default().fg(Color::Rgb(color.0, color.1, color.2));
+        let color = theme.heatmap_color();
+        let fill_style = Style::default().fg(color);
         spans.push(Span::styled(fill_str, fill_style));
     }
     if !empty_str.is_empty() {

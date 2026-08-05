@@ -24,28 +24,21 @@ mod logging;
 mod metadata;
 mod models;
 mod playback;
-mod source;
 mod store;
 mod tracking;
 
+pub use crate::client::anidb::ANIDB_SOURCE_ID;
 pub use crate::client::{AnimeClient, FetchBackend, Fetcher, validate_media_url};
 pub use crate::config::AppConfig;
 pub use crate::downloads::{
     delete_episode, download_episode, episode_file_path, local_playback_url,
 };
 pub use crate::error::Error;
-pub use crate::error::Error as CoreError;
 pub type CoreResult<T> = anyhow::Result<T>;
 pub use crate::favorites::{FavoriteEntry, FavoriteStore};
-pub use crate::format::{
-    format_list, format_season_year, format_status_score, metadata_source_label,
-};
+pub use crate::format::{format_list, format_season_year, format_status_score};
 pub use crate::logging::init_logging;
-pub use crate::metadata::{
-    AniDbMetadataProvider, AnimeMetadata, MetadataProvider, MetadataResolver, MetadataSource,
-};
+pub use crate::metadata::{AniDbMetadataProvider, AnimeMetadata, MetadataSource};
 pub use crate::models::{AnimeEntry, Episode, EpisodePlaybackState, PlaybackFilter, StreamLink};
 pub use crate::playback::{PlayerOutput, play_episode};
-pub use crate::source::SourceDefinition;
 pub use crate::tracking::{EpisodeProgress, EpisodeTracker};
-pub use anyhow::Result as AnyhowResult;

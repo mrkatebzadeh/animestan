@@ -17,10 +17,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::{AppConfig, error::Error as CoreError, store::now_epoch};
+use crate::{error::Error as CoreError, store::now_epoch};
 
 mod anidb;
 
@@ -53,24 +52,6 @@ pub struct AnimeMetadata {
     pub image_url: Option<String>,
     pub source_url: String,
     pub source: MetadataSource,
-}
-
-/// Provides metadata for the requested query string.
-///
-/// # Errors
-///
-/// * `CoreError::MetadataNotFound` if the query cannot be resolved.
-/// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
-///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
-/// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
-pub trait MetadataProvider: Send + Sync {
-    /// # Errors
-    ///
-    /// * `CoreError::MetadataNotFound` if the query cannot be resolved.
-    /// * `CoreError::HttpRequest`, `CoreError::HttpStatus`, `CoreError::HttpBodyParse`,
-    ///   or `CoreError::ResponseParse` when upstream services fail or return malformed data.
-    /// * `CoreError::MetadataCacheLock` when the cache mutex cannot be acquired.
-    fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError>;
 }
 
 #[derive(Clone, Debug)]
@@ -222,74 +203,6 @@ impl MetadataCache {
 struct MetadataCacheFile {
     #[serde(default)]
     entries: HashMap<String, CacheEntry>,
-}
-
-pub struct MetadataResolver {
-    anidb: AniDbMetadataProvider,
-}
-
-impl MetadataResolver {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::with_cache(AppConfig::default().metadata_cache_path())
-    }
-
-    #[must_use]
-    pub fn from_config(config: &AppConfig) -> Self {
-        Self::with_cache(config.metadata_cache_path())
-    }
-
-    fn with_cache(cache_path: PathBuf) -> Self {
-        let client = Client::builder()
-            .redirect(crate::client::safe_redirect_policy())
-            .build()
-            .expect("metadata HTTP client should build");
-        Self {
-            anidb: AniDbMetadataProvider::with_cache(client, MetadataCache::new(cache_path)),
-        }
-    }
-
-    /// Fetches metadata using an `AniDB` identifier when available.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `AniDB` cannot resolve the identifier or the upstream response cannot be
-    /// parsed.
-    pub fn fetch_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, CoreError> {
-        self.anidb.fetch_by_id(id, query)
-    }
-
-    /// Refreshes metadata by query, bypassing the cache.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `AniDB` cannot resolve the query or the upstream response cannot be
-    /// parsed.
-    pub fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
-        self.anidb.refresh_by_query(query)
-    }
-
-    /// Refreshes metadata by `AniDB` identifier, bypassing the cache.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `AniDB` cannot resolve the identifier or the upstream response cannot be
-    /// parsed.
-    pub fn refresh_by_id(&self, id: &str, query: &str) -> Result<AnimeMetadata, CoreError> {
-        self.anidb.refresh_by_id(id, query)
-    }
-}
-
-impl Default for MetadataResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MetadataProvider for MetadataResolver {
-    fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, CoreError> {
-        self.anidb.fetch_by_query(query)
-    }
 }
 
 #[cfg(test)]

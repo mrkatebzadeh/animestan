@@ -46,12 +46,7 @@ impl App {
     }
 
     pub fn take_pending_info_fetch(&mut self) -> bool {
-        if self.modal.pending_info_fetch {
-            self.modal.pending_info_fetch = false;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.modal.pending_info_fetch)
     }
 
     pub fn next_info_fetch_generation(&mut self) -> u64 {

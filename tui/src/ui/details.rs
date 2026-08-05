@@ -1,6 +1,4 @@
-use animestan_core::{
-    AnimeMetadata, format_list, format_season_year, format_status_score, metadata_source_label,
-};
+use animestan_core::{AnimeMetadata, format_list, format_season_year, format_status_score};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Frame;
 use ratatui::text::{Line, Span};
@@ -9,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::app::App;
 use crate::theme::Theme;
 
-use super::{border_style, preview::PreviewWidget};
+use super::preview::PreviewWidget;
 
 pub(super) fn render_anime_details_panel(
     frame: &mut Frame,
@@ -24,7 +22,7 @@ pub(super) fn render_anime_details_panel(
     let block = Block::default()
         .title("Details")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, app.info_modal_visible()));
+        .border_style(theme.panel_border_style(app.info_modal_visible()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
@@ -159,9 +157,8 @@ pub(super) fn metadata_section_lines<'a>(
             metadata.trailer_url.as_deref().unwrap_or("N/A")
         )));
         lines.push(Line::from(format!(
-            "Source: {} ({})",
+            "Source: {} (AniDB)",
             metadata.source_url,
-            metadata_source_label(metadata.source)
         )));
         lines.push(Line::default());
         return lines;

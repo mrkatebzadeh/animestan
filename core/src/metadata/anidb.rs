@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::{AppConfig, client::anidb as anidb_client, client::http_status_error, error::Error};
 
-use super::{AnimeMetadata, MetadataCache, MetadataProvider, MetadataSource, normalize_query};
+use super::{AnimeMetadata, MetadataCache, MetadataSource, normalize_query};
 
 #[derive(Debug, Deserialize)]
 struct JsonLd {
@@ -152,8 +152,13 @@ pub struct AniDbMetadataProvider {
     cache: MetadataCache,
 }
 
-impl MetadataProvider for AniDbMetadataProvider {
-    fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, Error> {
+impl AniDbMetadataProvider {
+    /// Fetches metadata by query, using the configured cache when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `AniDB` request or detail page cannot be resolved.
+    pub fn fetch_by_query(&self, query: &str) -> Result<AnimeMetadata, Error> {
         let key = format!("anidb:query:{}", normalize_query(query));
         if let Some(metadata) = self.cache.get(&key)? {
             return Ok(metadata);
@@ -162,9 +167,7 @@ impl MetadataProvider for AniDbMetadataProvider {
         self.cache.insert(key, metadata.clone())?;
         Ok(metadata)
     }
-}
 
-impl AniDbMetadataProvider {
     /// Constructs a provider with the default cache and safe redirect policy.
     ///
     /// # Panics
@@ -180,6 +183,20 @@ impl AniDbMetadataProvider {
             client,
             MetadataCache::new(AppConfig::default().metadata_cache_path()),
         )
+    }
+
+    /// Constructs a provider using the configured metadata cache path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the metadata HTTP client cannot be constructed.
+    #[must_use]
+    pub fn from_config(config: &AppConfig) -> Self {
+        let client = Client::builder()
+            .redirect(crate::client::safe_redirect_policy())
+            .build()
+            .expect("metadata HTTP client should build");
+        Self::with_cache(client, MetadataCache::new(config.metadata_cache_path()))
     }
 
     pub(super) fn with_cache(client: Client, cache: MetadataCache) -> Self {
@@ -198,7 +215,10 @@ impl AniDbMetadataProvider {
         self.fetch_and_cache_detail(key, id, query, &url)
     }
 
-    pub(super) fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, Error> {
+    /// # Errors
+    ///
+    /// Returns an error if the `AniDB` request or detail page cannot be resolved.
+    pub fn refresh_by_query(&self, query: &str) -> Result<AnimeMetadata, Error> {
         let key = format!("anidb:query:{}", normalize_query(query));
         let metadata = self.fetch_by_query_uncached(query)?;
         self.cache.insert(key, metadata.clone())?;
@@ -216,9 +236,9 @@ impl AniDbMetadataProvider {
     }
 
     fn fetch_by_query_uncached(&self, query: &str) -> Result<AnimeMetadata, Error> {
-        let search_url = search_url(query)?;
+        let search_url = anidb_client::search_url(query)?;
         let body = self.fetch_url(&search_url)?;
-        let entries = anidb_client::parse_search(&body, "anidb").map_err(|error| {
+        let entries = anidb_client::parse_search(&body).map_err(|error| {
             error
                 .downcast::<Error>()
                 .unwrap_or_else(|_| Error::MetadataNotFound {
@@ -290,16 +310,6 @@ impl Default for AniDbMetadataProvider {
     }
 }
 
-fn search_url(query: &str) -> Result<Url, Error> {
-    let mut url = Url::parse(anidb_client::BASE_URL).map_err(|source| Error::InvalidUrl {
-        template: anidb_client::BASE_URL.to_string(),
-        source,
-    })?;
-    url.set_path("/browse");
-    url.query_pairs_mut().append_pair("q", query);
-    Ok(url)
-}
-
 fn detail_url(id: &str) -> Result<Url, Error> {
     let mut url = Url::parse(anidb_client::BASE_URL).map_err(|source| Error::InvalidUrl {
         template: anidb_client::BASE_URL.to_string(),
@@ -315,11 +325,24 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
+    use crate::AppConfig;
     use reqwest::blocking::Client;
     use reqwest::header::{HeaderMap, HeaderValue};
     use url::Url;
 
     use super::{AniDbMetadataProvider, parse_detail};
+
+    #[test]
+    fn from_config_uses_configured_cache_path() {
+        let path =
+            std::env::temp_dir().join(format!("animestan-provider-{}.json", std::process::id()));
+        let config = AppConfig {
+            metadata_cache_path: Some(path.display().to_string()),
+            ..AppConfig::default()
+        };
+        let provider = AniDbMetadataProvider::from_config(&config);
+        assert_eq!(provider.cache.inner.path, path);
+    }
     use crate::metadata::{MetadataCache, MetadataSource};
 
     const DETAIL_HTML: &str = r#"

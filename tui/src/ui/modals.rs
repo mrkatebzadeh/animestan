@@ -26,7 +26,6 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 
-use super::border_style;
 use super::details::{build_info_modal_lines, metadata_section_lines};
 
 const KEYBINDINGS_HEADER: [&str; 6] = [
@@ -104,7 +103,7 @@ pub(super) fn render_keybindings_modal(frame: &mut Frame, app: &mut App, theme: 
     let area = centered_rect(frame_area, width, height);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(border_style(theme, false));
+        .border_style(theme.panel_border_style(false));
     let inner = block.inner(area);
     app.set_keybindings_viewport_lines(inner.height as usize);
     let scroll_offset = u16::try_from(app.keybindings_scroll()).unwrap_or(u16::MAX);
@@ -142,7 +141,7 @@ pub(super) fn render_info_modal(frame: &mut Frame, app: &App, theme: &Theme) {
     let block = Block::default()
         .title(Span::styled(title, theme.title_style()))
         .borders(Borders::ALL)
-        .border_style(border_style(theme, false));
+        .border_style(theme.panel_border_style(false));
 
     let paragraph = Paragraph::new(build_info_modal_lines(app, theme))
         .wrap(Wrap { trim: true })
@@ -172,7 +171,7 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     let block = Block::default()
         .title(Span::styled(title, theme.title_style()))
         .borders(Borders::ALL)
-        .border_style(border_style(theme, true));
+        .border_style(theme.panel_border_style(true));
     let area = centered_rect(frame_area, width, height);
 
     frame.render_widget(Clear, area);
@@ -191,7 +190,7 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     let input_block = Block::default()
         .title("Search Anime")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, app.input_mode() == InputMode::Search));
+        .border_style(theme.panel_border_style(app.input_mode() == InputMode::Search));
     let prompt = Line::from(vec![
         Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.search_query()),
@@ -233,7 +232,7 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     let list_block = Block::default()
         .title("Matches")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, true));
+        .border_style(theme.panel_border_style(true));
     let list = List::new(items)
         .block(list_block)
         .highlight_style(theme.selected_item_style())
@@ -249,7 +248,7 @@ pub(super) fn render_search_results_modal(frame: &mut Frame, app: &App, theme: &
     let metadata_block = Block::default()
         .title("Info")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, true));
+        .border_style(theme.panel_border_style(true));
     let metadata = Paragraph::new(metadata_lines)
         .block(metadata_block)
         .wrap(Wrap { trim: true });
@@ -320,7 +319,7 @@ pub(super) fn render_exit_confirmation_modal(frame: &mut Frame, app: &App, theme
     let block = Block::default()
         .title("Confirm Exit")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, true));
+        .border_style(theme.panel_border_style(true));
     let paragraph = Paragraph::new(lines)
         .alignment(Alignment::Center)
         .block(block)
@@ -350,7 +349,7 @@ pub(super) fn render_quick_launch_palette(frame: &mut Frame, app: &App, theme: &
         .title("Quick Launch")
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
-        .border_style(border_style(theme, true));
+        .border_style(theme.panel_border_style(true));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let chunks = Layout::default()

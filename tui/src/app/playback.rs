@@ -13,36 +13,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::{App, EpisodeMarkAction, PendingFlag, Progress};
+use super::{App, EpisodeMarkAction};
 
 impl App {
-    pub fn request_play(&mut self) {
-        self.request_play_async();
-    }
-
     pub fn request_play_async(&mut self) {
-        self.playback.pending_playback_request = PendingFlag::Yes;
+        self.playback.pending_playback_request = true;
     }
 
     pub fn take_pending_play_async(&mut self) -> bool {
-        if matches!(self.playback.pending_playback_request, PendingFlag::Yes) {
-            self.playback.pending_playback_request = PendingFlag::No;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.playback.pending_playback_request)
     }
 
     pub fn set_playback_in_progress(&mut self, in_progress: bool) {
-        self.playback.in_progress = if in_progress {
-            Progress::Active
-        } else {
-            Progress::Idle
-        };
+        self.playback.in_progress = in_progress;
     }
 
     pub fn playback_in_progress(&self) -> bool {
-        matches!(self.playback.in_progress, Progress::Active)
+        self.playback.in_progress
     }
 
     pub fn set_current_playing_episode(&mut self, id: Option<String>) {
@@ -88,7 +75,7 @@ impl App {
             self.set_details("Highlight an episode to download.");
             return;
         }
-        self.playback.pending_download = PendingFlag::Yes;
+        self.playback.pending_download = true;
         if let Some(title) = self.current_episode_title() {
             self.set_details(format!(
                 "Preparing download for {title}. Local copies can be removed with 'D'."
@@ -99,12 +86,7 @@ impl App {
     }
 
     pub fn take_pending_download(&mut self) -> bool {
-        if matches!(self.playback.pending_download, PendingFlag::Yes) {
-            self.playback.pending_download = PendingFlag::No;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.playback.pending_download)
     }
 
     pub fn request_delete(&mut self) {
@@ -112,7 +94,7 @@ impl App {
             self.set_details("Highlight an episode to delete its download.");
             return;
         }
-        self.playback.pending_delete = PendingFlag::Yes;
+        self.playback.pending_delete = true;
         if let Some(title) = self.current_episode_title() {
             self.set_details(format!("Preparing to delete local copy of {title}."));
         } else {
@@ -121,25 +103,15 @@ impl App {
     }
 
     pub fn take_pending_delete(&mut self) -> bool {
-        if matches!(self.playback.pending_delete, PendingFlag::Yes) {
-            self.playback.pending_delete = PendingFlag::No;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.playback.pending_delete)
     }
 
     pub fn request_bookmark_toggle(&mut self) {
-        self.playback.pending_bookmark_toggle = PendingFlag::Yes;
+        self.playback.pending_bookmark_toggle = true;
     }
 
     pub fn take_pending_bookmark_toggle(&mut self) -> bool {
-        if matches!(self.playback.pending_bookmark_toggle, PendingFlag::Yes) {
-            self.playback.pending_bookmark_toggle = PendingFlag::No;
-            true
-        } else {
-            false
-        }
+        std::mem::take(&mut self.playback.pending_bookmark_toggle)
     }
 
     pub fn request_mark_current_episode(&mut self, watched: bool) {

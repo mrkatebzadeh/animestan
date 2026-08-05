@@ -20,7 +20,6 @@ use ratatui::prelude::Frame;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use super::border_style;
 use super::footer::render_footer;
 
 pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
@@ -30,7 +29,7 @@ pub(super) fn render_session_panel(frame: &mut Frame, area: Rect, app: &mut App,
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(border_style(theme, false));
+        .border_style(theme.panel_border_style(false));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 {

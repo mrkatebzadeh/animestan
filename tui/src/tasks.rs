@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use animestan_core::{
-    AnimeClient, AnimeMetadata, AppConfig, CoreResult, Episode, EpisodeTracker, FetchBackend,
-    MetadataProvider, MetadataResolver, local_playback_url,
+    AniDbMetadataProvider, AnimeClient, AnimeMetadata, AppConfig, CoreResult, Episode,
+    EpisodeTracker, FetchBackend, PlayerOutput, local_playback_url, play_episode,
 };
 use anyhow::{Result, anyhow};
 use futures::future::{AbortHandle, Abortable};
@@ -28,7 +28,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 
 use crate::cache::{EpisodeCache, cache_episodes};
-use crate::playback;
 
 pub(crate) struct EpisodeFetchRequest {
     pub(crate) generation: u64,
@@ -123,7 +122,7 @@ pub(crate) fn spawn_episode_fetch_task(
 
 pub(crate) fn spawn_metadata_fetch_task(
     runtime: &Handle,
-    resolver: Arc<MetadataResolver>,
+    resolver: Arc<AniDbMetadataProvider>,
     request: MetadataFetchRequest,
     result_tx: UnboundedSender<MetadataFetchResult>,
 ) -> AbortHandle {
@@ -238,7 +237,7 @@ pub(crate) fn spawn_background_episode_refresh_tasks(
 
 pub(crate) fn spawn_background_metadata_refresh_tasks(
     runtime: &Handle,
-    resolver: &Arc<MetadataResolver>,
+    resolver: &Arc<AniDbMetadataProvider>,
     entries: Vec<(String, String)>,
     result_tx: &UnboundedSender<MetadataFetchResult>,
 ) -> Vec<AbortHandle> {
@@ -315,7 +314,13 @@ fn run_playback_job(
         );
 
         mark_episode_started(tracker, &episode_id)?;
-        playback::play_episode(config, tracker, &episode_id, target_url.as_str())?;
+        play_episode(
+            config,
+            tracker,
+            &episode_id,
+            target_url.as_str(),
+            PlayerOutput::Quiet,
+        )?;
         Ok(())
     })();
 

@@ -10,8 +10,6 @@ use throbber_widgets_tui::Throbber;
 use crate::app::ImageState;
 use crate::theme::Theme;
 
-use super::border_style;
-
 pub struct PreviewWidget<'a> {
     pub id: &'a str,
     pub title: &'a str,
@@ -26,7 +24,7 @@ impl StatefulWidget for PreviewWidget<'_> {
         let block = Block::default()
             .title(self.title)
             .borders(Borders::ALL)
-            .border_style(border_style(self.theme, false));
+            .border_style(self.theme.panel_border_style(false));
         let inner = block.inner(area);
         block.render(area, buf);
 

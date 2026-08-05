@@ -19,7 +19,6 @@ use crate::app::{App, FilterTarget, Focus};
 use crate::theme::Theme;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::Frame;
-use ratatui::style::Style;
 
 mod details;
 mod footer;
@@ -120,8 +119,4 @@ pub fn render(frame: &mut Frame, app: &mut App, theme: &Theme) {
     render_info_modal(frame, app, theme);
     render_exit_confirmation_modal(frame, app, theme);
     render_quick_launch_palette(frame, app, theme);
-}
-
-pub(super) fn border_style(theme: &Theme, focused: bool) -> Style {
-    theme.panel_border_style(focused)
 }

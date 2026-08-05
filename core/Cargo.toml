@@ -15,7 +15,6 @@ spdlog = { version = "0.5", package = "spdlog-rs" }
 thiserror = "2.0"
 toml = "0.8"
 url = { version = "2.5", features = ["serde"] }
-urlencoding = "2.1"
 
 [lints.rust]
 unsafe_code = "warn"

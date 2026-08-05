@@ -25,8 +25,6 @@ use crate::{CoreResult, error::Error};
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    pub source_id: Option<String>,
-    #[serde(default)]
     pub metadata_cache_path: Option<String>,
     #[serde(default)]
     pub episodes_cache_path: Option<String>,
@@ -121,7 +119,6 @@ impl AppConfig {
 # Uncomment and modify any settings below as needed
 
 # Built-in anime and metadata source: AniDB
-# source_id = "anidb"
 
 # Audio mode: sub or dub (default: sub)
 # mode = "sub"
@@ -199,58 +196,22 @@ impl AppConfig {
 
     #[must_use]
     pub fn progress_path(&self) -> PathBuf {
-        if let Some(path) = self.tracking_path.as_deref() {
-            let configured = PathBuf::from(path);
-            if configured.is_absolute() {
-                configured
-            } else {
-                Self::config_dir().join(configured)
-            }
-        } else {
-            Self::config_dir().join("anidb").join("progress.json")
-        }
+        Self::resolve_path(self.tracking_path.as_deref(), "progress.json")
     }
 
     #[must_use]
     pub fn favorites_path(&self) -> PathBuf {
-        if let Some(path) = self.favorites_path.as_deref() {
-            let configured = PathBuf::from(path);
-            if configured.is_absolute() {
-                configured
-            } else {
-                Self::config_dir().join(configured)
-            }
-        } else {
-            Self::config_dir().join("anidb").join("favorites.json")
-        }
+        Self::resolve_path(self.favorites_path.as_deref(), "favorites.json")
     }
 
     #[must_use]
     pub fn metadata_cache_path(&self) -> PathBuf {
-        if let Some(path) = self.metadata_cache_path.as_deref() {
-            let configured = PathBuf::from(path);
-            if configured.is_absolute() {
-                configured
-            } else {
-                Self::config_dir().join(configured)
-            }
-        } else {
-            Self::config_dir().join("anidb").join("metadata_cache.json")
-        }
+        Self::resolve_path(self.metadata_cache_path.as_deref(), "metadata_cache.json")
     }
 
     #[must_use]
     pub fn episodes_cache_path(&self) -> PathBuf {
-        if let Some(path) = self.episodes_cache_path.as_deref() {
-            let configured = PathBuf::from(path);
-            if configured.is_absolute() {
-                configured
-            } else {
-                Self::config_dir().join(configured)
-            }
-        } else {
-            Self::config_dir().join("anidb").join("episodes_cache.json")
-        }
+        Self::resolve_path(self.episodes_cache_path.as_deref(), "episodes_cache.json")
     }
 
     #[must_use]
@@ -330,6 +291,21 @@ impl AppConfig {
         Err(Error::ConfigPathUnavailable.into())
     }
 
+    fn resolve_path(configured: Option<&str>, default_filename: &str) -> PathBuf {
+        let config_dir = Self::config_dir();
+        configured.map_or_else(
+            || config_dir.join("anidb").join(default_filename),
+            |path| {
+                let path = PathBuf::from(path);
+                if path.is_absolute() {
+                    path
+                } else {
+                    config_dir.join(path)
+                }
+            },
+        )
+    }
+
     fn parse(contents: &str, path: PathBuf) -> CoreResult<Self> {
         let config =
             toml::from_str(contents).map_err(|source| Error::ConfigParse { path, source })?;
@@ -359,6 +335,13 @@ mod tests {
                 .ends_with("anidb/episodes_cache.json")
         );
         assert!(config.covers_dir().ends_with("anidb/covers"));
+    }
+
+    #[test]
+    fn default_path_joins_anidb_namespace_and_filename() {
+        let expected = AppConfig::config_dir().join("anidb").join("progress.json");
+
+        assert_eq!(AppConfig::resolve_path(None, "progress.json"), expected);
     }
 
     #[test]
@@ -406,11 +389,21 @@ mod tests {
     #[test]
     fn explicit_path_overrides_remain_unchanged() {
         let config = AppConfig {
+            metadata_cache_path: Some("cache/metadata.json".to_string()),
+            episodes_cache_path: Some("/tmp/episodes.json".to_string()),
             tracking_path: Some("progress.json".to_string()),
             favorites_path: Some("/tmp/favorites.json".to_string()),
             ..AppConfig::default()
         };
 
+        assert_eq!(
+            config.metadata_cache_path(),
+            AppConfig::config_dir().join("cache/metadata.json")
+        );
+        assert_eq!(
+            config.episodes_cache_path(),
+            PathBuf::from("/tmp/episodes.json")
+        );
         assert!(config.progress_path().ends_with("progress.json"));
         assert_eq!(
             config.favorites_path(),

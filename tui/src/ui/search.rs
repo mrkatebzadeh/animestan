@@ -22,8 +22,6 @@ use ratatui::prelude::Frame;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::border_style;
-
 pub(super) fn split_filter_area(area: Rect, show_filter: bool) -> (Option<Rect>, Rect) {
     if !show_filter {
         return (None, area);
@@ -46,7 +44,7 @@ pub(super) fn render_panel_filter_input(
     let block = Block::default()
         .title("Filter")
         .borders(Borders::ALL)
-        .border_style(border_style(theme, active));
+        .border_style(theme.panel_border_style(active));
     let prompt = Line::from(vec![
         Span::styled("> ", theme.non_interactive_style()),
         Span::raw(app.panel_filter_query()),
