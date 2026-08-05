@@ -1,6 +1,6 @@
 <div align="center">
   <h1>ANIMESTAN</h1>
-  <h4>CLI + TUI tool to search, watch, and keep track of animes</h4>
+  <h4>TUI + CLI tool to search, watch, and keep track of animes</h4>
   <h5>Your terminal companion for anime discovery and tracking</h5>
   <p>
     <img src="https://img.shields.io/github/actions/workflow/status/mrkatebzadeh/animestan/ci.yml?branch=main&style=flat-square" alt="Build Status" />
@@ -142,7 +142,7 @@ If the config file does not exist, Animestan creates one with default settings o
 
 | Key                 | Description                                                                    |
 | ------------------- | ------------------------------------------------------------------------------ |
-| `source_id`           | Built-in anime and metadata source (default: `anidb`)                          |
+| `source_id`           | Built-in anime and metadata source                                           |
 | `metadata_cache_path` | Path to cached metadata (relative or absolute)                                 |
 | `episodes_cache_path` | Path to cached episode lists (relative or absolute)                            |
 | `player`              | Media player command (default: `mpv`)                                            |
@@ -152,11 +152,3 @@ If the config file does not exist, Animestan creates one with default settings o
 | `favorites_path`      | Path to favorites file (relative or absolute)                                  |
 
 Feel free to customize these settings by editing the `config.toml` file to tailor Animestan to your preferences.
-
-### Upgrade note
-
-The app starts with fresh state under the `anidb` namespace; old favorites/progress/cache files are preserved but ignored; users with custom paths must clear or change them; downloads remain available.
-
----
-
-Enjoy your anime journey with Animestan!
