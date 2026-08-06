@@ -129,7 +129,7 @@ pub struct HttpFetcher {
 }
 
 impl HttpFetcher {
-    fn new() -> CoreResult<Self> {
+    pub(crate) fn new() -> CoreResult<Self> {
         let client = BlockingHttpClient::builder()
             .redirect(safe_redirect_policy())
             .build()
@@ -140,10 +140,8 @@ impl HttpFetcher {
             curl_executable: select_curl_executable(),
         })
     }
-}
 
-impl Fetcher for HttpFetcher {
-    fn fetch(&self, request: &FetchRequest) -> CoreResult<String> {
+    pub(crate) fn fetch_with_errors(&self, request: &FetchRequest) -> Result<String, Error> {
         if let Some(executable) = self.curl_executable.as_deref() {
             return Self::fetch_with_curl(request, executable);
         }
@@ -152,8 +150,14 @@ impl Fetcher for HttpFetcher {
     }
 }
 
+impl Fetcher for HttpFetcher {
+    fn fetch(&self, request: &FetchRequest) -> CoreResult<String> {
+        self.fetch_with_errors(request).map_err(Into::into)
+    }
+}
+
 impl HttpFetcher {
-    fn fetch_with_reqwest(&self, request: &FetchRequest) -> CoreResult<String> {
+    fn fetch_with_reqwest(&self, request: &FetchRequest) -> Result<String, Error> {
         let mut builder = self.client.get(request.url.clone());
 
         if !request.headers.is_empty() {
@@ -171,13 +175,13 @@ impl HttpFetcher {
         })?;
 
         if !status.is_success() {
-            return Err(http_status_error(&request.url, status.as_u16(), &body).into());
+            return Err(http_status_error(&request.url, status.as_u16(), &body));
         }
 
         Ok(body)
     }
 
-    fn fetch_with_curl(request: &FetchRequest, executable: &Path) -> CoreResult<String> {
+    fn fetch_with_curl(request: &FetchRequest, executable: &Path) -> Result<String, Error> {
         let args = curl_command_args(request)?;
         let output = Command::new(executable)
             .args(args)
@@ -199,8 +203,7 @@ impl HttpFetcher {
                 url: request.url.to_string(),
                 executable: executable.display().to_string(),
                 source: io::Error::other(message),
-            }
-            .into());
+            });
         }
 
         let (status, body) =
@@ -212,7 +215,7 @@ impl HttpFetcher {
                 }
             })?;
         if !(200..=299).contains(&status) {
-            return Err(http_status_error(&request.url, status, &body).into());
+            return Err(http_status_error(&request.url, status, &body));
         }
 
         Ok(body)
@@ -254,7 +257,7 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn curl_command_args(request: &FetchRequest) -> CoreResult<Vec<OsString>> {
+fn curl_command_args(request: &FetchRequest) -> Result<Vec<OsString>, Error> {
     let anidb_request = is_anidb_url(&request.url);
     let mut args = vec![OsString::from("-s")];
 
@@ -319,6 +322,15 @@ pub(crate) fn http_status_error(url: &Url, status: u16, body: &str) -> Error {
             status,
         }
     }
+}
+
+pub(crate) fn anidb_request(url: Url) -> FetchRequest {
+    FetchRequest::get(url)
+        .with_header(
+            USER_AGENT,
+            HeaderValue::from_static(anidb::USER_AGENT_VALUE),
+        )
+        .with_header(REFERER, HeaderValue::from_static(anidb::BASE_URL))
 }
 
 pub(crate) fn safe_redirect_policy() -> Policy {
@@ -542,16 +554,10 @@ impl<F: Fetcher> AnimeClient<F> {
     }
 
     fn get_request(url: Url) -> FetchRequest {
-        let request = FetchRequest::get(url);
-        if is_anidb_url(&request.url) {
-            request
-                .with_header(
-                    USER_AGENT,
-                    HeaderValue::from_static(anidb::USER_AGENT_VALUE),
-                )
-                .with_header(REFERER, HeaderValue::from_static(anidb::BASE_URL))
+        if is_anidb_url(&url) {
+            anidb_request(url)
         } else {
-            request
+            FetchRequest::get(url)
         }
     }
 }
@@ -559,6 +565,7 @@ impl<F: Fetcher> AnimeClient<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::AniDbMetadataProvider;
     use reqwest::header::ORIGIN;
     use std::cell::{Cell, RefCell};
     #[cfg(unix)]
@@ -798,6 +805,33 @@ mod tests {
         let results = client.search("naruto").expect("curl search results");
 
         assert!(results.iter().any(|entry| entry.id == "naruto-3686"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn metadata_provider_fetches_detail_through_curl_transport() {
+        let fake = fake_curl(
+            r#"<link rel="canonical" href="https://anidb.app/anime/naruto-3686">
+<script type="application/ld+json">{"name":"Naruto"}</script>"#,
+            200,
+        );
+        let cache_path = env::temp_dir().join(format!(
+            "animestan-metadata-curl-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let provider =
+            AniDbMetadataProvider::with_http_fetcher(http_fetcher(&fake.path), cache_path.clone());
+
+        let metadata = provider
+            .fetch_by_id("naruto-3686", "naruto")
+            .expect("metadata detail");
+
+        assert_eq!(metadata.title, "Naruto");
+        let _ = fs::remove_file(cache_path);
     }
 
     #[cfg(unix)]

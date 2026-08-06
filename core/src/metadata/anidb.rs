@@ -14,14 +14,22 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::collections::HashSet;
+#[cfg(test)]
+use std::path::PathBuf;
 
+#[cfg(test)]
 use reqwest::blocking::Client;
+#[cfg(test)]
 use reqwest::header::{REFERER, USER_AGENT};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use url::Url;
 
-use crate::{AppConfig, client::anidb as anidb_client, client::http_status_error, error::Error};
+use crate::{
+    AppConfig,
+    client::{HttpFetcher, anidb as anidb_client, anidb_request},
+    error::Error,
+};
 
 use super::{AnimeMetadata, MetadataCache, MetadataSource, normalize_query};
 
@@ -148,8 +156,14 @@ fn parse_season_year(text: &str) -> (Option<String>, Option<u16>) {
 }
 
 pub struct AniDbMetadataProvider {
-    client: Client,
+    transport: MetadataTransport,
     cache: MetadataCache,
+}
+
+enum MetadataTransport {
+    Http(HttpFetcher),
+    #[cfg(test)]
+    Client(Client),
 }
 
 impl AniDbMetadataProvider {
@@ -175,12 +189,9 @@ impl AniDbMetadataProvider {
     /// Panics if the configured metadata HTTP client cannot be constructed.
     #[must_use]
     pub fn new() -> Self {
-        let client = Client::builder()
-            .redirect(crate::client::safe_redirect_policy())
-            .build()
-            .expect("metadata HTTP client should build");
-        Self::with_cache(
-            client,
+        let fetcher = HttpFetcher::new().expect("metadata HTTP client should build");
+        Self::with_transport(
+            MetadataTransport::Http(fetcher),
             MetadataCache::new(AppConfig::default().metadata_cache_path()),
         )
     }
@@ -192,15 +203,28 @@ impl AniDbMetadataProvider {
     /// Panics if the metadata HTTP client cannot be constructed.
     #[must_use]
     pub fn from_config(config: &AppConfig) -> Self {
-        let client = Client::builder()
-            .redirect(crate::client::safe_redirect_policy())
-            .build()
-            .expect("metadata HTTP client should build");
-        Self::with_cache(client, MetadataCache::new(config.metadata_cache_path()))
+        let fetcher = HttpFetcher::new().expect("metadata HTTP client should build");
+        Self::with_transport(
+            MetadataTransport::Http(fetcher),
+            MetadataCache::new(config.metadata_cache_path()),
+        )
     }
 
+    #[cfg(test)]
     pub(super) fn with_cache(client: Client, cache: MetadataCache) -> Self {
-        Self { client, cache }
+        Self::with_transport(MetadataTransport::Client(client), cache)
+    }
+
+    fn with_transport(transport: MetadataTransport, cache: MetadataCache) -> Self {
+        Self { transport, cache }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_http_fetcher(fetcher: HttpFetcher, cache_path: PathBuf) -> Self {
+        Self::with_transport(
+            MetadataTransport::Http(fetcher),
+            MetadataCache::new(cache_path),
+        )
     }
 
     /// # Errors
@@ -282,25 +306,35 @@ impl AniDbMetadataProvider {
     }
 
     fn fetch_url(&self, url: &Url) -> Result<String, Error> {
-        let response = self
-            .client
-            .get(url.clone())
-            .header(USER_AGENT, anidb_client::USER_AGENT_VALUE)
-            .header(REFERER, anidb_client::BASE_URL)
-            .send()
-            .map_err(|source| Error::HttpRequest {
-                url: url.to_string(),
-                source,
-            })?;
-        let status = response.status();
-        let body = response.text().map_err(|source| Error::HttpBodyParse {
-            url: url.to_string(),
-            source,
-        })?;
-        if !status.is_success() {
-            return Err(http_status_error(url, status.as_u16(), &body));
+        let request = anidb_request(url.clone());
+        match &self.transport {
+            MetadataTransport::Http(fetcher) => fetcher.fetch_with_errors(&request),
+            #[cfg(test)]
+            MetadataTransport::Client(client) => {
+                let response = client
+                    .get(url.clone())
+                    .header(USER_AGENT, anidb_client::USER_AGENT_VALUE)
+                    .header(REFERER, anidb_client::BASE_URL)
+                    .send()
+                    .map_err(|source| Error::HttpRequest {
+                        url: url.to_string(),
+                        source,
+                    })?;
+                let status = response.status();
+                let body = response.text().map_err(|source| Error::HttpBodyParse {
+                    url: url.to_string(),
+                    source,
+                })?;
+                if !status.is_success() {
+                    return Err(crate::client::http_status_error(
+                        url,
+                        status.as_u16(),
+                        &body,
+                    ));
+                }
+                Ok(body)
+            }
         }
-        Ok(body)
     }
 }
 
@@ -452,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn public_constructor_stops_cross_origin_redirects() {
+    fn injected_client_stops_cross_origin_redirects() {
         let origin_listener = TcpListener::bind("127.0.0.1:0").expect("bind origin server");
         let origin_address = origin_listener.local_addr().expect("origin address");
         let external_listener = TcpListener::bind("127.0.0.1:0").expect("bind external server");
@@ -473,15 +507,23 @@ mod tests {
                 .expect("write redirect");
         });
 
-        let provider = AniDbMetadataProvider::new();
-        let response = provider
-            .client
-            .get(format!("http://{origin_address}/start"))
-            .send()
-            .expect("request should stop at redirect");
+        let provider = AniDbMetadataProvider::with_cache(
+            Client::builder()
+                .redirect(crate::client::safe_redirect_policy())
+                .build()
+                .expect("http client"),
+            MetadataCache::new("unused-cache.json".into()),
+        );
+        let url = Url::parse(&format!("http://{origin_address}/start")).expect("test URL");
+        let error = provider
+            .fetch_url(&url)
+            .expect_err("request should stop at redirect");
 
         server.join().expect("origin server thread");
-        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert!(matches!(
+            error,
+            crate::error::Error::HttpStatus { status: 302, .. }
+        ));
         assert!(matches!(
             external_listener.accept(),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
